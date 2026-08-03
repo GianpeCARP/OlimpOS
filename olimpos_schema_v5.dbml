@@ -1,0 +1,551 @@
+// ============================================================================
+// OlimpOS - Modelo de datos v5 (RECORTADO para el TP)
+// ----------------------------------------------------------------------------
+// 30 tablas. Derivado del v4 sacando lo que no defiende la consigna académica.
+//
+// CAMBIOS RESPECTO A v4 (33 -> 30 tablas):
+//   ELIMINADAS (-3):
+//     - Foto_Progreso  (fotos de evolución: no sale de ningún DFD)
+//     - Notificacion   (feature de producto, no de análisis de datos)
+//     - Auditoria      (registro técnico, no pedido por la consigna)
+//   ELIMINADOS enums asociados: vista_foto, tipo_notificacion,
+//     canal_notificacion, accion_auditoria
+//   LIMPIEZA: se quitaron los id_registrado_por / id_cancelado_por que solo
+//     existían para alimentar Auditoria. Donde el dato de "quién lo hizo"
+//     igual importa para el negocio, se conserva.
+//
+//   SE MANTIENE (decisión del usuario):
+//     - Multi-sede (Sede + id_sede en las tablas): defendible como escalabilidad
+//     - Consulta_Cruzada: defendible (nutricionista consulta rutina y viceversa)
+//
+// Normalizado hasta 3FN. Pegar en https://dbdiagram.io
+// ============================================================================
+
+
+// ----------------------------------------------------------------------------
+// ENUMS
+// ----------------------------------------------------------------------------
+
+Enum metodo_pago {
+  EFECTIVO
+  DEBITO
+  CREDITO
+  TRANSFERENCIA
+  BILLETERA_VIRTUAL
+}
+
+Enum estado_membresia {
+  ACTIVA
+  VENCIDA
+  SUSPENDIDA
+  CANCELADA
+}
+
+Enum estado_pago {
+  CONFIRMADO
+  PENDIENTE
+  CANCELADO
+  REEMBOLSADO
+}
+
+Enum estado_deuda {
+  PENDIENTE
+  PAGADA
+  CONDONADA
+}
+
+Enum estado_turno {
+  HABILITADO
+  CANCELADO
+}
+
+Enum estado_reserva {
+  RESERVADA
+  CANCELADA_SOCIO
+  CANCELADA_GIMNASIO
+}
+
+Enum estado_asignacion {
+  ACTIVA
+  FINALIZADA
+  CANCELADA
+}
+
+Enum tipo_baja {
+  VOLUNTARIA
+  MORA
+  ADMINISTRATIVA
+}
+
+Enum tipo_telefono {
+  CELULAR
+  FIJO
+}
+
+
+// ============================================================================
+// BLOQUE 0: ORGANIZACION (multi-sede)
+// ============================================================================
+
+Table Sede {
+  id_sede int [pk, increment]
+  id_dueno int [not null, ref: > Dueno.id_dueno]
+  nombre varchar(100) [not null]
+  calle varchar(100)
+  numero_calle varchar(10)
+  localidad varchar(80)
+  telefono varchar(30)
+  capacidad_maxima int
+  hora_apertura time
+  hora_cierre time
+  abierto_24hs boolean [default: true]
+  activo boolean [default: true]
+
+  Note: 'Raíz organizativa. Un gimnasio de una sola sucursal tiene una fila.'
+}
+
+
+// ============================================================================
+// BLOQUE 1: PERSONAS Y ACCESO
+// Cubre DFD 1. Gestion_Socios (1.1 Area_Accesos, 1.2 Area_Dato)
+// ============================================================================
+
+Table Persona {
+  id_persona int [pk, increment]
+  dni varchar(20) [unique, not null]
+  apellido varchar(100) [not null]
+  nombre varchar(100) [not null]
+  sexo varchar(20)
+  email varchar(150) [unique]
+  calle varchar(100)
+  numero_calle varchar(10)
+  localidad varchar(80)
+  fecha_nacimiento date
+  emergencia_nombre varchar(150)
+  emergencia_telefono varchar(30)
+  emergencia_parentesco varchar(50)
+  fecha_alta timestamp [default: `now()`]
+  activo boolean [default: true]
+
+  Note: '''
+  SUPERTIPO. Atributos comunes viven acá, no repetidos por rol.
+  1FN: nombre/apellido separados, dirección descompuesta.
+  Contacto de emergencia como columnas (monovaluado, cumple 1FN).
+  '''
+}
+
+Table Telefono {
+  id_telefono int [pk, increment]
+  id_persona int [not null, ref: > Persona.id_persona]
+  numero varchar(30) [not null]
+  tipo tipo_telefono [default: 'CELULAR']
+  principal boolean [default: false]
+
+  Note: '1FN: una persona puede tener varios teléfonos -> tabla propia.'
+}
+
+Table Usuario {
+  id_usuario int [pk, increment]
+  id_persona int [unique, not null, ref: > Persona.id_persona]
+  username varchar(50) [unique, not null]
+  password_hash varchar(255) [not null]
+  ultimo_acceso timestamp
+  intentos_fallidos int [default: 0]
+  bloqueado boolean [default: false]
+  activo boolean [default: true]
+
+  Note: 'DFD 1.1.2 login. El rol se DERIVA de en qué subtipo aparece la persona.'
+}
+
+Table Dueno {
+  id_dueno int [pk, increment]
+  id_persona int [unique, not null, ref: > Persona.id_persona]
+  porcentaje_participacion decimal(5,2)
+}
+
+Table Empleado {
+  id_empleado int [pk, increment]
+  id_persona int [unique, not null, ref: > Persona.id_persona]
+  id_sede int [not null, ref: > Sede.id_sede]
+  legajo varchar(20) [unique]
+  fecha_ingreso date [not null]
+  fecha_egreso date
+  activo boolean [default: true]
+
+  Note: '3FN: el dueño se obtiene vía Sede, no se repite acá.'
+}
+
+Table Entrenador {
+  id_entrenador int [pk, increment]
+  id_empleado int [unique, not null, ref: > Empleado.id_empleado]
+  titulo varchar(100)
+  especialidad varchar(100)
+  matricula varchar(50)
+}
+
+Table Nutricionista {
+  id_nutricionista int [pk, increment]
+  id_empleado int [unique, not null, ref: > Empleado.id_empleado]
+  titulo varchar(100)
+  matricula varchar(50)
+}
+
+Table Recepcionista {
+  id_recepcionista int [pk, increment]
+  id_empleado int [unique, not null, ref: > Empleado.id_empleado]
+  turno_laboral varchar(20)
+}
+
+Table Socio {
+  id_socio int [pk, increment]
+  id_persona int [unique, not null, ref: > Persona.id_persona]
+  id_sede int [not null, ref: > Sede.id_sede]
+  id_entrenador_a_cargo int [ref: > Entrenador.id_entrenador]
+  numero_socio varchar(20) [unique]
+  fecha_alta date [not null]
+  objetivo varchar(150)
+  observaciones text
+  activo boolean [default: true]
+}
+
+Table Baja {
+  id_baja int [pk, increment]
+  id_socio int [not null, ref: > Socio.id_socio]
+  fecha_baja date [not null]
+  tipo tipo_baja
+  motivo varchar(250)
+
+  Note: 'DFD 1.1.3 / 6.3.2. Un socio puede reinscribirse -> es un hecho con fecha.'
+}
+
+
+// ============================================================================
+// BLOQUE 2: CUOTAS, PAGOS, DEUDAS, PROMOCIONES
+// Cubre DFD 2. Gestion_Cuotas
+// ============================================================================
+
+Table Tipo_Membresia {
+  id_tipo_membresia int [pk, increment]
+  nombre varchar(50) [unique, not null]
+  descripcion text
+  duracion_dias int [not null]
+  precio_actual decimal(10,2) [not null]
+  activo boolean [default: true]
+
+  Note: '3FN: saca la dependencia transitiva Tipo -> Precio de Membresia.'
+}
+
+Table Promocion {
+  id_promocion int [pk, increment]
+  id_dueno int [not null, ref: > Dueno.id_dueno]
+  id_sede int [ref: > Sede.id_sede]
+  nombre varchar(100) [not null]
+  descripcion text
+  porcentaje_descuento decimal(5,2)
+  monto_fijo_descuento decimal(10,2)
+  fecha_inicio date [not null]
+  fecha_fin date [not null]
+  activo boolean [default: true]
+
+  Note: 'DFD 2.2. id_sede NULL = aplica a todas las sedes.'
+}
+
+Table Membresia {
+  id_membresia int [pk, increment]
+  id_socio int [not null, ref: > Socio.id_socio]
+  id_tipo_membresia int [not null, ref: > Tipo_Membresia.id_tipo_membresia]
+  id_promocion int [ref: > Promocion.id_promocion]
+  precio_pactado decimal(10,2) [not null]
+  fecha_inicio date [not null]
+  fecha_vencimiento date [not null]
+  estado estado_membresia [default: 'ACTIVA']
+
+  indexes {
+    (id_socio, fecha_inicio) [unique]
+    (estado, fecha_vencimiento)
+  }
+  Note: '''
+  1:N con Socio -> historial de renovaciones.
+  precio_pactado (histórico) != Tipo_Membresia.precio_actual (vigente): no viola 3FN.
+  '''
+}
+
+Table Pago {
+  id_pago int [pk, increment]
+  id_socio int [not null, ref: > Socio.id_socio]
+  id_membresia int [ref: > Membresia.id_membresia]
+  id_sede int [ref: > Sede.id_sede]
+  metodo metodo_pago [not null]
+  monto decimal(10,2) [not null]
+  fecha_pago timestamp [not null, default: `now()`]
+  periodo_desde date
+  periodo_hasta date
+  es_adelanto boolean [default: false]
+  estado estado_pago [default: 'CONFIRMADO']
+  fecha_cancelacion timestamp
+  numero_comprobante varchar(50) [unique]
+
+  indexes {
+    (id_socio, fecha_pago)
+    (id_sede, fecha_pago)
+  }
+  Note: 'DFD 2.1. Un pago nunca se borra: estado = CANCELADO.'
+}
+
+Table Deuda {
+  id_deuda int [pk, increment]
+  id_socio int [not null, ref: > Socio.id_socio]
+  id_membresia int [ref: > Membresia.id_membresia]
+  monto decimal(10,2) [not null]
+  fecha_generacion date [not null]
+  fecha_vencimiento date
+  estado estado_deuda [default: 'PENDIENTE']
+  generada_automaticamente boolean [default: true]
+  id_pago_cancelatorio int [ref: > Pago.id_pago]
+  observaciones varchar(250)
+
+  indexes {
+    (id_socio, estado)
+  }
+  Note: 'DFD 2.3. Se genera automáticamente al vencer una membresía impaga (job diario).'
+}
+
+
+// ============================================================================
+// BLOQUE 3: SALUD Y SEGUIMIENTO FISICO
+// Cubre DFD 3.2 Area_Peso
+// ============================================================================
+
+Table Registro_Salud {
+  id_registro_salud int [pk, increment]
+  id_socio int [not null, ref: > Socio.id_socio]
+  fecha date [not null]
+  peso decimal(5,2)
+  altura decimal(3,2)
+  grasa_corporal decimal(4,2)
+  masa_muscular decimal(5,2)
+  observaciones text
+
+  indexes {
+    (id_socio, fecha) [unique]
+  }
+  Note: '''
+  HISTORICO 1:N. unique (id_socio, fecha) impide dos pesos el mismo día,
+  pero conserva la progresión. Peso actual = SELECT ... ORDER BY fecha DESC LIMIT 1.
+  '''
+}
+
+Table Patologia {
+  id_patologia int [pk, increment]
+  nombre varchar(100) [unique, not null]
+  descripcion text
+
+  Note: '3FN: catálogo.'
+}
+
+Table Socio_Patologia {
+  id_socio int [pk, ref: > Socio.id_socio]
+  id_patologia int [pk, ref: > Patologia.id_patologia]
+  fecha_diagnostico date
+  observaciones text
+
+  Note: '1FN: rompe el varchar multivaluado. 2FN: atributos dependen de la clave completa.'
+}
+
+
+// ============================================================================
+// BLOQUE 4: RUTINAS
+// Cubre DFD 3. Gestion_Rutinas
+// ============================================================================
+
+Table Ejercicio {
+  id_ejercicio int [pk, increment]
+  nombre varchar(100) [unique, not null]
+  grupo_muscular varchar(50) [not null]
+  descripcion text
+  url_video varchar(255)
+  requiere_maquina boolean [default: false]
+
+  indexes {
+    (grupo_muscular)
+  }
+  Note: '3FN: grupo_muscular depende del ejercicio, no de la rutina.'
+}
+
+Table Rutina {
+  id_rutina int [pk, increment]
+  id_entrenador int [not null, ref: > Entrenador.id_entrenador]
+  nombre varchar(100) [not null]
+  objetivo varchar(100)
+  nivel varchar(20)
+  dias_por_semana int
+  fecha_creacion date [default: `now()`]
+  activo boolean [default: true]
+
+  Note: 'DFD 3.1.'
+}
+
+Table Rutina_Ejercicio {
+  id_rutina_ejercicio int [pk, increment]
+  id_rutina int [not null, ref: > Rutina.id_rutina]
+  id_ejercicio int [not null, ref: > Ejercicio.id_ejercicio]
+  dia int [not null]
+  orden int [not null]
+  series int
+  repeticiones varchar(20)
+  peso_sugerido decimal(6,2)
+  descanso_segundos int
+  observaciones varchar(200)
+
+  indexes {
+    (id_rutina, dia, orden) [unique]
+  }
+  Note: '1FN: una rutina tiene muchos ejercicios -> tabla intermedia.'
+}
+
+Table Asignacion_Rutina {
+  id_asignacion_rutina int [pk, increment]
+  id_socio int [not null, ref: > Socio.id_socio]
+  id_rutina int [not null, ref: > Rutina.id_rutina]
+  id_entrenador int [ref: > Entrenador.id_entrenador]
+  fecha_inicio date [not null]
+  fecha_fin date
+  estado estado_asignacion [default: 'ACTIVA']
+
+  indexes {
+    (id_socio, id_rutina, fecha_inicio) [unique]
+    (id_socio, estado)
+  }
+  Note: 'PK subrogada: permite historial y varias rutinas por socio.'
+}
+
+
+// ============================================================================
+// BLOQUE 5: DIETAS
+// Cubre DFD 4. Gestion_Dietas
+// ============================================================================
+
+Table Dieta {
+  id_dieta int [pk, increment]
+  id_nutricionista int [not null, ref: > Nutricionista.id_nutricionista]
+  nombre varchar(100) [not null]
+  objetivo varchar(100)
+  calorias_diarias int
+  descripcion text
+  fecha_creacion date [default: `now()`]
+  activo boolean [default: true]
+
+  Note: 'DFD 4.1.'
+}
+
+Table Comida {
+  id_comida int [pk, increment]
+  id_dieta int [not null, ref: > Dieta.id_dieta]
+  dia int
+  momento varchar(30)
+  descripcion text [not null]
+  calorias int
+
+  indexes {
+    (id_dieta, dia)
+  }
+  Note: '1FN: una dieta tiene varias comidas -> tabla propia.'
+}
+
+Table Asignacion_Dieta {
+  id_asignacion_dieta int [pk, increment]
+  id_socio int [not null, ref: > Socio.id_socio]
+  id_dieta int [not null, ref: > Dieta.id_dieta]
+  id_nutricionista int [ref: > Nutricionista.id_nutricionista]
+  fecha_inicio date [not null]
+  fecha_fin date
+  estado estado_asignacion [default: 'ACTIVA']
+  observaciones text
+
+  indexes {
+    (id_socio, estado)
+  }
+  Note: 'Almacén "Dietas asignadas" del DFD 4.2. N:M.'
+}
+
+
+// ============================================================================
+// BLOQUE 6: TURNOS Y ASISTENCIA
+// Cubre DFD 5. Gestion_Turnos
+// NOTA: modelo actual = día habilitado con cupo (acceso libre 24hs).
+// Pendiente de definir: actividades con horario fijo (boxeo, yoga, etc.)
+// ============================================================================
+
+Table Turno {
+  id_turno int [pk, increment]
+  id_sede int [not null, ref: > Sede.id_sede]
+  fecha date [not null]
+  cupo_maximo int [not null]
+  estado estado_turno [default: 'HABILITADO']
+  id_entrenador_a_cargo int [ref: > Entrenador.id_entrenador]
+  motivo_cancelacion varchar(200)
+  observaciones varchar(200)
+
+  indexes {
+    (id_sede, fecha) [unique]
+  }
+  Note: '''
+  Un Turno = un DÍA habilitado con cupo en una sede (acceso libre 24hs).
+  PENDIENTE: si se agregan actividades con horario fijo (boxeo, pilates,
+  yoga, masajes), agregar tabla Actividad + hora_inicio/hora_fin y ampliar
+  el unique. Decisión de alcance sin resolver todavía.
+  '''
+}
+
+Table Reserva {
+  id_reserva int [pk, increment]
+  id_turno int [not null, ref: > Turno.id_turno]
+  id_socio int [not null, ref: > Socio.id_socio]
+  fecha_reserva timestamp [default: `now()`]
+  estado estado_reserva [default: 'RESERVADA']
+  fecha_cancelacion timestamp
+
+  indexes {
+    (id_turno, id_socio) [unique]
+    (id_turno, estado)
+  }
+  Note: 'DFD 5.2. unique impide reservar dos veces el mismo día.'
+}
+
+Table Asistencia {
+  id_asistencia int [pk, increment]
+  id_socio int [not null, ref: > Socio.id_socio]
+  id_sede int [not null, ref: > Sede.id_sede]
+  id_reserva int [ref: > Reserva.id_reserva]
+  fecha_hora_ingreso timestamp [not null]
+  fecha_hora_egreso timestamp
+
+  indexes {
+    (id_socio, fecha_hora_ingreso)
+    (id_sede, fecha_hora_ingreso)
+  }
+  Note: '1:N con Reserva: el socio puede entrar y salir varias veces por día.'
+}
+
+
+// ============================================================================
+// BLOQUE 7: CONSULTA CRUZADA ENTRE PROFESIONALES
+// ============================================================================
+
+Table Consulta_Cruzada {
+  id_consulta int [pk, increment]
+  id_empleado int [not null, ref: > Empleado.id_empleado]
+  id_rutina int [ref: > Rutina.id_rutina]
+  id_dieta int [ref: > Dieta.id_dieta]
+  fecha_consulta timestamp [default: `now()`]
+
+  indexes {
+    (id_empleado, fecha_consulta)
+  }
+  Note: '''
+  Un nutricionista consulta la rutina de un socio (para ajustar dieta al gasto)
+  o un entrenador consulta la dieta. El consultor apunta a Empleado (supertipo).
+  Requiere CHECK en el SQL (DBML no lo soporta):
+    CHECK ( (id_rutina IS NOT NULL) <> (id_dieta IS NOT NULL) )
+  '''
+}

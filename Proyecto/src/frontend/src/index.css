@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+@theme {
+  --color-surface-base: #15171C;
+  --color-surface-card: #1C1F26;
+  --color-surface-hover: #242832;
+
+  --color-primary-volt: #C6F135;
+  --color-primary-dim: #9BBE22;
+  --color-accent-coral: #FF6B3D;
+  --color-accent-dim: #D2542C;
+
+  --color-border-idle: #2A3324;
+  --color-border-active: #586A36;
+  --color-border-glow: rgba(198, 241, 53, 0.25);
+
+  --color-text-main: #F2F3F5;
+  --color-text-secondary: #A4A9B4;
+  --color-text-muted: #6C7280;
+
+  --color-status-ok: #3DDC97;
+  --color-status-warn: #FFC24B;
+  --color-status-danger: #FF5C5C;
+
+  --font-heading: 'Barlow Semi Condensed', sans-serif;
+  --font-body: 'Archivo', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+}
+
+/* Kinetic Carbon es dark-only (main.md: theme_mode forzado a oscuro) — sin
+   variante clara ni @media (prefers-color-scheme). */
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-surface-base);
+  color: var(--color-text-main);
+  font-family: var(--font-body);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-heading);
+}

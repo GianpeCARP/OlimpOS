@@ -1,0 +1,73 @@
+# .gitignore de la raíz del repo (D:\OlimpOs).
+#
+# El que está en Proyecto/ sigue existiendo y aplica de ahí para abajo; este
+# cubre TODO el repo, incluidas las carpetas que no son el frontend
+# (Proyeto-Python, OTR COSA, VIEJO, design).
+#
+# Los patrones sin barra inicial matchean a cualquier profundidad, así que
+# "node_modules" acá alcanza para Proyecto/src/frontend/node_modules.
+
+# --- Secretos: NUNCA subir ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+credentials.json
+
+# --- Repos de git anidados, desactivados ---
+#
+# Proyeto-Python/Proyecto era un repo propio (10 commits, remoto en
+# github.com/GianpeCARP/Proyecto). Git no sube el contenido de un repo
+# anidado: lo trata como un puntero y la carpeta aparece VACÍA en GitHub.
+# Para que sus archivos entren como archivos normales se le renombró el
+# .git a .git.repo-viejo-backup — no se borró nada, y se revierte con:
+#   Rename-Item "Proyeto-Python\Proyecto\.git.repo-viejo-backup" ".git"
+# Ese backup es historial interno de git (objetos, packs, refs): no tiene
+# por qué viajar como archivos sueltos dentro del repo nuevo.
+.git.repo-viejo-backup/
+
+# --- Dependencias y builds ---
+node_modules/
+dist/
+dist-ssr/
+build/
+*.local
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+
+# --- Logs ---
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Editores y sistema operativo ---
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# --- Bases de datos locales / dumps ---
+*.sqlite
+*.sqlite3
+*.db
+*.bak

@@ -1,0 +1,53 @@
+Para mañana: no uses --continue. Ese flag es justamente el que te salió caro, porque reinyecta toda la transcripción de la conversación anterior (incluida toda la sesión de hoy, que fue larga).
+
+Lo que armamos con el sistema de memoria está pensado para reemplazar eso. En la terminal simplemente escribís:
+
+claude
+
+(sesión nueva, sin flags). Al arrancar, MEMORY.md se carga automáticamente como contexto liviano, y desde ahí yo leo project_olimpos_frontend_status.md si hace falta — eso te da la continuidad real (qué está hecho, el sistema de permisos, el pendiente del portal de Socio) sin pagar el costo de repasar toda la conversación de hoy token por token.
+
+Guardá --continue/--resume para cuando necesites literalmente retomar una charla puntual reciente en el mismo día (por ejemplo, seguir debuggeando algo que quedó a mitad de camino hace 10 minutos), no como forma habitual de arrancar el día siguiente.
+
+ACÁ ESTA EL STATUS:
+C:\Users\Pardini\.claude\projects\D--OlimpOs-Proyecto\memory\project_olimpos_frontend_status.md
+
+
+ACÁ LA ACTUALIZACIÓN DEL PROGRESO:
+Lo que dejé sin tocar porque es decisión tuya
+
+- F5 te desloguea (el store no persiste) — hay que elegir entre localStorage, sessionStorage o cookie httpOnly.
+- El portal de Socio: ahora está verificado lo grave que es — un socio dado de baja entró y vio DNIs de todos los socios, legajos del personal, y tenía botones de alta/baja.
+- Sin navegación mobile: sidebar de 260px fijos, sin hamburguesa. Las grillas internas sí son responsivas.
+- Sin scoping por propietario: cualquier entrenador edita las rutinas de cualquier otro.
+
+Informe completo en AUDITORIA_2026-08-03.md, con la tabla de qué reglas hay que revalidar en FastAPI — porque los fixes 1-5 tapan agujeros donde se dibujan los botones, no donde se decide.
+
+cd D:\OlimpOs\Proyecto\src\frontend
+npm run dev
+
+Después abrís http://localhost:5173 en Chrome. Para abrirlo directo desde la misma terminal:
+
+start http://localhost:5173
+
+Un par de cosas útiles:
+
+- Ya está corriendo ahora mismo — lo dejé levantado en background de esta sesión. Si te tira Port 5173 is in use, es eso; entrás directo a la URL sin correr nada.
+- Ojo con F5: recargar la página te desloguea (el store no persiste) y además resetea la base mock a los datos iniciales. Navegá por el sidebar, no por la barra de direcciones.
+
+Cuentas para probar:
+
+┌──────────────────────┬─────────────────┬────────────────┐
+│         Rol          │     Usuario     │   Contraseña   │
+├──────────────────────┼─────────────────┼────────────────┤
+│ Socio (portal nuevo) │ socio_demo      │ Socio1234      │
+├──────────────────────┼─────────────────┼────────────────┤
+│ Dueño                │ dueno_demo      │ Dueno1234      │
+├──────────────────────┼─────────────────┼────────────────┤
+│ Entrenador           │ entrenador_demo │ Entrenador1234 │
+├──────────────────────┼─────────────────┼────────────────┤
+│ Nutricionista        │ nutri_demo      │ Nutri1234      │
+├──────────────────────┼─────────────────┼────────────────┤
+│ Recepcionista        │ recepcion_demo  │ Recepcion1234  │
+└──────────────────────┴─────────────────┴────────────────┘
+
+Otros comandos del proyecto: npm run lint, npm run build, y npx tsc --noEmit para el typecheck solo.
