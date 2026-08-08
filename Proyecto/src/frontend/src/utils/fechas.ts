@@ -62,3 +62,43 @@ export function diasEntre(desde: Date, hasta: Date): number {
 export function finDelMesAnterior(referencia: Date = new Date()): Date {
   return new Date(referencia.getFullYear(), referencia.getMonth(), 0, 23, 59, 59);
 }
+
+/**
+ * Suma meses con el mismo criterio que usa Postgres para `fecha + interval
+ * '1 month'`: si el día no existe en el mes destino (31 de enero + 1 mes),
+ * cae al último día de ese mes en vez de desbordar al mes siguiente.
+ * `setMonth` de JS por sí solo desborda (31 ene + 1 mes daría 3 mar, no 28/29
+ * feb), así que se clampea contra el último día real del mes destino.
+ */
+export function sumarMeses(fecha: Date, meses: number): Date {
+  const anio = fecha.getFullYear();
+  const mes = fecha.getMonth();
+  // Día 0 del mes siguiente al destino = último día del mes destino.
+  const ultimoDiaDestino = new Date(anio, mes + meses + 1, 0).getDate();
+  return new Date(anio, mes + meses, Math.min(fecha.getDate(), ultimoDiaDestino), fecha.getHours(), fecha.getMinutes(), fecha.getSeconds());
+}
+
+/**
+ * Horas completas entre dos instantes (hasta - desde), CON precisión de
+ * hora — a diferencia de diasEntre, que trunca a medianoche y por eso no
+ * sirve para "¿cancelaste con 24hs de anticipación?": esa regla necesita la
+ * hora exacta del turno, no el día calendario.
+ */
+export function horasEntre(desde: Date, hasta: Date): number {
+  const MS_POR_HORA = 1000 * 60 * 60;
+  return (hasta.getTime() - desde.getTime()) / MS_POR_HORA;
+}
+
+/**
+ * Lunes 00:00:00 y domingo 23:59:59 de la semana calendario que contiene
+ * `fecha`. Semana = lunes a domingo (uso local), no domingo a sábado.
+ * `getDay()` de JS devuelve 0=domingo..6=sábado; se normaliza para que el
+ * lunes sea siempre el primer día de la semana.
+ */
+export function semanaCalendario(fecha: Date): { lunes: Date; domingo: Date } {
+  const diaSemana = fecha.getDay(); // 0=domingo, 1=lunes, ..., 6=sábado
+  const diasDesdeElLunes = diaSemana === 0 ? 6 : diaSemana - 1;
+  const lunes = new Date(fecha.getFullYear(), fecha.getMonth(), fecha.getDate() - diasDesdeElLunes);
+  const domingo = new Date(lunes.getFullYear(), lunes.getMonth(), lunes.getDate() + 6, 23, 59, 59, 999);
+  return { lunes, domingo };
+}

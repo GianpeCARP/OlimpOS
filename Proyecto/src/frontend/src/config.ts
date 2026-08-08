@@ -12,6 +12,9 @@ import {
   UserRound,
   TrendingUp,
   CreditCard,
+  CalendarCheck,
+  Fingerprint,
+  Wallet,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -88,6 +91,19 @@ export const Routes = {
   RUTINAS: 'rutinas',
   NUTRICION: 'nutricion',
   USUARIOS: 'usuarios',
+  // Panel de recepción: fichajes del día (RFID + carga manual). Sección de
+  // gestión como las de arriba, no del portal del socio — el socio ficha
+  // pasando su tarjeta, no entrando a una pantalla.
+  ASISTENCIA: 'asistencia',
+  // ABM del catálogo (Actividad + Plan_Actividad): cupo, precio, ventana de
+  // cancelación. Exclusiva del Dueño en el .md, igual criterio que
+  // Alta/Baja de Personal — es configuración de negocio, no operativa del
+  // día a día como Asistencia o Socios.
+  ACTIVIDADES: 'actividades',
+  // Cobrar membresía, deudas, planes de actividad y clases sueltas. Mismo
+  // par de roles que Asistencia (Dueño + Recepcionista): es operativo del
+  // día a día, no configuración de negocio como Actividades.
+  COBROS: 'cobros',
 
   // --- Portal del socio ---
   //
@@ -103,6 +119,12 @@ export const Routes = {
   // señal de que se coló una consulta global donde no va.
   MI_PERFIL: 'mi-perfil',
   MI_RUTINA: 'mi-rutina',
+  // Actividades con horario (yoga, boxeo, etc.) — distinto de MI_RUTINA
+  // (musculación) y de MIS_TURNOS (que sigue sin construirse, ver
+  // project-olimpos-modelo-turnos). Comprar un plan no necesita elegir
+  // turno; sólo "comprar clase suelta" sí, y esa parte puntual vive DENTRO
+  // de esta vista con un selector acotado — no es la vista Mis Turnos.
+  MIS_ACTIVIDADES: 'mis-actividades',
   MI_PROGRESO: 'mi-progreso',
   MI_DIETA: 'mi-dieta',
   MI_CUOTA: 'mi-cuota',
@@ -219,6 +241,7 @@ export interface PermisosRol {
 const SIN_ACCESO_A_PORTAL_SOCIO = {
   [Routes.MI_PERFIL]: Acceso.NINGUNO,
   [Routes.MI_RUTINA]: Acceso.NINGUNO,
+  [Routes.MIS_ACTIVIDADES]: Acceso.NINGUNO,
   [Routes.MI_PROGRESO]: Acceso.NINGUNO,
   [Routes.MI_DIETA]: Acceso.NINGUNO,
   [Routes.MI_CUOTA]: Acceso.NINGUNO,
@@ -233,6 +256,9 @@ const SIN_ACCESO_A_ADMIN = {
   [Routes.RUTINAS]: Acceso.NINGUNO,
   [Routes.NUTRICION]: Acceso.NINGUNO,
   [Routes.USUARIOS]: Acceso.NINGUNO,
+  [Routes.ASISTENCIA]: Acceso.NINGUNO,
+  [Routes.ACTIVIDADES]: Acceso.NINGUNO,
+  [Routes.COBROS]: Acceso.NINGUNO,
 } as const;
 
 export const PERMISOS: Record<RolValue, PermisosRol> = {
@@ -245,6 +271,9 @@ export const PERMISOS: Record<RolValue, PermisosRol> = {
       [Routes.RUTINAS]: Acceso.TOTAL,
       [Routes.NUTRICION]: Acceso.TOTAL,
       [Routes.USUARIOS]: Acceso.TOTAL,
+      [Routes.ASISTENCIA]: Acceso.TOTAL,
+      [Routes.ACTIVIDADES]: Acceso.TOTAL,
+      [Routes.COBROS]: Acceso.TOTAL,
       ...SIN_ACCESO_A_PORTAL_SOCIO,
     },
     acciones: {
@@ -284,6 +313,9 @@ export const PERMISOS: Record<RolValue, PermisosRol> = {
       [Routes.RUTINAS]: Acceso.TOTAL,
       [Routes.NUTRICION]: Acceso.TOTAL,
       [Routes.USUARIOS]: Acceso.TOTAL,
+      [Routes.ASISTENCIA]: Acceso.TOTAL,
+      [Routes.ACTIVIDADES]: Acceso.NINGUNO,
+      [Routes.COBROS]: Acceso.TOTAL,
       ...SIN_ACCESO_A_PORTAL_SOCIO,
     },
     acciones: {
@@ -312,6 +344,9 @@ export const PERMISOS: Record<RolValue, PermisosRol> = {
       [Routes.RUTINAS]: Acceso.TOTAL,
       [Routes.NUTRICION]: Acceso.LECTURA,
       [Routes.USUARIOS]: Acceso.NINGUNO,
+      [Routes.ASISTENCIA]: Acceso.NINGUNO,
+      [Routes.ACTIVIDADES]: Acceso.NINGUNO,
+      [Routes.COBROS]: Acceso.NINGUNO,
       ...SIN_ACCESO_A_PORTAL_SOCIO,
     },
     acciones: {
@@ -337,6 +372,9 @@ export const PERMISOS: Record<RolValue, PermisosRol> = {
       [Routes.RUTINAS]: Acceso.LECTURA,
       [Routes.NUTRICION]: Acceso.TOTAL,
       [Routes.USUARIOS]: Acceso.NINGUNO,
+      [Routes.ASISTENCIA]: Acceso.NINGUNO,
+      [Routes.ACTIVIDADES]: Acceso.NINGUNO,
+      [Routes.COBROS]: Acceso.NINGUNO,
       ...SIN_ACCESO_A_PORTAL_SOCIO,
     },
     acciones: {
@@ -377,6 +415,7 @@ export const PERMISOS: Record<RolValue, PermisosRol> = {
       ...SIN_ACCESO_A_ADMIN,
       [Routes.MI_PERFIL]: Acceso.TOTAL,
       [Routes.MI_RUTINA]: Acceso.TOTAL,
+      [Routes.MIS_ACTIVIDADES]: Acceso.TOTAL,
       [Routes.MI_PROGRESO]: Acceso.TOTAL,
       [Routes.MI_DIETA]: Acceso.TOTAL,
       [Routes.MI_CUOTA]: Acceso.TOTAL,
@@ -410,6 +449,9 @@ export const SECCIONES_ADMIN: SeccionPrivada[] = [
   Routes.RUTINAS,
   Routes.NUTRICION,
   Routes.USUARIOS,
+  Routes.ASISTENCIA,
+  Routes.ACTIVIDADES,
+  Routes.COBROS,
 ];
 
 /** Secciones del portal del socio, en el orden del sidebar. */
@@ -554,6 +596,11 @@ export const RolEmpleado = {
   ENTRENADOR: 'Entrenador',
   NUTRICIONISTA: 'Nutricionista',
   RECEPCIONISTA: 'Recepcionista',
+  // Cuarto tipo de empleado (especificacion_definitiva_actividades.md, Fase
+  // 4). A diferencia de los otros tres, un Profesor NO tiene rol de sesión:
+  // da clases, no inicia sesión en el sistema — por eso no tiene entrada en
+  // Roles ni en ROL_SESION_POR_ROL_EMPLEADO (personalService.ts).
+  PROFESOR: 'Profesor',
 } as const;
 
 export type RolEmpleadoValue = (typeof RolEmpleado)[keyof typeof RolEmpleado];
@@ -627,6 +674,33 @@ export const EstadoDieta = {
 
 export type EstadoDietaValue = (typeof EstadoDieta)[keyof typeof EstadoDieta];
 
+// Estado de una Inscripcion_Actividad (especificacion_definitiva_
+// actividades.md). A diferencia de EstadoRutina/EstadoDieta, acá sí hay
+// tres valores — la inscripción vence sola por fecha (REGLA 6) además de
+// poder cancelarse a mano. Las claves son los mismos literales que guarda
+// el mock (actividadService.InscripcionListada.estado); esto es sólo la
+// traducción para mostrar, igual que EstadoSocio con 'Activo'/'Vencido'.
+export const EstadoInscripcionActividad = {
+  ACTIVA: 'Activa',
+  VENCIDA: 'Vencida',
+  CANCELADA: 'Cancelada',
+} as const;
+
+export type EstadoInscripcionActividadValue =
+  (typeof EstadoInscripcionActividad)[keyof typeof EstadoInscripcionActividad];
+
+// Estado de un Pago (Cobros, especificacion_definitiva_actividades.md).
+// Mismo criterio que EstadoInscripcionActividad: las claves son el enum
+// crudo de Postgres, los valores el label en español para StatusBadge.
+export const EstadoPago = {
+  CONFIRMADO: 'Confirmado',
+  PENDIENTE: 'Pendiente',
+  CANCELADO: 'Cancelado',
+  REEMBOLSADO: 'Reembolsado',
+} as const;
+
+export type EstadoPagoValue = (typeof EstadoPago)[keyof typeof EstadoPago];
+
 // Estado de una cuenta de acceso (Usuario). A diferencia de EstadoSocio/
 // EstadoEmpleado/EstadoRutina/EstadoDieta, acá hay tres valores posibles
 // porque Usuario tiene dos columnas booleanas independientes: `activo`
@@ -655,9 +729,12 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', icon: LayoutDashboard, route: Routes.DASHBOARD },
   { label: 'Socios', icon: Users, route: Routes.SOCIOS },
+  { label: 'Cobros', icon: Wallet, route: Routes.COBROS },
+  { label: 'Asistencia', icon: Fingerprint, route: Routes.ASISTENCIA },
   { label: 'Personal', icon: UserCog, route: Routes.PERSONAL },
   { label: 'Rutinas', icon: Dumbbell, route: Routes.RUTINAS },
   { label: 'Nutrición', icon: Apple, route: Routes.NUTRICION },
+  { label: 'Actividades', icon: CalendarCheck, route: Routes.ACTIVIDADES },
   { label: 'Usuarios', icon: ShieldCheck, route: Routes.USUARIOS },
 ];
 
@@ -674,6 +751,7 @@ export const NAV_ITEMS: NavItem[] = [
 export const SOCIO_NAV_ITEMS: NavItem[] = [
   { label: 'Mi perfil', icon: UserRound, route: Routes.MI_PERFIL },
   { label: 'Mi rutina', icon: Dumbbell, route: Routes.MI_RUTINA },
+  { label: 'Mis actividades', icon: CalendarCheck, route: Routes.MIS_ACTIVIDADES },
   { label: 'Mi progreso', icon: TrendingUp, route: Routes.MI_PROGRESO },
   { label: 'Mi dieta', icon: Apple, route: Routes.MI_DIETA },
   { label: 'Mi cuota', icon: CreditCard, route: Routes.MI_CUOTA },

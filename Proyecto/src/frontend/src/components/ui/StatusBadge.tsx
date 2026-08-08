@@ -1,4 +1,12 @@
-import { colors, EstadoEmpleado, EstadoRutina, EstadoSocio, EstadoUsuario } from '../../config';
+import {
+  colors,
+  EstadoEmpleado,
+  EstadoInscripcionActividad,
+  EstadoPago,
+  EstadoRutina,
+  EstadoSocio,
+  EstadoUsuario,
+} from '../../config';
 
 // Equivalente de status_badge + STATUS_COLORS (ui.md). Las claves salen de
 // EstadoSocio (config.ts) y no de literales sueltos: el service calcula el
@@ -19,6 +27,14 @@ const STATUS_COLORS: Record<string, string> = {
   // SIN_MEMBRESIA no se lista: el neutro por defecto es justo lo que
   // corresponde a un socio recién dado de alta al que todavía no se le
   // cargó el plan.
+  [EstadoInscripcionActividad.VENCIDA]: colors.statusDanger,
+  [EstadoInscripcionActividad.CANCELADA]: colors.textMuted,
+  // EstadoInscripcionActividad.ACTIVA es el mismo literal 'Activa' que
+  // EstadoRutina/EstadoDieta.ACTIVA — ya cubierto arriba.
+  [EstadoPago.CONFIRMADO]: colors.statusOk,
+  [EstadoPago.PENDIENTE]: colors.statusWarn,
+  [EstadoPago.CANCELADO]: colors.textMuted,
+  [EstadoPago.REEMBOLSADO]: colors.statusWarn,
 };
 
 interface StatusBadgeProps {

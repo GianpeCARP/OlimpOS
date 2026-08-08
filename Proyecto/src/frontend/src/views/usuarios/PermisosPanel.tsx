@@ -40,15 +40,20 @@ const ACCIONES_CON_PANTALLA: { clave: keyof AccionesRol; label: string }[] = [
   { clave: 'gestionDietas', label: 'Gestión de dietas' },
   { clave: 'gestionUsuarios', label: 'Gestión de usuarios' },
   { clave: 'verIngresos', label: 'Ver ingresos' },
+  // Cobros (especificacion_definitiva_actividades.md, Fase 4) le dio
+  // pantalla propia a esta acción — se mueve de la lista de abajo, no se
+  // duplica.
+  { clave: 'cobrarPagos', label: 'Cobrar/consultar pagos' },
 ];
 
 /**
  * Acciones que ya están en la matriz pero todavía no tienen panel
  * construido. Se listan aparte para no dar a entender que hoy se están
- * aplicando: no hay pantalla de pagos, promociones, deudas ni turnos.
+ * aplicando: no hay pantalla de promociones, deudas independientes ni
+ * turnos (gestionDeudas es CONDONAR/generar deuda a mano — cobrar una ya
+ * generada sí tiene pantalla, es cobrarPagos, arriba).
  */
 const ACCIONES_SIN_PANTALLA: { clave: keyof AccionesRol; label: string }[] = [
-  { clave: 'cobrarPagos', label: 'Cobrar/consultar pagos' },
   { clave: 'gestionPromociones', label: 'Promociones' },
   { clave: 'gestionDeudas', label: 'Deudas' },
   { clave: 'gestionTurnos', label: 'Turnos' },

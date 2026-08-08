@@ -2,7 +2,7 @@ import { Pencil, RotateCcw, UserX } from 'lucide-react';
 import { StatusBadge } from '../../components/ui';
 import { EstadoSocio } from '../../config';
 import type { SocioListado } from '../../services/sociosService';
-import { formatearFechaCorta } from '../../utils/format';
+import { formatearFecha } from '../../utils/format';
 import { parsearFecha } from '../../utils/fechas';
 
 // Equivalente de _table_row (estructura_socios.md): avatar | nombre | plan |
@@ -52,7 +52,7 @@ export function SocioTableRow({
         <StatusBadge status={socio.estado} />
       </td>
       <td className="py-3 font-body text-sm text-text-secondary">
-        {socio.vencimiento ? formatearFechaCorta(parsearFecha(socio.vencimiento)) : '—'}
+        {socio.vencimiento ? formatearFecha(parsearFecha(socio.vencimiento)) : '—'}
       </td>
       <td className="py-3 pr-5">
         <div className="flex items-center justify-end gap-1">

@@ -35,9 +35,16 @@ import type {
   RutinaEjercicio,
   RegistroSalud,
   Deuda,
+  Profesor,
+  Actividad,
+  PlanActividad,
+  InscripcionActividad,
+  ProfesorActividad,
+  Reserva,
+  Asistencia,
 } from '../types';
 import { Roles, type RolValue } from '../config';
-import { aFechaISO, aTimestampISO } from '../utils/fechas';
+import { aFechaISO, aTimestampISO, sumarMeses } from '../utils/fechas';
 
 // El rol todavía no es una tabla propia (la spec de roles/permisos no está
 // escrita); hasta entonces viaja pegado al usuario en el mock.
@@ -279,6 +286,18 @@ export const personas: Persona[] = [
     nombre: 'Rocío',
     email: 'rocio.vega@olimpos.local',
     fecha_alta: aTimestampISO(fechaSemilla(-2, 10)),
+    activo: true,
+  },
+  // 19 en adelante: personal de Actividades (Profesor). Mismo DNI/nombre
+  // que db/seed.sql, para que el gimnasio "de mentira" sea el mismo de los
+  // dos lados aunque sean bases de datos separadas.
+  {
+    id_persona: 19,
+    dni: '28334455',
+    apellido: 'Duarte',
+    nombre: 'Romina',
+    email: 'romina.duarte@olimpos.local',
+    fecha_alta: aTimestampISO(fechaSemilla(-3, 1)),
     activo: true,
   },
 ];
@@ -524,6 +543,14 @@ export const empleados: Empleado[] = [
     fecha_ingreso: aFechaISO(fechaSemilla(-2, 10)),
     activo: true,
   },
+  {
+    id_empleado: 8,
+    id_persona: 19,
+    id_sede: 1,
+    legajo: 'E-0008',
+    fecha_ingreso: aFechaISO(fechaSemilla(-3, 1)),
+    activo: true,
+  },
 ];
 
 export const entrenadores: Entrenador[] = [
@@ -562,6 +589,12 @@ export const recepcionistas: Recepcionista[] = [
   { id_recepcionista: 1, id_empleado: 5, turno_laboral: 'Mañana' },
   { id_recepcionista: 2, id_empleado: 6, turno_laboral: 'Tarde' },
   { id_recepcionista: 3, id_empleado: 7, turno_laboral: 'Noche' },
+];
+
+// Profesor es DISTINTO de Entrenador (ver comentario en types.ts): dicta
+// las actividades con horario (yoga, boxeo, etc.), no musculación.
+export const profesores: Profesor[] = [
+  { id_profesor: 1, id_empleado: 8, titulo: 'Profesora de Yoga', especialidad: 'Yoga y Boxeo recreativo' },
 ];
 
 // --- Tipos de membresía y membresías ---
@@ -716,28 +749,46 @@ export const pagos: Pago[] = [
   // Pendiente y cancelado: no deben sumar a los ingresos del mes.
   { id_pago: 14, id_socio: 9, id_membresia: 9, id_sede: 1, metodo: 'TRANSFERENCIA', monto: 75000, fecha_pago: aTimestampISO(fechaSemilla(0, 15, 14)), es_adelanto: false, estado: 'PENDIENTE' },
   { id_pago: 15, id_socio: 4, id_membresia: 4, id_sede: 1, metodo: 'DEBITO', monto: 19500, fecha_pago: aTimestampISO(fechaSemilla(0, 16, 13)), es_adelanto: false, estado: 'CANCELADO', fecha_cancelacion: aTimestampISO(fechaSemilla(0, 16, 18)) },
+  // Actividades: el plan de Musculación del socio demo (ver inscripcionesActividad).
+  { id_pago: 16, id_socio: 1, id_inscripcion: 1, id_sede: 1, metodo: 'TRANSFERENCIA', monto: 28000, fecha_pago: aTimestampISO(fechaRelativa(-20)), es_adelanto: false, estado: 'CONFIRMADO', numero_comprobante: 'A-000114' },
 ];
 
 // --- Turnos (clases) ---
 //
+// CONGELADO (2026-08-07, pedido explícito del usuario): no tocar el
+// contenido de este array ni la lógica que lo lee (Dashboard "Clases hoy",
+// futura vista "Mis Turnos") hasta que se resuelva el diseño del modelo
+// mixto de especificacion_definitiva_actividades.md. Ver
+// project-olimpos-modelo-turnos en memoria.
+//
+// Lo único que se tocó acá es mecánico: Turno.id_actividad y Turno.hora
+// pasaron a ser NOT NULL en el esquema (Fase 1 de esa spec), así que estas
+// 12 filas necesitan un valor o el build no compila. `id_actividad: 1` y
+// una hora fija no son un rediseño — son placeholders para no romper nada
+// mientras el diseño real sigue pendiente. Fase 3 (services) va a declarar
+// el array `actividades` con Musculación en el id 1, para que esta
+// referencia deje de ser un número mágico y apunte a una fila real.
+//
 // Hoy y ayer: el dashboard compara una cosa contra la otra.
 
 export const turnos: Turno[] = [
-  { id_turno: 1, id_sede: 1, fecha: aFechaISO(fechaRelativa(-1)), cupo_maximo: 20, estado: 'HABILITADO' },
-  { id_turno: 2, id_sede: 1, fecha: aFechaISO(fechaRelativa(-1)), cupo_maximo: 20, estado: 'HABILITADO' },
-  { id_turno: 3, id_sede: 1, fecha: aFechaISO(fechaRelativa(-1)), cupo_maximo: 15, estado: 'HABILITADO' },
-  { id_turno: 4, id_sede: 1, fecha: aFechaISO(fechaRelativa(-1)), cupo_maximo: 15, estado: 'HABILITADO' },
-  { id_turno: 5, id_sede: 1, fecha: aFechaISO(fechaRelativa(-1)), cupo_maximo: 25, estado: 'HABILITADO' },
-  { id_turno: 6, id_sede: 1, fecha: aFechaISO(new Date()), cupo_maximo: 20, estado: 'HABILITADO' },
-  { id_turno: 7, id_sede: 1, fecha: aFechaISO(new Date()), cupo_maximo: 20, estado: 'HABILITADO' },
-  { id_turno: 8, id_sede: 1, fecha: aFechaISO(new Date()), cupo_maximo: 15, estado: 'HABILITADO' },
-  { id_turno: 9, id_sede: 1, fecha: aFechaISO(new Date()), cupo_maximo: 15, estado: 'HABILITADO' },
-  { id_turno: 10, id_sede: 1, fecha: aFechaISO(new Date()), cupo_maximo: 25, estado: 'HABILITADO' },
-  { id_turno: 11, id_sede: 1, fecha: aFechaISO(new Date()), cupo_maximo: 20, estado: 'HABILITADO' },
+  { id_turno: 1, id_sede: 1, id_actividad: 1, fecha: aFechaISO(fechaRelativa(-1)), hora: '08:00', cupo_maximo: 20, estado: 'HABILITADO' },
+  { id_turno: 2, id_sede: 1, id_actividad: 1, fecha: aFechaISO(fechaRelativa(-1)), hora: '08:00', cupo_maximo: 20, estado: 'HABILITADO' },
+  { id_turno: 3, id_sede: 1, id_actividad: 1, fecha: aFechaISO(fechaRelativa(-1)), hora: '08:00', cupo_maximo: 15, estado: 'HABILITADO' },
+  { id_turno: 4, id_sede: 1, id_actividad: 1, fecha: aFechaISO(fechaRelativa(-1)), hora: '08:00', cupo_maximo: 15, estado: 'HABILITADO' },
+  { id_turno: 5, id_sede: 1, id_actividad: 1, fecha: aFechaISO(fechaRelativa(-1)), hora: '08:00', cupo_maximo: 25, estado: 'HABILITADO' },
+  { id_turno: 6, id_sede: 1, id_actividad: 1, fecha: aFechaISO(new Date()), hora: '08:00', cupo_maximo: 20, estado: 'HABILITADO' },
+  { id_turno: 7, id_sede: 1, id_actividad: 1, fecha: aFechaISO(new Date()), hora: '08:00', cupo_maximo: 20, estado: 'HABILITADO' },
+  { id_turno: 8, id_sede: 1, id_actividad: 1, fecha: aFechaISO(new Date()), hora: '08:00', cupo_maximo: 15, estado: 'HABILITADO' },
+  { id_turno: 9, id_sede: 1, id_actividad: 1, fecha: aFechaISO(new Date()), hora: '08:00', cupo_maximo: 15, estado: 'HABILITADO' },
+  { id_turno: 10, id_sede: 1, id_actividad: 1, fecha: aFechaISO(new Date()), hora: '08:00', cupo_maximo: 25, estado: 'HABILITADO' },
+  { id_turno: 11, id_sede: 1, id_actividad: 1, fecha: aFechaISO(new Date()), hora: '08:00', cupo_maximo: 20, estado: 'HABILITADO' },
   {
     id_turno: 12,
     id_sede: 1,
+    id_actividad: 1,
     fecha: aFechaISO(new Date()),
+    hora: '08:00',
     cupo_maximo: 20,
     estado: 'CANCELADO',
     motivo_cancelacion: 'Mantenimiento de sala',
@@ -991,6 +1042,72 @@ export const registrosSalud: RegistroSalud[] = [
   { id_registro_salud: 7, id_socio: 1, fecha: aFechaISO(fechaRelativa(-4)), peso: 81.8, altura: 1.78, grasa_corporal: 20.3, masa_muscular: 65.1 },
 ];
 
+// --- Actividades (especificacion_definitiva_actividades.md) ---
+//
+// Mismos valores que db/seed.sql (Postgres) para que el gimnasio "de
+// mentira" sea el mismo de los dos lados, aunque sean bases separadas —
+// ver el comentario grande de authService sobre por qué esto es sólo el
+// mock: cuando exista el backend, este archivo se borra entero.
+
+export const actividades: Actividad[] = [
+  { id_actividad: 1, nombre: 'Musculación', descripcion: 'Acceso libre a la sala de musculación y cardio.', cupo_default: 40, precio_clase_suelta: 3500, horas_anticipacion_cancelacion: 0, activo: true },
+  { id_actividad: 2, nombre: 'Yoga', descripcion: 'Clase de yoga para todos los niveles.', cupo_default: 20, precio_clase_suelta: 4500, horas_anticipacion_cancelacion: 12, activo: true },
+  { id_actividad: 3, nombre: 'Boxeo', descripcion: 'Clase de boxeo recreativo, grupal.', cupo_default: 15, precio_clase_suelta: 5000, horas_anticipacion_cancelacion: 24, activo: true },
+];
+
+// Dos planes por actividad, uno POR_SEMANA y uno POR_MES — igual que
+// db/seed.sql. Musculación sólo tiene mensuales: no tendría sentido limitar
+// el acceso libre a "2 veces por semana".
+export const planesActividad: PlanActividad[] = [
+  { id_plan_actividad: 1, id_actividad: 1, nombre: '12 clases al mes', tipo_limite: 'POR_MES', cantidad: 12, precio: 28000, activo: true },
+  { id_plan_actividad: 2, id_actividad: 1, nombre: '20 clases al mes', tipo_limite: 'POR_MES', cantidad: 20, precio: 42000, activo: true },
+  { id_plan_actividad: 3, id_actividad: 2, nombre: '2 veces por semana', tipo_limite: 'POR_SEMANA', cantidad: 2, precio: 15000, activo: true },
+  { id_plan_actividad: 4, id_actividad: 2, nombre: '8 clases al mes', tipo_limite: 'POR_MES', cantidad: 8, precio: 26000, activo: true },
+  { id_plan_actividad: 5, id_actividad: 3, nombre: '3 veces por semana', tipo_limite: 'POR_SEMANA', cantidad: 3, precio: 20000, activo: true },
+  { id_plan_actividad: 6, id_actividad: 3, nombre: '12 clases al mes', tipo_limite: 'POR_MES', cantidad: 12, precio: 45000, activo: true },
+];
+
+export const profesorActividad: ProfesorActividad[] = [
+  { id_profesor: 1, id_actividad: 2 }, // Yoga
+  { id_profesor: 1, id_actividad: 3 }, // Boxeo
+];
+
+// El socio demo ya tiene un plan mensual de Musculación comprado hace ~20
+// días, con 3 clases ya consumidas (ver `reservas` más abajo) — así hay
+// datos reales para probar REGLA 3 (consumo mensual) sin tener que
+// comprarlo primero. `id_membresia: 1` es la del propio socio demo (Pase
+// Libre Anual). Ojo con este dato para pruebas manuales: la membresía sólo
+// tiene ~20 días de vigencia restante hoy, así que un comprarPlan() NUEVO
+// para este socio va a chocar con REGLA 1 (cobertura) — es intencional,
+// buen caso límite para probar esa regla, no un bug.
+const fechaInicioInscripcion1 = fechaRelativa(-20);
+export const inscripcionesActividad: InscripcionActividad[] = [
+  {
+    id_inscripcion: 1,
+    id_socio: 1,
+    id_plan_actividad: 1,
+    id_membresia: 1,
+    precio_pactado: 28000,
+    fecha_inicio: aFechaISO(fechaInicioInscripcion1),
+    fecha_vencimiento: aFechaISO(sumarMeses(fechaInicioInscripcion1, 1)),
+    clases_restantes: 9, // 12 del plan - 3 ya reservadas
+    estado: 'ACTIVA',
+  },
+];
+
+// 3 reservas históricas contra la inscripción de arriba, sobre turnos ya
+// existentes (1, 2 y 3 — Musculación, "ayer" según el array `turnos`
+// congelado). No se tocan turnos nuevos: se reusan los que ya había.
+export const reservas: Reserva[] = [
+  { id_reserva: 1, id_turno: 1, id_socio: 1, id_inscripcion: 1, es_clase_suelta: false, fecha_reserva: aTimestampISO(fechaRelativa(-1)), estado: 'RESERVADA' },
+  { id_reserva: 2, id_turno: 2, id_socio: 1, id_inscripcion: 1, es_clase_suelta: false, fecha_reserva: aTimestampISO(fechaRelativa(-1)), estado: 'RESERVADA' },
+  { id_reserva: 3, id_turno: 3, id_socio: 1, id_inscripcion: 1, es_clase_suelta: false, fecha_reserva: aTimestampISO(fechaRelativa(-1)), estado: 'RESERVADA' },
+];
+
+// Vacío a propósito: nadie fichó todavía en esta sesión de la app —
+// ficharRFID/registrarAsistenciaManual lo van llenando en tiempo real.
+export const asistencias: Asistencia[] = [];
+
 // --- Auditoría ---
 
 export const auditoria: Auditoria[] = [];
@@ -1027,6 +1144,12 @@ export const siguienteId = {
   rutina: crearSecuencia(rutinas.map((r) => r.id_rutina)),
   dieta: crearSecuencia(dietas.map((d) => d.id_dieta)),
   registroSalud: crearSecuencia(registrosSalud.map((r) => r.id_registro_salud)),
+  profesor: crearSecuencia(profesores.map((p) => p.id_profesor)),
+  actividad: crearSecuencia(actividades.map((a) => a.id_actividad)),
+  planActividad: crearSecuencia(planesActividad.map((p) => p.id_plan_actividad)),
+  inscripcionActividad: crearSecuencia(inscripcionesActividad.map((i) => i.id_inscripcion)),
+  reserva: crearSecuencia(reservas.map((r) => r.id_reserva)),
+  asistencia: crearSecuencia(asistencias.map((a) => a.id_asistencia)),
 };
 
 /** Número de socio correlativo, con el mismo formato que la semilla. */

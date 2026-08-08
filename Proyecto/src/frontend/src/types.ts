@@ -49,6 +49,7 @@ export interface Socio {
   id_sede: number; // FK -> Sede, not null
   id_entrenador_a_cargo?: number; // FK -> Entrenador, opcional
   numero_socio?: string; // varchar(20), unique
+  codigo_rfid?: string; // varchar(50), unique — nullable: no todo gimnasio usa RFID (ver Asistencia.metodo_registro)
   fecha_alta: string; // date, not null
   objetivo?: string;
   observaciones?: string;
@@ -201,7 +202,10 @@ export interface Membresia {
   id_promocion?: number; // FK -> Promocion
   precio_pactado: number; // numeric(10,2), not null
   fecha_inicio: string; // date, not null
-  fecha_vencimiento: string; // date, not null
+  // Nullable desde la extensión de actividades: sin vencimiento = cubre
+  // siempre. Antes era NOT NULL — ver REGLA 1 (cobertura) en actividadService.ts,
+  // que depende de este campo para decidir si una Inscripcion_Actividad es válida.
+  fecha_vencimiento?: string; // date
   estado: 'ACTIVA' | 'VENCIDA' | 'SUSPENDIDA' | 'CANCELADA'; // default ACTIVA
 }
 
@@ -209,6 +213,11 @@ export interface Pago {
   id_pago: number;
   id_socio: number; // FK -> Socio, not null
   id_membresia?: number; // FK -> Membresia
+  // Agregado en la extensión de actividades: a qué Inscripcion_Actividad
+  // corresponde este pago, si es que es de un plan y no de una membresía.
+  // Mutuamente excluyente con id_membresia en la práctica, aunque el
+  // esquema no tiene un CHECK que lo obligue.
+  id_inscripcion?: number; // FK -> Inscripcion_Actividad
   id_sede?: number; // FK -> Sede
   metodo: 'EFECTIVO' | 'DEBITO' | 'CREDITO' | 'TRANSFERENCIA' | 'BILLETERA_VIRTUAL'; // not null
   monto: number; // numeric(10,2), not null
@@ -222,13 +231,23 @@ export interface Pago {
   id_registrado_por?: number; // FK -> Usuario
 }
 
+/**
+ * Un turno es una actividad con horario, en una fecha y sede — musculación
+ * incluida, que también es una fila de Actividad (acceso libre: sus turnos
+ * quedan con id_profesor en NULL). id_entrenador_a_cargo es para
+ * musculación/rutinas; id_profesor para el resto (yoga, boxeo, etc.).
+ * `hora` es SOLO de llegada, no hay hora de fin.
+ */
 export interface Turno {
   id_turno: number;
   id_sede: number; // FK -> Sede, not null
+  id_actividad: number; // FK -> Actividad, not null
   fecha: string; // date, not null
+  hora: string; // time, not null
   cupo_maximo: number; // not null
   estado: 'HABILITADO' | 'CANCELADO'; // default HABILITADO
   id_entrenador_a_cargo?: number; // FK -> Entrenador
+  id_profesor?: number; // FK -> Profesor
   motivo_cancelacion?: string; // varchar(200)
   observaciones?: string; // varchar(200)
 }
@@ -260,17 +279,22 @@ export interface RegistroSalud {
 }
 
 /**
- * Reserva de un Turno. Ojo con el modelo, que no es el intuitivo: según el
- * comentario del esquema, un Turno NO es una clase con horario — es un DÍA
- * habilitado con cupo en una sede ("modelo de acceso libre 24hs, el socio
- * reserva el día y entra cuando quiere"). Por eso Turno no tiene hora y por
- * eso el unique de Reserva es (id_turno, id_socio): no se puede reservar
- * dos veces el mismo día.
+ * Reserva de un Turno. El unique de Reserva es (id_turno, id_socio): no se
+ * puede reservar dos veces el MISMO turno (misma actividad+fecha+hora). Eso
+ * no impide reservar Yoga a las 9 y Boxeo a las 20 el mismo día: son dos
+ * Turno distintos, así que son dos Reserva distintas sin conflicto.
+ *
+ * `id_inscripcion` y `es_clase_suelta` son mutuamente excluyentes en la
+ * práctica (no hay CHECK en el esquema, pero la regla de negocio es esa):
+ * o la reserva sale de un plan comprado, o se pagó suelta.
  */
 export interface Reserva {
   id_reserva: number;
   id_turno: number; // FK -> Turno, not null
   id_socio: number; // FK -> Socio, not null
+  id_inscripcion?: number; // FK -> Inscripcion_Actividad — con qué plan se reservó; sin valor si es clase suelta
+  es_clase_suelta: boolean; // default false
+  id_pago?: number; // FK -> Pago — el pago de la clase suelta; sin valor si vino de un plan
   fecha_reserva: string; // timestamp, default now()
   /** CANCELADA_SOCIO y CANCELADA_GIMNASIO son estados distintos: importa quién canceló. */
   estado: 'RESERVADA' | 'CANCELADA_SOCIO' | 'CANCELADA_GIMNASIO';
@@ -291,7 +315,8 @@ export interface Asistencia {
   id_reserva?: number; // FK -> Reserva, nullable (ingreso libre)
   fecha_hora_ingreso: string; // timestamp, not null
   fecha_hora_egreso?: string; // timestamp
-  id_registrado_por?: number; // FK -> Usuario
+  metodo_registro: 'RFID' | 'MANUAL'; // default MANUAL
+  id_registrado_por?: number; // FK -> Usuario, quién lo cargó si fue MANUAL
 }
 
 /**
@@ -341,6 +366,77 @@ export interface RutinaEjercicio {
   peso_sugerido?: number; // numeric(6,2)
   descanso_segundos?: number;
   observaciones?: string;
+}
+
+// --- actividades (especificacion_definitiva_actividades.md) ---
+//
+// Extiende el acceso libre de siempre a actividades con horario fijo (yoga,
+// boxeo, masajes, etc.) sin tocar cómo funciona hoy la musculación: es una
+// fila más de Actividad, sigue siendo de acceso libre (sus Turno quedan con
+// id_profesor en NULL, ver Turno más arriba).
+
+/**
+ * Subtipo de Empleado, DISTINTO de Entrenador: Entrenador da rutinas de
+ * musculación, Profesor dicta el resto de las actividades. Una persona
+ * puede tener las dos filas si cumple los dos roles.
+ */
+export interface Profesor {
+  id_profesor: number;
+  id_empleado: number; // FK -> Empleado, unique, not null
+  titulo?: string; // varchar(100)
+  especialidad?: string; // varchar(100)
+}
+
+/** Catálogo de lo que se puede reservar en un Turno. Musculación es una fila más acá, no un caso aparte. */
+export interface Actividad {
+  id_actividad: number;
+  nombre: string; // varchar(80), unique, not null
+  descripcion?: string;
+  cupo_default: number; // not null — valor de referencia; el Turno puede sobrescribirlo en su propio cupo_maximo
+  precio_clase_suelta: number; // numeric(10,2), not null
+  /** Con cuánta anticipación se puede cancelar sin perder la clase. 0 = nunca. */
+  horas_anticipacion_cancelacion: number; // not null, default 0
+  activo: boolean; // default true
+}
+
+/**
+ * Formato de pago de una Actividad (ej. "2x semana" o "12 clases/mes").
+ * tipo_limite = POR_SEMANA -> cantidad = veces por semana.
+ * tipo_limite = POR_MES -> cantidad = clases totales del mes.
+ */
+export interface PlanActividad {
+  id_plan_actividad: number;
+  id_actividad: number; // FK -> Actividad, not null
+  nombre: string; // varchar(80), not null
+  tipo_limite: 'POR_SEMANA' | 'POR_MES';
+  cantidad: number; // not null
+  precio: number; // numeric(10,2), not null
+  activo: boolean; // default true
+}
+
+/**
+ * Lo que un socio compró de un Plan_Actividad. `id_membresia` ata la
+ * inscripción a la membresía que la cubre: no puede vencer después que la
+ * membresía (se valida al comprar, ver REGLA 1 en actividadService.ts).
+ * `clases_restantes` sólo se usa si el plan es POR_MES; en POR_SEMANA el
+ * consumo se cuenta dinámicamente sobre Reserva, no hay contador guardado.
+ */
+export interface InscripcionActividad {
+  id_inscripcion: number;
+  id_socio: number; // FK -> Socio, not null
+  id_plan_actividad: number; // FK -> Plan_Actividad, not null
+  id_membresia: number; // FK -> Membresia, not null
+  precio_pactado: number; // numeric(10,2), not null — congelado al comprar, igual que en Membresia
+  fecha_inicio: string; // date, not null
+  fecha_vencimiento: string; // date, not null
+  clases_restantes?: number; // sólo tiene sentido con tipo_limite = POR_MES
+  estado: 'ACTIVA' | 'VENCIDA' | 'CANCELADA'; // default ACTIVA
+}
+
+/** N:M: qué actividades puede dictar cada profesor. */
+export interface ProfesorActividad {
+  id_profesor: number; // FK -> Profesor
+  id_actividad: number; // FK -> Actividad
 }
 
 export interface Sede {

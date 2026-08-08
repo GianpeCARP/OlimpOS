@@ -617,12 +617,20 @@ export interface PagoListado {
 }
 
 export interface MiCuota {
+  /**
+   * False = no tiene ninguna membresía. Hace falta como campo propio porque
+   * `vencimiento` undefined ya no alcanza para distinguir "sin membresía" de
+   * "con membresía que no vence nunca" (extensión de actividades, REGLA 1
+   * de actividadService) — las dos dejan `vencimiento` en undefined.
+   */
+  tieneMembresia: boolean;
   plan: string;
   estado: EstadoSocioValue;
   precioPactado?: number;
   fechaInicio?: string;
+  /** undefined = sin membresía O con membresía sin vencimiento — usar tieneMembresia para distinguir. */
   vencimiento?: string;
-  /** Días hasta el vencimiento. Negativo = ya venció. undefined sin membresía. */
+  /** Días hasta el vencimiento. Negativo = ya venció. undefined si no tiene membresía o si no vence nunca. */
   diasParaVencer?: number;
   /** Sólo las PENDIENTE: las PAGADA y CONDONADA ya no se le reclaman. */
   deudas: DeudaListada[];
@@ -674,12 +682,16 @@ export async function getMiCuota(idSocio: number): Promise<MiCuota> {
     }));
 
   return {
+    tieneMembresia: membresia !== undefined,
     plan: nombrePlan(idSocio),
     estado: estadoDeSocio(socio, hoy),
     precioPactado: membresia?.precio_pactado,
     fechaInicio: membresia?.fecha_inicio,
     vencimiento: membresia?.fecha_vencimiento,
-    diasParaVencer: membresia
+    // Ojo: es membresia?.fecha_vencimiento, NO sólo membresia — una
+    // membresía activa sin vencimiento (cubre siempre) SÍ existe pero no
+    // tiene "días para vencer" que calcular.
+    diasParaVencer: membresia?.fecha_vencimiento
       ? diasEntre(hoy, parsearFecha(membresia.fecha_vencimiento))
       : undefined,
     deudas: propias,

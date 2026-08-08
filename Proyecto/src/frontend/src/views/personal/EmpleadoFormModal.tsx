@@ -37,6 +37,7 @@ const CAMPO_POR_ROL: Record<RolEmpleadoValue, { label: string; select: boolean }
   [RolEmpleado.ENTRENADOR]: { label: 'Especialidad', select: false },
   [RolEmpleado.NUTRICIONISTA]: { label: 'Título', select: false },
   [RolEmpleado.RECEPCIONISTA]: { label: 'Turno', select: true },
+  [RolEmpleado.PROFESOR]: { label: 'Especialidad', select: false },
 };
 
 interface EmpleadoFormModalProps {

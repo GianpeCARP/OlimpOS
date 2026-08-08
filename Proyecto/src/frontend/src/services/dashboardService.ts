@@ -16,8 +16,8 @@ import { aFechaISO, claveMes, claveMesRelativa, diasEntre, finDelMesAnterior, pa
 import { formatearMoneda } from '../utils/format';
 import { iniciales, nombreCompleto } from '../utils/personas';
 import { delay } from './api';
-import { estadoDeSocio, nombrePlan } from './membresiaService';
-import { bajas, membresias, pagos, personas, socios, turnos } from './mockDb';
+import { estadoDeSocio, membresiaVigente, nombrePlan } from './membresiaService';
+import { bajas, pagos, personas, socios, turnos } from './mockDb';
 
 // --- Constantes de presentación de datos ---
 
@@ -184,11 +184,22 @@ export async function obtenerActividadReciente(): Promise<EventoActividad[]> {
   // Vencimientos próximos. Son eventos futuros: quedan arriba del feed
   // (está ordenado por fecha descendente) que es justo donde sirven, porque
   // son los que piden una acción.
-  for (const membresia of membresias) {
-    if (membresia.estado !== 'ACTIVA') continue;
+  //
+  // Se recorre SOCIO por socio y se mira sólo su membresía vigente, no
+  // todas las filas ACTIVA: renovar no pisa la membresía anterior, crea una
+  // nueva que arranca cuando termina la vieja (cobrosService.cobrarMembresia),
+  // así que un socio recién renovado tiene DOS ACTIVA a la vez. Iterando
+  // `membresias` el feed seguía avisando "vence en 3 días" por la vieja, al
+  // lado del pago de la renovación que acababa de entrar.
+  for (const socio of socios) {
+    const membresia = membresiaVigente(socio.id_socio);
+    if (!membresia || membresia.estado !== 'ACTIVA') continue;
+    // Sin fecha_vencimiento = cubre siempre (extensión de actividades): no
+    // hay "próximo vencimiento" que avisar.
+    if (!membresia.fecha_vencimiento) continue;
     const dias = diasEntre(hoy, parsearFecha(membresia.fecha_vencimiento));
     if (dias < 0 || dias > DIAS_AVISO_VENCIMIENTO) continue;
-    const persona = personaDeSocio(membresia.id_socio);
+    const persona = personaDeSocio(socio.id_socio);
     if (!persona) continue;
     eventos.push({
       id: `vencimiento-${membresia.id_membresia}`,

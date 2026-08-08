@@ -1,6 +1,7 @@
 import {
   Clock,
   Dumbbell,
+  GraduationCap,
   Headset,
   Mail,
   Pencil,
@@ -27,6 +28,7 @@ const ICONOS_ROL: Record<RolEmpleadoValue, LucideIcon> = {
   [RolEmpleado.ENTRENADOR]: Dumbbell,
   [RolEmpleado.NUTRICIONISTA]: UtensilsCrossed,
   [RolEmpleado.RECEPCIONISTA]: Headset,
+  [RolEmpleado.PROFESOR]: GraduationCap,
 };
 
 // El doc pide azul para "Tarde" y violeta para "Noche"; Kinetic Carbon

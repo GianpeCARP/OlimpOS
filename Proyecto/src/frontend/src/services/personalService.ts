@@ -37,6 +37,8 @@ import {
   entrenadores,
   nutricionistas,
   recepcionistas,
+  profesores,
+  profesorActividad,
   rutinas,
   dietas,
   usuarios,
@@ -76,8 +78,13 @@ export interface EmpleadoListado {
  * sesión que usa el login y la matriz de permisos. Son los mismos tres
  * roles vistos desde dos lados: RolEmpleado es la etiqueta de la ficha de
  * personal, Roles.* es el valor que viaja en la sesión.
+ *
+ * Parcial y no `Record<RolEmpleadoValue, RolValue>` a propósito: Profesor
+ * es un cuarto tipo de empleado que NO tiene rol de sesión (da clases, no
+ * inicia sesión), así que queda deliberadamente afuera de este mapa en vez
+ * de forzarle un Roles.* que no existe.
  */
-const ROL_SESION_POR_ROL_EMPLEADO: Record<RolEmpleadoValue, RolValue> = {
+const ROL_SESION_POR_ROL_EMPLEADO: Partial<Record<RolEmpleadoValue, RolValue>> = {
   [RolEmpleado.ENTRENADOR]: Roles.ENTRENADOR,
   [RolEmpleado.NUTRICIONISTA]: Roles.NUTRICIONISTA,
   [RolEmpleado.RECEPCIONISTA]: Roles.RECEPCIONISTA,
@@ -85,13 +92,15 @@ const ROL_SESION_POR_ROL_EMPLEADO: Record<RolEmpleadoValue, RolValue> = {
 
 /**
  * Rol de sesión de un empleado, o null si no está en ninguna tabla hija
- * (empleado sin rol asignado). Lo usa usuariosService al crear una cuenta:
- * el rol NO se elige a mano en un dropdown, se deriva de lo que la persona
- * realmente es en el esquema.
+ * (empleado sin rol asignado) o si su rol —Profesor— no tiene sesión
+ * propia. Lo usa usuariosService al crear una cuenta: el rol NO se elige a
+ * mano en un dropdown, se deriva de lo que la persona realmente es en el
+ * esquema, y un Profesor sin entrada acá simplemente nunca aparece como
+ * candidato a cuenta nueva (listarPersonasSinUsuario filtra por rol no nulo).
  */
 export function rolDeSesionDeEmpleado(idEmpleado: number): RolValue | null {
   const rol = resolverRol(idEmpleado);
-  return rol ? ROL_SESION_POR_ROL_EMPLEADO[rol.rol] : null;
+  return rol ? (ROL_SESION_POR_ROL_EMPLEADO[rol.rol] ?? null) : null;
 }
 
 /**
@@ -143,6 +152,14 @@ function resolverRol(
       rol: RolEmpleado.RECEPCIONISTA,
       detalle: turno ? `Turno ${turno}` : undefined,
       turno,
+    };
+  }
+
+  const profesor = profesores.find((p) => p.id_empleado === idEmpleado);
+  if (profesor) {
+    return {
+      rol: RolEmpleado.PROFESOR,
+      detalle: profesor.especialidad ?? profesor.titulo,
     };
   }
 
@@ -241,6 +258,19 @@ function validarCambioDeRol(idEmpleado: number, rolNuevo: RolEmpleadoValue): voi
       );
     }
   }
+
+  if (rolActual.rol === RolEmpleado.PROFESOR) {
+    const profesor = profesores.find((p) => p.id_empleado === idEmpleado);
+    const propias = profesor
+      ? profesorActividad.filter((pa) => pa.id_profesor === profesor.id_profesor).length
+      : 0;
+    if (propias > 0) {
+      throw new ServiceError(
+        409,
+        `No se puede cambiar el rol: tiene ${propias} actividad(es) asignada(s). Reasignalas a otro profesor primero.`,
+      );
+    }
+  }
 }
 
 /**
@@ -275,6 +305,7 @@ function asignarRol(idEmpleado: number, rol: RolEmpleadoValue, detalle?: string)
   const entrenadorPrevio = quitarDe(entrenadores);
   const nutricionistaPrevio = quitarDe(nutricionistas);
   const recepcionistaPrevio = quitarDe(recepcionistas);
+  const profesorPrevio = quitarDe(profesores);
 
   switch (rol) {
     case RolEmpleado.ENTRENADOR:
@@ -301,6 +332,14 @@ function asignarRol(idEmpleado: number, rol: RolEmpleadoValue, detalle?: string)
         id_recepcionista: recepcionistaPrevio?.id_recepcionista ?? siguienteId.recepcionista(),
         id_empleado: idEmpleado,
         turno_laboral: detalle,
+      });
+      break;
+    case RolEmpleado.PROFESOR:
+      profesores.push({
+        id_profesor: profesorPrevio?.id_profesor ?? siguienteId.profesor(),
+        id_empleado: idEmpleado,
+        titulo: profesorPrevio?.titulo,
+        especialidad: detalle,
       });
       break;
   }

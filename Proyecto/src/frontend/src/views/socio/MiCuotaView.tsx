@@ -178,7 +178,12 @@ export function MiCuotaView() {
                 value={
                   cuota.vencimiento
                     ? formatearFecha(parsearFecha(cuota.vencimiento))
-                    : 'Sin membresía'
+                    // "No vence" y "Sin membresía" son casos distintos que
+                    // vencimiento=undefined no alcanza a distinguir — ver
+                    // el comentario de MiCuota.tieneMembresia.
+                    : cuota.tieneMembresia
+                      ? 'No vence'
+                      : 'Sin membresía'
                 }
                 delta={
                   cuota.diasParaVencer !== undefined
