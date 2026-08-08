@@ -64,7 +64,7 @@ class SociosView:
                         border_radius=10,
                         expand=True,
                         height=44,
-                        content_padding=ft.padding.symmetric(horizontal=16, vertical=10),
+                        content_padding=ft.Padding.symmetric(horizontal=16, vertical=10),
                         on_change=self._on_search,  # Se llama en cada keystroke
                     ),
                     # Construimos los chips llamando a la nueva función interna
@@ -75,7 +75,7 @@ class SociosView:
                 ], 
                 spacing=10
             ),
-            padding=ft.padding.only(bottom=16),
+            padding=ft.Padding.only(bottom=16),
         )
 
         # ── Tabla de socios ───────────────────────────────────────────────────
@@ -96,15 +96,15 @@ class SociosView:
                         content=table_col,
                         bgcolor=Colors.BG_CARD,
                         border_radius=14,
-                        border=ft.border.all(1, Colors.BORDER),
+                        border=ft.Border.all(1, Colors.BORDER),
                         padding=0,
                         clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
                     ),
-                ]),
-                padding=ft.padding.all(24),
+                ], spacing=0, scroll=ft.ScrollMode.AUTO, expand=True),
+                padding=ft.Padding.all(24),
                 expand=True,
             ),
-        ], spacing=0, expand=True, scroll=ft.ScrollMode.AUTO)
+        ], spacing=0, expand=True)
 
         return body
 
@@ -143,8 +143,8 @@ class SociosView:
             ),
             bgcolor=Colors.ACCENT_GLOW if is_active else Colors.BG_INPUT,
             border_radius=20,
-            padding=ft.padding.symmetric(horizontal=14, vertical=8),
-            border=ft.border.all(1, Colors.ACCENT if is_active else Colors.BORDER),
+            padding=ft.Padding.symmetric(horizontal=14, vertical=8),
+            border=ft.Border.all(1, Colors.ACCENT if is_active else Colors.BORDER),
             on_click=on_chip_click, # <-- ACÁ ESTÁ LA MAGIA, ahora responde al click
             
         )
@@ -210,7 +210,7 @@ class SociosView:
                 ft.Text("Vence",   color=Colors.SUCCESS, size=12, weight=ft.FontWeight.W_600, expand=2),
                 ft.Text("Acciones", color=Colors.SUCCESS, size=12, weight=ft.FontWeight.W_600, expand=2),
             ]),
-            padding=ft.padding.symmetric(horizontal=20, vertical=14),
+            padding=ft.Padding.symmetric(horizontal=20, vertical=14),
             bgcolor=Colors.BG_SIDEBAR,
         )
         
@@ -233,7 +233,7 @@ class SociosView:
             content=ft.Row([
                 ft.Row([
                     ft.Container(
-                        content=ft.Text(initial, color=Colors.WHITE, size=13, weight=ft.FontWeight.BOLD),
+                        content=ft.Text(initial, color=Colors.SURFACE_BASE, size=13, weight=ft.FontWeight.BOLD),
                         width=32, height=32, border_radius=16,
                         bgcolor=Colors.ACCENT, alignment=ft.Alignment.CENTER,
                     ),
@@ -249,8 +249,8 @@ class SociosView:
                                   on_click=lambda e, x=s: self._confirm_delete(x)),
                 ], expand=2),
             ]),
-            padding=ft.padding.symmetric(horizontal=20, vertical=12),
-            border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
+            padding=ft.Padding.symmetric(horizontal=20, vertical=12),
+            border=ft.Border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
             on_hover=on_hover,
             animate=ft.Animation(120),
         )

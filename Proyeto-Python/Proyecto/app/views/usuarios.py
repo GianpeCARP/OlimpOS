@@ -2,16 +2,19 @@
 # views/usuarios.py — Gestión de usuarios del sistema (solo admin)
 # =============================================================================
 import flet as ft
-from app.config import Colors
+from app.config import Colors, alpha
 from app.state import app_state
 from app.components.ui import (build_topbar, status_badge, primary_button,
                                 input_field, show_snack, open_dialog, close_dialog)
 
+# rol → (etiqueta, color, fondo translúcido, ícono)
+# Espejo de RoleChip.tsx. Fondos derivados con alpha() en vez de hex de la
+# paleta vieja (naranja #FF5722, azul #3B82F6) que ya no existen acá.
 ROLE_CONFIG = {
-    "admin":   ("Administrador", Colors.ACCENT,   "#FF572220", ft.Icons.SHIELD_ROUNDED),
-    "trainer": ("Entrenador",    Colors.SUCCESS,  "#22C55E20", ft.Icons.FITNESS_CENTER_ROUNDED),
-    "staff":   ("Recepción",     Colors.INFO,     "#3B82F620", ft.Icons.SUPPORT_AGENT_ROUNDED),
-    "nutri":   ("Nutricionista", Colors.WARNING,  "#F59E0B20", ft.Icons.RESTAURANT_MENU_ROUNDED),
+    "admin":   ("Administrador", Colors.PRIMARY_VOLT, alpha(Colors.PRIMARY_VOLT, 0.10), ft.Icons.SHIELD_ROUNDED),
+    "trainer": ("Entrenador",    Colors.STATUS_OK,    alpha(Colors.STATUS_OK, 0.10),    ft.Icons.FITNESS_CENTER_ROUNDED),
+    "staff":   ("Recepción",     Colors.ACCENT_CORAL, alpha(Colors.ACCENT_CORAL, 0.10), ft.Icons.SUPPORT_AGENT_ROUNDED),
+    "nutri":   ("Nutricionista", Colors.STATUS_WARN,  alpha(Colors.STATUS_WARN, 0.10),  ft.Icons.RESTAURANT_MENU_ROUNDED),
 }
 
 # Datos mock de usuarios del sistema
@@ -48,9 +51,9 @@ class UsuariosView:
                         color=Colors.TEXT_SECONDARY, size=13),
             ], spacing=10),
             bgcolor=Colors.ACCENT_GLOW,
-            border=ft.border.all(1, Colors.ACCENT),
+            border=ft.Border.all(1, Colors.ACCENT),
             border_radius=10,
-            padding=ft.padding.symmetric(horizontal=16, vertical=10),
+            padding=ft.Padding.symmetric(horizontal=16, vertical=10),
         )
 
         # ── Tabla de usuarios ─────────────────────────────────────────────────
@@ -61,7 +64,7 @@ class UsuariosView:
             ], spacing=0),
             bgcolor=Colors.BG_CARD,
             border_radius=14,
-            border=ft.border.all(1, Colors.BORDER),
+            border=ft.Border.all(1, Colors.BORDER),
             clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
         )
 
@@ -75,7 +78,7 @@ class UsuariosView:
             ], spacing=8),
             bgcolor=Colors.BG_CARD,
             border_radius=14,
-            border=ft.border.all(1, Colors.BORDER),
+            border=ft.Border.all(1, Colors.BORDER),
             padding=20,
         )
 
@@ -88,11 +91,11 @@ class UsuariosView:
                     table,
                     ft.Container(height=20),
                     permisos_card,
-                ], spacing=0),
-                padding=ft.padding.all(24),
+                ], spacing=0, scroll=ft.ScrollMode.AUTO, expand=True),
+                padding=ft.Padding.all(24),
                 expand=True,
             ),
-        ], spacing=0, expand=True, scroll=ft.ScrollMode.AUTO)
+        ], spacing=0, expand=True)
 
         return body
 
@@ -110,7 +113,7 @@ class UsuariosView:
             content=ft.Row([
                 ft.Row([
                     ft.Container(
-                        content=ft.Text(initial, color=Colors.WHITE, size=13,
+                        content=ft.Text(initial, color=Colors.SURFACE_BASE, size=13,
                                         weight=ft.FontWeight.BOLD),
                         width=32, height=32, border_radius=16,
                         bgcolor=role_color, alignment=ft.Alignment.CENTER,
@@ -154,8 +157,8 @@ class UsuariosView:
                     ),
                 ], expand=2),
             ]),
-            padding=ft.padding.symmetric(horizontal=20, vertical=12),
-            border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
+            padding=ft.Padding.symmetric(horizontal=20, vertical=12),
+            border=ft.Border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
             on_hover=on_hover,
             animate=ft.Animation(120),
         )
@@ -274,7 +277,7 @@ def _table_header() -> ft.Container:
             ft.Text("Acciones",color=Colors.TEXT_MUTED, size=12,
                     weight=ft.FontWeight.W_600, expand=2),
         ]),
-        padding=ft.padding.symmetric(horizontal=20, vertical=14),
+        padding=ft.Padding.symmetric(horizontal=20, vertical=14),
         bgcolor=Colors.BG_SIDEBAR,
     )
 
@@ -301,11 +304,11 @@ def _perms_row(rol: str, cfg: tuple) -> ft.Container:
                 ft.Container(
                     content=ft.Text(p, color=Colors.TEXT_SECONDARY, size=11),
                     bgcolor=Colors.BG_SIDEBAR, border_radius=20,
-                    padding=ft.padding.symmetric(horizontal=8, vertical=3),
+                    padding=ft.Padding.symmetric(horizontal=8, vertical=3),
                 )
                 for p in perms
             ], spacing=4, wrap=True),
         ], spacing=10),
-        padding=ft.padding.symmetric(vertical=6),
-        border=ft.border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
+        padding=ft.Padding.symmetric(vertical=6),
+        border=ft.Border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
     )

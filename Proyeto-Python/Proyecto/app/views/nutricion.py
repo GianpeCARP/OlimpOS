@@ -9,18 +9,22 @@
 #   - Modal de detalle con distribución de macros en barras de progreso
 
 import flet as ft
-from app.config import Colors
+from app.config import Colors, Fonts, alpha
 from app.state import app_state
 from app.components.ui import (build_topbar, primary_button, input_field,
                                 show_snack, open_dialog, close_dialog)
 
 # Configuración visual por objetivo nutricional:
 # objetivo → (color de texto, fondo translúcido, ícono de tendencia)
+#
+# El fondo se deriva del color con alpha() en vez de estar hardcodeado: antes
+# eran hex sueltos de otra paleta ("#3B82F620" azul, "#EF444420" rojo) que ya
+# no existen en Kinetic Carbon y desentonaban con el resto de la app.
 OBJETIVO_CONFIG = {
-    "Masa muscular":    (Colors.SUCCESS,  "#22C55E20", ft.Icons.TRENDING_UP_ROUNDED),
-    "Bajar peso":       (Colors.DANGER,   "#EF444420", ft.Icons.TRENDING_DOWN_ROUNDED),
-    "Mantenimiento":    (Colors.INFO,     "#3B82F620", ft.Icons.TRENDING_FLAT_ROUNDED),
-    "Alto rendimiento": (Colors.WARNING,  "#F59E0B20", ft.Icons.BOLT_ROUNDED),
+    "Masa muscular":    (Colors.STATUS_OK,     alpha(Colors.STATUS_OK, 0.10),     ft.Icons.TRENDING_UP_ROUNDED),
+    "Bajar peso":       (Colors.ACCENT_CORAL,  alpha(Colors.ACCENT_CORAL, 0.10),  ft.Icons.TRENDING_DOWN_ROUNDED),
+    "Mantenimiento":    (Colors.PRIMARY_VOLT,  alpha(Colors.PRIMARY_VOLT, 0.10),  ft.Icons.TRENDING_FLAT_ROUNDED),
+    "Alto rendimiento": (Colors.STATUS_WARN,   alpha(Colors.STATUS_WARN, 0.10),   ft.Icons.BOLT_ROUNDED),
 }
 
 
@@ -57,7 +61,7 @@ class NutricionView:
                           f"{sum(p['asignados'] for p in planes)} socios",
                           ft.Icons.GROUP_ROUNDED, Colors.WARNING),
             ], spacing=16),
-            padding=ft.padding.only(bottom=20),
+            padding=ft.Padding.only(bottom=20),
         )
 
         # Grilla responsiva de tarjetas: 1 columna en mobile, 2 en tablet/desktop
@@ -66,14 +70,16 @@ class NutricionView:
             spacing=16, run_spacing=16,
         )
 
+        # Topbar fijo arriba, sólo el contenido scrollea (ver dashboard.py).
         body = ft.Column([
             topbar,
             ft.Container(
-                content=ft.Column([summary, cards], spacing=0),
-                padding=ft.padding.all(24),
+                content=ft.Column([summary, cards], spacing=0,
+                                  scroll=ft.ScrollMode.AUTO, expand=True),
+                padding=ft.Padding.all(24),
                 expand=True,
             ),
-        ], spacing=0, expand=True, scroll=ft.ScrollMode.AUTO)
+        ], spacing=0, expand=True)
 
         return body
 
@@ -104,7 +110,7 @@ class NutricionView:
                         content=ft.Text(p["objetivo"], color=color, size=11,
                                         weight=ft.FontWeight.W_600),
                         bgcolor=bg, border_radius=20,
-                        padding=ft.padding.symmetric(horizontal=10, vertical=4),
+                        padding=ft.Padding.symmetric(horizontal=10, vertical=4),
                     ),
                 ]),
                 ft.Container(height=14),
@@ -115,7 +121,7 @@ class NutricionView:
                 # Calorías en número grande (DM Sans) + unidad "kcal/día"
                 ft.Row([
                     ft.Text(str(p["calorias"]), color=Colors.ACCENT, size=28,
-                            weight=ft.FontWeight.BOLD, font_family="DM Sans"),
+                            weight=ft.FontWeight.BOLD, font_family=Fonts.MONO),
                     ft.Text("kcal/día", color=Colors.TEXT_MUTED, size=14),
                 ], spacing=6, vertical_alignment=ft.CrossAxisAlignment.END),
                 ft.Container(height=12),
@@ -138,7 +144,7 @@ class NutricionView:
             ], spacing=0),
             bgcolor=Colors.BG_CARD,
             border_radius=14,
-            border=ft.border.all(1, Colors.BORDER),
+            border=ft.Border.all(1, Colors.BORDER),
             padding=20,
         )
 
@@ -191,7 +197,7 @@ class NutricionView:
                         border_color=Colors.BORDER,
                         focused_border_color=Colors.ACCENT,
                         border_radius=10,
-                        content_padding=ft.padding.all(12),
+                        content_padding=ft.Padding.all(12),
                     ),
                 ], spacing=0, tight=True),
             ),
@@ -237,7 +243,7 @@ class NutricionView:
                     # Calorías en grande
                     ft.Row([
                         ft.Text(str(p["calorias"]), color=Colors.ACCENT, size=36,
-                                weight=ft.FontWeight.BOLD, font_family="DM Sans"),
+                                weight=ft.FontWeight.BOLD, font_family=Fonts.MONO),
                         ft.Text("kcal / día", color=Colors.TEXT_MUTED, size=14),
                     ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.END),
                     ft.Container(height=16),
@@ -288,7 +294,7 @@ def _cal_stat(label: str, value: str, icon: str, color: str) -> ft.Container:
             ft.Container(
                 content=ft.Icon(icon, color=color, size=18),
                 width=36, height=36, border_radius=10,
-                bgcolor=f"{color}20", alignment=ft.Alignment.CENTER,
+                bgcolor=alpha(color, 0.12), alignment=ft.Alignment.CENTER,
             ),
             ft.Text(value, color=Colors.TEXT_PRIMARY, size=16,
                     weight=ft.FontWeight.BOLD),
@@ -296,7 +302,7 @@ def _cal_stat(label: str, value: str, icon: str, color: str) -> ft.Container:
         ], spacing=4),
         bgcolor=Colors.BG_CARD,
         border_radius=12,
-        border=ft.border.all(1, Colors.BORDER),
+        border=ft.Border.all(1, Colors.BORDER),
         padding=16,
         expand=True,
     )

@@ -56,21 +56,28 @@ class Router:
         nivel superior del módulo, algunos archivos se cargarían antes de que
         sus dependencias estén disponibles.
         """
-        from app.views.dashboard  import DashboardView
-        from app.views.socios     import SociosView
-        from app.views.personal   import PersonalView
-        from app.views.rutinas    import RutinasView
-        from app.views.nutricion  import NutricionView
-        from app.views.usuarios   import UsuariosView
+        from app.views.dashboard    import DashboardView
+        from app.views.socios       import SociosView
+        from app.views.cobros       import CobrosView
+        from app.views.asistencia   import AsistenciaView
+        from app.views.personal     import PersonalView
+        from app.views.rutinas      import RutinasView
+        from app.views.nutricion    import NutricionView
+        from app.views.actividades  import ActividadesView
+        from app.views.usuarios     import UsuariosView
 
-        # Mapeo ruta → clase de vista
+        # Mapeo ruta → clase de vista. Mismo set de secciones que la PWA para
+        # el personal del gimnasio (los socios usan la web, no esta app).
         self._view_map = {
-            Routes.DASHBOARD: DashboardView,
-            Routes.SOCIOS:    SociosView,
-            Routes.PERSONAL:  PersonalView,
-            Routes.RUTINAS:   RutinasView,
-            Routes.NUTRICION: NutricionView,
-            Routes.USUARIOS:  UsuariosView,
+            Routes.DASHBOARD:   DashboardView,
+            Routes.SOCIOS:      SociosView,
+            Routes.COBROS:      CobrosView,
+            Routes.ASISTENCIA:  AsistenciaView,
+            Routes.PERSONAL:    PersonalView,
+            Routes.RUTINAS:     RutinasView,
+            Routes.NUTRICION:   NutricionView,
+            Routes.ACTIVIDADES: ActividadesView,
+            Routes.USUARIOS:    UsuariosView,
         }
 
     # ── Navegación ────────────────────────────────────────────────────────────
@@ -90,12 +97,21 @@ class Router:
             self._go_login()
             return
 
-        # Guard 2 — Roles
-        # La sección de Usuarios solo es accesible para administradores.
-        # Si un trainer intenta acceder directamente, se ignora la navegación.
-        # TODO: mostrar un SnackBar con mensaje "Sin permisos suficientes".
-        if route == Routes.USUARIOS and not app_state.is_admin():
-            return
+        # Guard 2 — Roles  [DESACTIVADO A PROPÓSITO]
+        #
+        # Esta app está en etapa de diseño: los permisos se implementan cuando
+        # exista la API. Con el guard activo, cualquier usuario que no fuera
+        # admin no podía ni abrir la sección Usuarios, y la navegación moría en
+        # silencio (ni siquiera avisaba por qué), lo que hacía imposible
+        # revisar el diseño de esa pantalla.
+        #
+        # Cuando llegue FastAPI, lo que va acá NO es este if suelto sino la
+        # matriz de permisos por rol que ya tiene la PWA en config.ts
+        # (PERMISOS / accesoASeccion), que contempla los 5 roles y tres
+        # niveles de acceso en vez de un booleano is_admin().
+        #
+        # if route == Routes.USUARIOS and not app_state.is_admin():
+        #     return
 
         # Actualiza la ruta activa en el estado global
         app_state.current_route = route

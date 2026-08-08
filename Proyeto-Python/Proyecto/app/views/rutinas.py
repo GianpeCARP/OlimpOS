@@ -43,11 +43,12 @@ class RutinasView:
         body = ft.Column([
             topbar,
             ft.Container(
-                content=ft.Column([cards], spacing=0),
-                padding=ft.padding.all(24),
+                content=ft.Column([cards], spacing=0,
+                                  scroll=ft.ScrollMode.AUTO, expand=True),
+                padding=ft.Padding.all(24),
                 expand=True,
             ),
-        ], spacing=0, expand=True, scroll=ft.ScrollMode.AUTO)
+        ], spacing=0, expand=True)
 
         return body
 
@@ -109,19 +110,19 @@ class RutinasView:
                         # x=r captura el valor actual de r (evita closure con el valor final del loop)
                         on_click=lambda e, x=r: self._open_detail(x),
                         bgcolor=Colors.ACCENT_GLOW, border_radius=8,
-                        padding=ft.padding.symmetric(horizontal=12, vertical=6),
+                        padding=ft.Padding.symmetric(horizontal=12, vertical=6),
                     ),
                     ft.Container(
                         content=ft.Text("Asignar", color=Colors.TEXT_SECONDARY, size=12),
                         on_click=lambda e: show_snack(self.page, "Función próximamente"),
                         bgcolor=Colors.BG_SIDEBAR, border_radius=8,
-                        padding=ft.padding.symmetric(horizontal=12, vertical=6),
+                        padding=ft.Padding.symmetric(horizontal=12, vertical=6),
                     ),
                 ], spacing=8),
             ], spacing=0),
             bgcolor=Colors.BG_CARD,
             border_radius=14,
-            border=ft.border.all(1, Colors.BORDER),
+            border=ft.Border.all(1, Colors.BORDER),
             padding=20,
         )
 
@@ -175,7 +176,7 @@ class RutinasView:
                         border_color=Colors.BORDER,
                         focused_border_color=Colors.ACCENT,
                         border_radius=10,
-                        content_padding=ft.padding.all(12),
+                        content_padding=ft.Padding.all(12),
                     ),
                 ], spacing=0, tight=True),
             ),
@@ -249,7 +250,7 @@ def _info_pill(icon: str, text: str) -> ft.Container:
         ], spacing=4),
         bgcolor=Colors.BG_SIDEBAR,
         border_radius=20,
-        padding=ft.padding.symmetric(horizontal=10, vertical=4),
+        padding=ft.Padding.symmetric(horizontal=10, vertical=4),
     )
 
 

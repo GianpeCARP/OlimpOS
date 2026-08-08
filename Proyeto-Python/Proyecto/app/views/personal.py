@@ -6,17 +6,21 @@
 # Permite agregar nuevos empleados o editar los existentes mediante un modal.
 
 import flet as ft
-from app.config import Colors
+from app.config import Colors, alpha
 from app.state import app_state
 from app.components.ui import (build_topbar, status_badge, primary_button,
                                 input_field, show_snack, open_dialog, close_dialog)
 
 # Mapa turno → (color de texto, color de fondo translúcido)
-# Cada turno tiene un color distintivo para identificación visual rápida
+#
+# Mismos tres colores que StaffCard.tsx de la PWA. Kinetic Carbon no tiene azul
+# ni violeta —eran de la paleta anterior—, así que Tarde y Noche usan los dos
+# acentos que sí existen. El fondo se deriva del color con alpha() para que
+# nunca vuelva a quedar un texto de un color sobre un fondo de otro.
 TURNO_COLORS = {
-    "Mañana": (Colors.WARNING, "#453511"),  # Amarillo — turno diurno
-    "Tarde":  (Colors.INFO,    "#172554"),  # Azul — turno vespertino
-    "Noche": ("#A78BFA", "#334155"), # Violeta — turno nocturno
+    "Mañana": (Colors.STATUS_WARN,   alpha(Colors.STATUS_WARN, 0.12)),   # Amarillo
+    "Tarde":  (Colors.ACCENT_CORAL,  alpha(Colors.ACCENT_CORAL, 0.12)),  # Coral
+    "Noche":  (Colors.PRIMARY_VOLT,  alpha(Colors.PRIMARY_VOLT, 0.12)),  # Volt
 }
 
 
@@ -57,11 +61,12 @@ class PersonalView:
         body = ft.Column([
             topbar,
             ft.Container(
-                content=ft.Column([cards], spacing=0),
-                padding=ft.padding.all(24),
+                content=ft.Column([cards], spacing=0,
+                                  scroll=ft.ScrollMode.AUTO, expand=True),
+                padding=ft.Padding.all(24),
                 expand=True,
             ),
-        ], spacing=0, expand=True, scroll=ft.ScrollMode.AUTO)
+        ], spacing=0, expand=True)
 
         return body
 
@@ -81,7 +86,7 @@ class PersonalView:
                 # Fila superior: avatar + badge de estado
                 ft.Row([
                     ft.Container(
-                        content=ft.Text(initial, color=Colors.WHITE, size=20,
+                        content=ft.Text(initial, color=Colors.SURFACE_BASE, size=20,
                                         weight=ft.FontWeight.BOLD),
                         width=52, height=52, border_radius=26,
                         bgcolor=Colors.ACCENT, alignment=ft.Alignment.CENTER,
@@ -108,7 +113,7 @@ class PersonalView:
                     ], spacing=6),
                     bgcolor=turno_bg,
                     border_radius=20,
-                    padding=ft.padding.symmetric(horizontal=10, vertical=5),
+                    padding=ft.Padding.symmetric(horizontal=10, vertical=5),
                 ),
                 ft.Container(height=16),
                 # Botones de acción: Editar y Contactar
@@ -120,8 +125,8 @@ class PersonalView:
                         ], spacing=4),
                         # x=p captura la variable por valor en el lambda (evita closure bug)
                         on_click=lambda e, x=p: self._open_form(e, x),
-                        bgcolor="#3B82F620", border_radius=8,
-                        padding=ft.padding.symmetric(horizontal=10, vertical=6),
+                        bgcolor=alpha(Colors.PRIMARY_VOLT, 0.10), border_radius=8,
+                        padding=ft.Padding.symmetric(horizontal=10, vertical=6),
                     ),
                     ft.Container(
                         content=ft.Row([
@@ -129,13 +134,13 @@ class PersonalView:
                             ft.Text("Contactar", color=Colors.TEXT_SECONDARY, size=12),
                         ], spacing=4),
                         bgcolor=Colors.BG_SIDEBAR, border_radius=8,
-                        padding=ft.padding.symmetric(horizontal=10, vertical=6),
+                        padding=ft.Padding.symmetric(horizontal=10, vertical=6),
                     ),
                 ], spacing=8),
             ], spacing=4),
             bgcolor=Colors.BG_CARD,
             border_radius=14,
-            border=ft.border.all(1, Colors.BORDER),
+            border=ft.Border.all(1, Colors.BORDER),
             padding=20,
         )
 
