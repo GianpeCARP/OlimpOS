@@ -32,11 +32,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Deuda, Membresia, Pago, Socio, TipoMembresia
+from models import (
+    Deuda, InscripcionActividad, Membresia, Pago, PlanActividad, Socio,
+    TipoMembresia,
+)
 from permisos import Acceso, Accion, Seccion
 from schemas import (
-    CobrarRequest, CobroResponse, DeudaOut, EstadoCuentaOut, MembresiaOut,
-    PagoOut, TipoMembresiaCrear, TipoMembresiaOut,
+    CobrarRequest, CobroResponse, DeudaOut, EstadoCuentaOut, InscripcionOut,
+    MembresiaOut, PagarDeudaRequest, PagoOut, TipoMembresiaCrear,
+    TipoMembresiaOut,
 )
 from security import Sesion, requiere_accion, requiere_seccion
 
@@ -352,7 +356,57 @@ def cobrar(
     db.add(pago)
     db.flush()
 
-    # --- 3. Deudas ----------------------------------------------------------
+    # --- 3. Abono de actividad (opcional) -----------------------------------
+    # Va en la misma transacción porque Inscripcion_Actividad.id_membresia es
+    # NOT NULL: el abono se cuelga de la membresía que se acaba de crear. Si
+    # fueran dos pedidos, entre uno y otro habría una ventana donde el plan
+    # quedó pago sin membresía a la que atarse.
+    inscripcion = None
+    inscripcion_out = None
+    if datos.id_plan_actividad is not None:
+        plan = db.get(PlanActividad, datos.id_plan_actividad)
+        if plan is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                detail="El plan de actividad no existe.")
+        if not plan.activo:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"El plan '{plan.nombre}' está dado de baja y no se puede vender.",
+            )
+
+        # El abono vence junto con la membresía, no a los 30 días de hoy: si
+        # la membresía cubre más, los días de diferencia van sin cargo. Un
+        # abono que sobreviva a la membresía dejaría al socio con clases
+        # disponibles y sin derecho a entrar al gimnasio.
+        inscripcion = InscripcionActividad(
+            id_socio=socio.id_socio,
+            id_plan_actividad=plan.id_plan_actividad,
+            id_membresia=membresia.id_membresia,
+            precio_pactado=float(plan.precio),
+            fecha_inicio=membresia.fecha_inicio,
+            fecha_vencimiento=membresia.fecha_vencimiento,
+            clases_restantes=plan.cantidad,
+            estado="ACTIVA",
+        )
+        db.add(inscripcion)
+        db.flush()
+
+        precio += float(plan.precio)
+        pago.monto = precio
+        pago.id_inscripcion = inscripcion.id_inscripcion
+
+        inscripcion_out = InscripcionOut(
+            id_inscripcion=inscripcion.id_inscripcion,
+            actividad=plan.actividad.nombre if plan.actividad else "?",
+            plan=plan.nombre,
+            tipo_limite=plan.tipo_limite,
+            clases_restantes=inscripcion.clases_restantes,
+            fecha_inicio=inscripcion.fecha_inicio,
+            fecha_vencimiento=inscripcion.fecha_vencimiento,
+            precio_pactado=float(inscripcion.precio_pactado),
+        )
+
+    # --- 4. Deudas ----------------------------------------------------------
     saldadas = []
     if datos.saldar_deudas:
         pendientes = (
@@ -370,16 +424,24 @@ def cobrar(
     db.refresh(membresia)
 
     partes = [f"Cobro registrado: ${precio:,.2f} a {_nombre_socio(socio)}."]
+    if inscripcion_out:
+        partes.append(
+            f"Incluye el abono {inscripcion_out.plan} de {inscripcion_out.actividad} "
+            f"({inscripcion_out.clases_restantes} clases), vigente hasta el "
+            f"{inscripcion_out.fecha_vencimiento}."
+        )
     if es_adelanto:
         partes.append(f"Como tenía cuota vigente, el período nuevo arranca el {inicio}.")
     if saldadas:
-        total = sum(float(d.monto) for d in saldadas)
-        partes.append(f"Se saldaron {len(saldadas)} deuda(s) por ${total:,.2f}.")
+        total_deudas = sum(float(d.monto) for d in saldadas)
+        partes.append(f"Se saldaron {len(saldadas)} deuda(s) por ${total_deudas:,.2f}.")
 
     return CobroResponse(
         pago=_a_pago_out(pago),
         membresia=_a_membresia_out(membresia),
+        inscripcion=inscripcion_out,
         deudas_saldadas=[_a_deuda_out(d) for d in saldadas],
+        total=precio,
         mensaje=" ".join(partes),
     )
 
@@ -417,6 +479,70 @@ def anular_pago(
     for d in revividas:
         d.estado = "PENDIENTE"
         d.id_pago_cancelatorio = None
+
+    db.commit()
+    db.refresh(pago)
+    return _a_pago_out(pago)
+
+
+@router.post("/deudas/{id_deuda}/pagar", response_model=PagoOut,
+             status_code=status.HTTP_201_CREATED)
+def pagar_deuda(
+    id_deuda: int,
+    datos: PagarDeudaRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.COBRAR_PAGOS)),
+):
+    """
+    Cobra UNA deuda puntual, sin renovar la membresía.
+
+    Es distinto del cobro normal —que salda todas las deudas de arrastre— y
+    hace falta porque el mostrador a veces cobra solo lo adeudado: alguien que
+    viene a ponerse al día pero todavía no renueva.
+
+    El monto lo pone la deuda, no el cliente: cobrar $1 una deuda de $30.000
+    sería tan grave acá como en el cobro de membresía.
+
+    `id_pago_cancelatorio` deja la relación 1 a 1 entre la deuda y el pago que
+    la canceló. Es lo que permite responder después "¿con qué pago se saldó
+    esto?" sin cruzar montos y fechas a ojo.
+    """
+    deuda = db.get(Deuda, id_deuda)
+    if deuda is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La deuda no existe.")
+    if deuda.estado != "PENDIENTE":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Esa deuda ya está {deuda.estado.lower()}.",
+        )
+
+    if datos.numero_comprobante:
+        ya = (db.query(Pago)
+              .filter(Pago.numero_comprobante == datos.numero_comprobante)
+              .first())
+        if ya:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Ya se registró un pago con el comprobante {datos.numero_comprobante}.",
+            )
+
+    socio = deuda.socio
+
+    pago = Pago(
+        id_socio=deuda.id_socio,
+        id_membresia=deuda.id_membresia,
+        id_sede=socio.id_sede if socio else None,
+        metodo=datos.metodo.value,
+        monto=deuda.monto,
+        fecha_pago=datetime.now(),
+        estado="CONFIRMADO",
+        numero_comprobante=datos.numero_comprobante,
+    )
+    db.add(pago)
+    db.flush()
+
+    deuda.estado = "PAGADA"
+    deuda.id_pago_cancelatorio = pago.id_pago
 
     db.commit()
     db.refresh(pago)

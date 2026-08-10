@@ -1,58 +1,148 @@
-// Cobros (especificacion_definitiva_actividades.md, Fase 4: "Cobros
-// (ampliar): además de membresía, cobrar plan de actividad y clase suelta,
-// con las validaciones de reglas 1 y 8"). "Ampliar" asume que ya existía un
-// cobro de membresía — no existía: membresiaService.ts es de sólo lectura
-// (estados derivados), crearMembresiaInicial (sociosService.ts) es privada
-// y no genera Pago, y no hay ningún pagarDeuda en todo el proyecto. Así que
-// esto es la base entera, no una extensión.
+// Cobros, conectado a la API real (routers/cobros.py).
 //
-// Vive en su propio archivo y no adentro de membresiaService.ts/
-// socioService.ts porque el flujo de caja de recepción cruza tres dominios
-// bajo una sola pantalla: Membresia, Deuda, y — reusando actividadService.ts
-// tal cual, sin duplicar sus 8 reglas — Plan_Actividad/Turno.
-// socioService.ts es explícito en su comentario de getMiCuota: "acá no hay
-// un pagarDeuda(), ni siquiera comentado" porque esa pantalla es de
-// consulta del socio, no de cobro — este archivo es exactamente lo que
-// falta del otro lado del mostrador.
+// EL MONTO LO CALCULA EL SERVIDOR
+// Ninguna de estas funciones manda un importe: mandan QUÉ se está cobrando
+// (el plan, el abono, la deuda) y el backend busca el precio. Si el monto
+// viniera del cliente, cualquiera con la consola abierta podría cobrar $1 una
+// membresía de $30.000 y en la base quedaría un pago perfectamente válido.
 //
-// getMiCuota (socioService.ts) se reutiliza tal cual para el estado de
-// cuenta: ya es de sólo lectura y ya toma idSocio como parámetro plano, sin
-// nada atado a la sesión del socio que la llama.
+// POR QUÉ EL COMBO ES UNA SOLA LLAMADA
+// Membresía y abono de actividad se cobran juntos en un único pedido porque
+// Inscripcion_Actividad.id_membresia es NOT NULL: el abono se cuelga de la
+// membresía. En dos llamadas habría una ventana en la que el plan quedó pago
+// sin membresía a la que atarse — y si la segunda falla, el socio pagó algo
+// que no existe.
 
-import type { Membresia, Pago, TipoMembresia } from '../types';
-import { ServiceError, delay } from './api';
-import { registrarAuditoria } from './auditoriaService';
-import { membresiaVigente } from './membresiaService';
-import {
-  comprarPlan,
-  tieneDeudaPendiente,
-  vencimientoDePlanComprado,
-  type InscripcionListada,
-} from './actividadService';
-import { aFechaISO, aTimestampISO, parsearFecha, sumarDias } from '../utils/fechas';
-import { formatearFechaConAnio } from '../utils/format';
-import {
-  socios,
-  membresias,
-  deudas,
-  pagos,
-  tiposMembresia,
-  planesActividad,
-  sedes,
-  siguienteId,
-} from './mockDb';
+import { pedir } from './api';
 
-function resolverSocio(idSocio: number) {
-  const socio = socios.find((s) => s.id_socio === idSocio);
-  if (!socio) throw new ServiceError(404, 'El socio no existe');
-  return socio;
+export type MetodoPago =
+  | 'EFECTIVO'
+  | 'DEBITO'
+  | 'CREDITO'
+  | 'TRANSFERENCIA'
+  | 'BILLETERA_VIRTUAL';
+
+// --- Estado de cuenta ---
+
+export interface DeudaListada {
+  idDeuda: number;
+  monto: number;
+  fechaGeneracion: string;
+  fechaVencimiento?: string;
+  observaciones?: string;
 }
 
-function sedeActiva() {
-  const sede = sedes.find((s) => s.activo);
-  if (!sede) throw new ServiceError(500, 'No hay ninguna sede activa configurada');
-  return sede;
+export interface PagoListado {
+  idPago: number;
+  monto: number;
+  metodo: MetodoPago;
+  fechaPago: string;
+  periodoDesde?: string;
+  periodoHasta?: string;
+  estado: string;
+  numeroComprobante?: string;
 }
+
+export interface EstadoCuenta {
+  idSocio: number;
+  socio: string;
+  numeroSocio?: string;
+  alDia: boolean;
+  plan?: string;
+  vencimiento?: string;
+  diasRestantes?: number;
+  deudaTotal: number;
+  deudas: DeudaListada[];
+  ultimosPagos: PagoListado[];
+}
+
+interface PagoApi {
+  id_pago: number;
+  monto: number;
+  metodo: MetodoPago;
+  fecha_pago: string;
+  periodo_desde: string | null;
+  periodo_hasta: string | null;
+  estado: string;
+  numero_comprobante: string | null;
+}
+
+interface DeudaApi {
+  id_deuda: number;
+  monto: number;
+  fecha_generacion: string;
+  fecha_vencimiento: string | null;
+  observaciones: string | null;
+}
+
+interface EstadoCuentaApi {
+  id_socio: number;
+  socio: string;
+  numero_socio: string | null;
+  al_dia: boolean;
+  membresia_actual: {
+    tipo: string;
+    fecha_vencimiento: string | null;
+    dias_restantes: number | null;
+  } | null;
+  deuda_total: number;
+  deudas: DeudaApi[];
+  ultimos_pagos: PagoApi[];
+}
+
+function aPago(p: PagoApi): PagoListado {
+  return {
+    idPago: p.id_pago,
+    monto: p.monto,
+    metodo: p.metodo,
+    fechaPago: p.fecha_pago,
+    periodoDesde: p.periodo_desde ?? undefined,
+    periodoHasta: p.periodo_hasta ?? undefined,
+    estado: p.estado,
+    numeroComprobante: p.numero_comprobante ?? undefined,
+  };
+}
+
+function aDeuda(d: DeudaApi): DeudaListada {
+  return {
+    idDeuda: d.id_deuda,
+    monto: d.monto,
+    fechaGeneracion: d.fecha_generacion,
+    fechaVencimiento: d.fecha_vencimiento ?? undefined,
+    observaciones: d.observaciones ?? undefined,
+  };
+}
+
+/**
+ * Todo lo que el mostrador necesita ver antes de cobrarle a alguien.
+ *
+ * `alDia` son DOS condiciones, no una: tener membresía vigente Y no deber
+ * nada. Alguien puede tener la cuota del mes paga y arrastrar una deuda
+ * vieja, y ese caso no es "al día".
+ */
+export async function obtenerEstadoCuenta(idSocio: number): Promise<EstadoCuenta> {
+  const d = await pedir<EstadoCuentaApi>(`/cobros/socio/${idSocio}`);
+  return {
+    idSocio: d.id_socio,
+    socio: d.socio,
+    numeroSocio: d.numero_socio ?? undefined,
+    alDia: d.al_dia,
+    plan: d.membresia_actual?.tipo,
+    vencimiento: d.membresia_actual?.fecha_vencimiento ?? undefined,
+    diasRestantes: d.membresia_actual?.dias_restantes ?? undefined,
+    deudaTotal: d.deuda_total,
+    deudas: d.deudas.map(aDeuda),
+    ultimosPagos: d.ultimos_pagos.map(aPago),
+  };
+}
+
+/** Todas las deudas pendientes del gimnasio, la más vieja primero. */
+export async function listarDeudasPendientes(): Promise<(DeudaListada & { socio: string })[]> {
+  const datos = await pedir<(DeudaApi & { socio: string })[]>('/cobros/deudas');
+  return datos.map((d) => ({ ...aDeuda(d), socio: d.socio }));
+}
+
+// --- Cobro ---
 
 export interface MembresiaCobrada {
   idMembresia: number;
@@ -61,204 +151,160 @@ export interface MembresiaCobrada {
   monto: number;
 }
 
-/**
- * Cobra una membresía nueva o una renovación — es la misma operación,
- * porque en el esquema no hay diferencia entre las dos: siempre es una fila
- * NUEVA de Membresia (historial, igual que Inscripcion_Actividad), nunca se
- * pisa la anterior. Si la vigente todavía no venció, la nueva arranca
- * DESPUÉS de ese vencimiento (no se pierden los días ya pagados); si venció
- * o no tiene ninguna, arranca hoy.
- */
-function resolverTipoMembresia(idTipoMembresia: number): TipoMembresia {
-  const tipo = tiposMembresia.find((t) => t.id_tipo_membresia === idTipoMembresia && t.activo);
-  if (!tipo) throw new ServiceError(404, 'El tipo de membresía no existe');
-  return tipo;
+export interface AbonoCobrado {
+  idInscripcion: number;
+  actividad: string;
+  plan: string;
+  clasesRestantes?: number;
+  vencimiento: string;
+  monto: number;
 }
 
-/**
- * Desde/hasta que le corresponde a una renovación. `cubrirHasta` sólo lo
- * usa el combo: estira el vencimiento si el período normal del tipo no
- * llegara a cubrir el plan que se cobra junto (ver cobrarMembresiaYPlan).
- */
-function periodoDeRenovacion(
-  idSocio: number,
-  tipo: TipoMembresia,
-  hoy: Date,
-  cubrirHasta?: Date,
-): { inicio: Date; vencimiento: Date } {
-  const vigente = membresiaVigente(idSocio);
-  const vencimientoVigente = vigente?.fecha_vencimiento ? parsearFecha(vigente.fecha_vencimiento) : undefined;
-  const inicio = vencimientoVigente && vencimientoVigente > hoy ? vencimientoVigente : hoy;
-  const normal = sumarDias(inicio, tipo.duracion_dias);
-  return { inicio, vencimiento: cubrirHasta && cubrirHasta > normal ? cubrirHasta : normal };
+export interface CobroRealizado {
+  membresia: MembresiaCobrada;
+  /** Solo si se cobró el combo con abono de actividad. */
+  abono?: AbonoCobrado;
+  deudasSaldadas: number;
+  total: number;
+  mensaje: string;
 }
 
-/** Escribe la Membresia + su Pago. Sin validaciones: las hace quien la llama. */
-function registrarMembresiaCobrada(
-  idSocio: number,
-  tipo: TipoMembresia,
-  metodo: Pago['metodo'],
-  hoy: Date,
-  periodo: { inicio: Date; vencimiento: Date },
-  idUsuarioActor?: number,
-): MembresiaCobrada {
-  const membresia: Membresia = {
-    id_membresia: siguienteId.membresia(),
-    id_socio: idSocio,
-    id_tipo_membresia: tipo.id_tipo_membresia,
-    precio_pactado: tipo.precio_actual,
-    fecha_inicio: aFechaISO(periodo.inicio),
-    fecha_vencimiento: aFechaISO(periodo.vencimiento),
-    estado: 'ACTIVA',
+interface CobroApi {
+  pago: PagoApi;
+  membresia: {
+    id_membresia: number;
+    tipo: string;
+    fecha_vencimiento: string | null;
+    precio_pactado: number;
   };
-  membresias.push(membresia);
+  inscripcion: {
+    id_inscripcion: number;
+    actividad: string;
+    plan: string;
+    clases_restantes: number | null;
+    fecha_vencimiento: string;
+    precio_pactado: number;
+  } | null;
+  deudas_saldadas: DeudaApi[];
+  total: number;
+  mensaje: string;
+}
 
-  pagos.push({
-    id_pago: siguienteId.pago(),
-    id_socio: idSocio,
-    id_membresia: membresia.id_membresia,
-    id_sede: sedeActiva().id_sede,
-    metodo,
-    monto: tipo.precio_actual,
-    fecha_pago: aTimestampISO(hoy),
-    es_adelanto: false,
-    estado: 'CONFIRMADO',
-    id_registrado_por: idUsuarioActor,
-  });
-
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Membresia',
-    id_entidad: membresia.id_membresia,
-    accion: 'ALTA',
-    detalle: `Cobro de ${tipo.nombre}`,
+/**
+ * Cobra una membresía nueva o una renovación — es la misma operación, porque
+ * en el esquema no hay diferencia: siempre es una fila NUEVA de Membresia,
+ * nunca se pisa la anterior. Eso es lo que deja el historial de cuándo estuvo
+ * al día y cuándo no.
+ *
+ * Si la vigente todavía no venció, la nueva arranca DESPUÉS de ese
+ * vencimiento: quien paga por adelantado no pierde los días que le quedaban.
+ *
+ * Con `idPlanActividad` cobra además un abono de actividad, en la misma
+ * transacción. Ese abono vence junto con la membresía: si la membresía cubre
+ * más, los días de diferencia van sin cargo. Un abono que sobreviva a la
+ * membresía dejaría al socio con clases disponibles y sin derecho a entrar.
+ */
+export async function cobrar(
+  idSocio: number,
+  idTipoMembresia: number,
+  metodo: MetodoPago,
+  opciones: { idPlanActividad?: number; numeroComprobante?: string } = {},
+): Promise<CobroRealizado> {
+  const d = await pedir<CobroApi>('/cobros', {
+    metodo: 'POST',
+    cuerpo: {
+      id_socio: idSocio,
+      id_tipo_membresia: idTipoMembresia,
+      metodo,
+      id_plan_actividad: opciones.idPlanActividad ?? null,
+      numero_comprobante: opciones.numeroComprobante ?? null,
+      saldar_deudas: true,
+    },
   });
 
   return {
-    idMembresia: membresia.id_membresia,
-    plan: tipo.nombre,
-    vencimiento: membresia.fecha_vencimiento as string,
-    monto: tipo.precio_actual,
+    membresia: {
+      idMembresia: d.membresia.id_membresia,
+      plan: d.membresia.tipo,
+      vencimiento: d.membresia.fecha_vencimiento ?? '',
+      monto: d.membresia.precio_pactado,
+    },
+    abono: d.inscripcion
+      ? {
+          idInscripcion: d.inscripcion.id_inscripcion,
+          actividad: d.inscripcion.actividad,
+          plan: d.inscripcion.plan,
+          clasesRestantes: d.inscripcion.clases_restantes ?? undefined,
+          vencimiento: d.inscripcion.fecha_vencimiento,
+          monto: d.inscripcion.precio_pactado,
+        }
+      : undefined,
+    deudasSaldadas: d.deudas_saldadas.length,
+    total: d.total,
+    mensaje: d.mensaje,
   };
 }
 
-export async function cobrarMembresia(
-  idSocio: number,
-  idTipoMembresia: number,
-  metodo: Pago['metodo'],
-  idUsuarioActor?: number,
-): Promise<MembresiaCobrada> {
-  await delay();
-  resolverSocio(idSocio);
-  const tipo = resolverTipoMembresia(idTipoMembresia);
-  const hoy = new Date();
-  return registrarMembresiaCobrada(idSocio, tipo, metodo, hoy, periodoDeRenovacion(idSocio, tipo, hoy), idUsuarioActor);
-}
-
-export interface ComboCobrado {
-  membresia: MembresiaCobrada;
-  inscripcion: InscripcionListada;
-  total: number;
-}
-
 /**
- * Combo "renovar membresía + cobrar plan de actividad" en una sola
- * operación. Existe porque en un gimnasio real pasa todo el tiempo: la
- * membresía vence a mitad de mes y el plan de actividad siempre se cobra
- * por mes completo (REGLA 1), así que sin renovar no entra.
+ * Cobra UNA deuda puntual, sin renovar la membresía.
  *
- * Dos cosas que ESTA función garantiza y que encadenar las dos llamadas
- * desde la vista no garantizaba:
+ * Es el caso de quien viene a ponerse al día pero todavía no renueva. El
+ * monto lo pone la deuda: cobrar $1 una deuda de $30.000 sería tan grave como
+ * en el cobro de membresía.
  *
- * 1. **No cobra la membresía si el plan igual va a rebotar.** Todo lo que
- *    puede rechazar el plan por adelantado (que exista, que esté activo,
- *    que no haya deuda — REGLA 8) se valida ANTES de escribir nada.
- * 2. **La renovación alcanza siempre.** Un tipo "mensual" de 30 días NO
- *    cubre un mes calendario de 31 días, que son la mayoría: renovar y
- *    después comprar fallaba por un día. Acá el vencimiento se estira
- *    hasta cubrir el plan (`cubrirHasta`). Es una decisión de negocio
- *    explícita del combo: los días de diferencia van sin cargo. El
- *    vencimiento real vuelve en el resultado y la vista lo confirma en
- *    pantalla apenas se cobra.
- */
-export async function cobrarMembresiaYPlan(
-  idSocio: number,
-  idTipoMembresia: number,
-  idPlanActividad: number,
-  metodo: Pago['metodo'],
-  idUsuarioActor?: number,
-): Promise<ComboCobrado> {
-  await delay();
-  resolverSocio(idSocio);
-  const tipo = resolverTipoMembresia(idTipoMembresia);
-
-  // --- Todo lo que puede rebotar, ANTES de tocar la caja ---
-  const plan = planesActividad.find((p) => p.id_plan_actividad === idPlanActividad && p.activo);
-  if (!plan) throw new ServiceError(404, 'El plan no existe');
-  if (tieneDeudaPendiente(idSocio)) {
-    throw new ServiceError(403, 'Tiene una deuda pendiente. Cobrala primero.');
-  }
-
-  const hoy = new Date();
-  const periodo = periodoDeRenovacion(idSocio, tipo, hoy, vencimientoDePlanComprado(hoy));
-  const membresia = registrarMembresiaCobrada(idSocio, tipo, metodo, hoy, periodo, idUsuarioActor);
-
-  // Con la membresía ya cubriendo el mes entero, comprarPlan no puede
-  // rechazar por REGLA 1. Si aun así fallara, queda auditado que la
-  // membresía se cobró: es una fila propia de Pago, no se pierde.
-  const inscripcion = await comprarPlan(idSocio, idPlanActividad, idUsuarioActor, metodo);
-
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Membresia',
-    id_entidad: membresia.idMembresia,
-    accion: 'MODIFICACION',
-    detalle: `Combo con "${plan.nombre}" — cubre hasta ${formatearFechaConAnio(periodo.vencimiento)}`,
-  });
-
-  return { membresia, inscripcion, total: membresia.monto + plan.precio };
-}
-
-/**
- * Salda una deuda puntual — no todas las del socio, una por una, para que
- * quede clara la relación 1 a 1 con el Pago que la cancela
- * (Deuda.id_pago_cancelatorio, columna del esquema que hasta ahora no la
- * escribía nadie).
+ * Deja registrada la relación 1 a 1 entre la deuda y el pago que la canceló,
+ * así después se puede responder "¿con qué pago se saldó esto?" sin cruzar
+ * montos y fechas a ojo.
  */
 export async function pagarDeuda(
-  idSocio: number,
   idDeuda: number,
-  metodo: Pago['metodo'],
-  idUsuarioActor?: number,
-): Promise<void> {
-  await delay();
-  resolverSocio(idSocio);
-  const deuda = deudas.find((d) => d.id_deuda === idDeuda && d.id_socio === idSocio);
-  if (!deuda) throw new ServiceError(404, 'La deuda no existe');
-  if (deuda.estado !== 'PENDIENTE') throw new ServiceError(400, 'Esa deuda ya no está pendiente');
-
-  const pago: Pago = {
-    id_pago: siguienteId.pago(),
-    id_socio: idSocio,
-    id_membresia: deuda.id_membresia,
-    id_sede: sedeActiva().id_sede,
-    metodo,
-    monto: deuda.monto,
-    fecha_pago: aTimestampISO(new Date()),
-    es_adelanto: false,
-    estado: 'CONFIRMADO',
-    id_registrado_por: idUsuarioActor,
-  };
-  pagos.push(pago);
-
-  deuda.estado = 'PAGADA';
-  deuda.id_pago_cancelatorio = pago.id_pago;
-
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Deuda',
-    id_entidad: idDeuda,
-    accion: 'MODIFICACION',
-    detalle: 'Pagada en recepción',
+  metodo: MetodoPago,
+  numeroComprobante?: string,
+): Promise<PagoListado> {
+  const p = await pedir<PagoApi>(`/cobros/deudas/${idDeuda}/pagar`, {
+    metodo: 'POST',
+    cuerpo: { metodo, numero_comprobante: numeroComprobante ?? null },
   });
+  return aPago(p);
+}
+
+/**
+ * Anula un pago mal registrado. NO lo borra: le pone estado CANCELADO.
+ *
+ * Un registro contable que desaparece es un agujero en la caja. Y anular
+ * revierte todo lo que ese pago habilitó — cancela la membresía y vuelve a
+ * dejar pendientes las deudas que había saldado. Sin eso, anular un cobro le
+ * dejaría al socio el mes pago y las deudas perdonadas de regalo.
+ */
+export async function anularPago(idPago: number): Promise<PagoListado> {
+  const p = await pedir<PagoApi>(`/cobros/pagos/${idPago}/anular`, { metodo: 'POST' });
+  return aPago(p);
+}
+
+// --- Catálogo de planes ---
+
+export interface TipoMembresiaOpcion {
+  idTipoMembresia: number;
+  nombre: string;
+  duracionDias: number;
+  precio: number;
+}
+
+export async function listarTiposMembresia(): Promise<TipoMembresiaOpcion[]> {
+  const datos = await pedir<{
+    id_tipo_membresia: number;
+    nombre: string;
+    duracion_dias: number;
+    precio_actual: number;
+    activo: boolean;
+  }[]>('/cobros/tipos-membresia');
+
+  return datos
+    .filter((t) => t.activo)
+    .map((t) => ({
+      idTipoMembresia: t.id_tipo_membresia,
+      nombre: t.nombre,
+      duracionDias: t.duracion_dias,
+      precio: t.precio_actual,
+    }));
 }

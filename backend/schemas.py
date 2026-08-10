@@ -493,6 +493,13 @@ class CobrarRequest(BaseModel):
     numero_comprobante: str | None = None
     # Si el socio arrastra deudas, este cobro las salda además de renovar.
     saldar_deudas: bool = True
+    # Combo opcional: además de la membresía, un abono de actividad.
+    #
+    # Va en el MISMO pedido y no en dos porque Inscripcion_Actividad.id_membresia
+    # es NOT NULL: el abono no puede existir sin una membresía que lo respalde.
+    # Cobrarlos por separado dejaría una ventana en la que el plan quedó pago
+    # pero sin membresía a la que colgarse.
+    id_plan_actividad: int | None = None
 
 
 class PagoOut(BaseModel):
@@ -534,11 +541,29 @@ class DeudaOut(BaseModel):
     observaciones: str | None = None
 
 
+class InscripcionOut(BaseModel):
+    id_inscripcion: int
+    actividad: str
+    plan: str
+    tipo_limite: str
+    clases_restantes: int | None = None
+    fecha_inicio: date
+    fecha_vencimiento: date
+    precio_pactado: float
+
+
 class CobroResponse(BaseModel):
     pago: PagoOut
     membresia: MembresiaOut
+    inscripcion: InscripcionOut | None = None
     deudas_saldadas: list[DeudaOut] = []
+    total: float
     mensaje: str
+
+
+class PagarDeudaRequest(BaseModel):
+    metodo: MetodoPago
+    numero_comprobante: str | None = None
 
 
 class EstadoCuentaOut(BaseModel):

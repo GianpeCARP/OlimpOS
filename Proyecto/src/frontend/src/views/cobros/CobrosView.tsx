@@ -13,7 +13,7 @@ import {
   type InscripcionListada,
   type PlanActividadListado,
 } from '../../services/actividadService';
-import { cobrarMembresia, cobrarMembresiaYPlan, pagarDeuda } from '../../services/cobrosService';
+import { cobrar, pagarDeuda } from '../../services/cobrosService';
 import { getMiCuota, type MiCuota } from '../../services/socioService';
 import { listarSocios, listarTiposMembresia, type SocioListado } from '../../services/sociosService';
 import type { Pago, TipoMembresia } from '../../types';
@@ -153,10 +153,10 @@ export function CobrosView() {
       }`,
       () => {
         setOcupado(true);
-        cobrarMembresia(socioSeleccionado.idSocio, tipoElegido.id_tipo_membresia, metodo, idUsuarioActor)
+        cobrar(socioSeleccionado.idSocio, tipoElegido.id_tipo_membresia, metodo)
           .then((resultado) => {
             showSnack(
-              `Cobrado: ${resultado.plan} hasta el ${formatearFecha(parsearFecha(resultado.vencimiento))}`,
+              `Cobrado: ${resultado.membresia.plan} hasta el ${formatearFecha(parsearFecha(resultado.membresia.vencimiento))}`,
               colors.statusOk,
             );
             cargarCuenta(socioSeleccionado.idSocio);
@@ -174,7 +174,7 @@ export function CobrosView() {
       `Se registra como pagada en ${OPCIONES_METODO.find((o) => o.value === metodo)?.label}.`,
       () => {
         setOcupado(true);
-        pagarDeuda(socioSeleccionado.idSocio, deuda.idDeuda, metodo, idUsuarioActor)
+        pagarDeuda(deuda.idDeuda, metodo)
           .then(() => {
             showSnack(`Deuda de ${formatearMoneda(deuda.monto)} cobrada`, colors.statusOk);
             cargarCuenta(socioSeleccionado.idSocio);
@@ -229,13 +229,13 @@ export function CobrosView() {
         // ANTES de cobrar la membresía, y garantiza que la renovación
         // alcance a cubrir el plan. Encadenar las dos llamadas desde acá
         // cobraba la membresía y después dejaba el plan afuera.
-        cobrarMembresiaYPlan(
-          socioSeleccionado.idSocio,
-          tipo.id_tipo_membresia,
-          plan.idPlanActividad,
-          metodo,
-          idUsuarioActor,
-        )
+        // Una sola llamada: el backend crea membresía + abono en la misma
+        // transacción. Inscripcion_Actividad.id_membresia es NOT NULL, así
+        // que encadenar dos pedidos dejaría al plan sin membresía si el
+        // segundo falla.
+        cobrar(socioSeleccionado.idSocio, tipo.id_tipo_membresia, metodo, {
+          idPlanActividad: plan.idPlanActividad,
+        })
           .then((resultado) => {
             showSnack(
               `Cobrado: ${tipo.nombre} hasta el ${formatearFecha(parsearFecha(resultado.membresia.vencimiento))} + ${plan.nombre}`,
