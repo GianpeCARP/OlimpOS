@@ -71,3 +71,12 @@ desktop.ini
 *.sqlite3
 *.db
 *.bak
+
+# --- Binarios que Git no versiona bien ---
+# Un .rar o un .docx no se pueden diffear: cada cambio guarda el archivo
+# entero de nuevo y el repo crece sin control. El material de referencia del
+# profesor (PERAZZO/) sí se versiona porque es código fuente legible.
+*.rar
+*.zip
+*.7z
+COSAS NUEVAS A TENER EN CUENTA.docx

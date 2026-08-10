@@ -1,0 +1,29 @@
+# Dependencias del backend de OlimpOS (Python 3.11).
+#
+# Versiones acotadas con ~= (compatible release): permite parches, bloquea
+# saltos de minor que rompan. Después del primer `pip install` que funcione,
+# conviene congelar con `pip freeze > requirements.lock.txt`.
+
+# --- API ---
+fastapi~=0.115.0
+uvicorn[standard]~=0.32.0
+
+# --- Base de datos ---
+sqlalchemy~=2.0.36
+psycopg2-binary~=2.9.10      # driver de PostgreSQL (el mismo que usa el ref del profe)
+
+# --- Validación / schemas ---
+pydantic[email]~=2.10.0      # el extra [email] habilita EmailStr
+
+# --- Seguridad ---
+bcrypt~=4.2.0                # hashing de contraseñas, SIN passlib (ver nota abajo)
+python-jose[cryptography]~=3.3.0   # firma y verificación de JWT
+
+# --- Configuración ---
+python-dotenv~=1.0.1         # carga el .env al entorno del proceso
+
+# NOTA sobre bcrypt: se usa la librería directa y NO passlib. Passlib está sin
+# mantenimiento desde 2020 y es incompatible con bcrypt 4.1+, lo que produce
+# errores engañosos del tipo "password cannot be longer than 72 bytes" que no
+# tienen nada que ver con la contraseña real. El proyecto de referencia del
+# profe llegó a la misma conclusión y lo documenta en su auth.py.

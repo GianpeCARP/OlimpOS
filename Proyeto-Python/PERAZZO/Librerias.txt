@@ -1,0 +1,11 @@
+Para actualizar pip
+Dentro del entorno virtual:
+
+python -m pip install --upgrade pip   
+
+Luego instala directamente el archivo requirements.txt
+
+pip install -r requirements.txt   
+
+Para ejecutar el backend: uvicorn main:app --reload   
+

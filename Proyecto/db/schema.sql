@@ -116,6 +116,12 @@ CREATE TABLE "Usuario" (
   "id_persona" int UNIQUE NOT NULL,
   "username" varchar(50) UNIQUE NOT NULL,
   "password_hash" varchar(255) NOT NULL,
+  -- Fuerza el cambio de contraseña en el próximo ingreso. Arranca en true a
+  -- propósito: toda cuenta nace con una clave temporal que alguien más eligió
+  -- (el seeder para el dueño, el personal para un socio o empleado), así que
+  -- lo correcto por defecto es exigir que la cambien. Cuando está en true, el
+  -- login NO emite token — ver migrations/001.
+  "debe_cambiar_password" boolean NOT NULL DEFAULT true,
   "ultimo_acceso" timestamp,
   "intentos_fallidos" int DEFAULT 0,
   "bloqueado" boolean DEFAULT false,

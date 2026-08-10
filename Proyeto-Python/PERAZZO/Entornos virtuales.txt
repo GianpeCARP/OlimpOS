@@ -1,0 +1,18 @@
+Para activar un entorno virtual de Python en PowerShell, primero debes crearlo o asegurarte de que exista.  
+El comando estándar es:
+
+python -m venv nombre_del_entorno
+
+Una vez creado, navega al directorio del proyecto y ejecuta el script de activación específico para PowerShell, 
+que se encuentra dentro de la carpeta Scripts:
+
+.\nombre_del_entorno\Scripts\Activate.ps1
+
+Si recibes un error indicando que la ejecución de scripts está deshabilitada, debes cambiar la política de ejecución de PowerShell. 
+Abre PowerShell como administrador y ejecuta:
+
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+Tras aceptar el cambio, vuelve a intentar el comando de activación. Para verificar que el entorno está activo, 
+observa si el nombre del entorno aparece entre paréntesis al inicio de tu línea de comandos o ejecuta Get-Command python 
+para confirmar que la ruta apunta a la carpeta Scripts de tu entorno virtual. Para desactivarlo, simplemente escribe deactivate. 

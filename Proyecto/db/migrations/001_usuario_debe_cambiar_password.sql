@@ -1,0 +1,34 @@
+-- =============================================================================
+-- 001 — Usuario.debe_cambiar_password
+-- =============================================================================
+-- Agrega la bandera de cambio de contraseña obligatorio a la tabla Usuario.
+--
+-- POR QUÉ:
+-- El esquema v5 original no la tenía, y sin ella no se puede implementar el
+-- flujo de alta de credenciales que exige la consigna: toda cuenta nace con
+-- una contraseña temporal que eligió otra persona (el seeder para el dueño,
+-- el personal del gimnasio para un socio o empleado), y su dueño real tiene
+-- que definir la suya propia antes de poder usar el sistema.
+--
+-- Con la bandera en true, POST /login verifica la contraseña pero NO emite
+-- token: devuelve solo {"debe_cambiar_password": true}. El frontend redirige
+-- a la pantalla de cambio, y recién después de cambiarla el segundo login
+-- entrega la sesión. Es la misma mecánica para los tres casos (dueño inicial,
+-- usuario nuevo, reseteo hecho por un admin).
+--
+-- DEFAULT true, y no false, porque el caso seguro es exigir el cambio: una
+-- cuenta creada sin especificar la bandera es, por definición, una cuenta con
+-- contraseña temporal.
+--
+-- Este cambio ya está incorporado a schema.sql. Este archivo existe para las
+-- bases que se crearon ANTES (como la de Neon del 9/8/2026), donde correr
+-- schema.sql de nuevo fallaría porque las tablas ya existen.
+--
+-- Aplicar:
+--   SQL Editor de Neon, o bien:  python check_db.py  tras correrlo.
+-- Revertir:
+--   ALTER TABLE "Usuario" DROP COLUMN "debe_cambiar_password";
+-- =============================================================================
+
+ALTER TABLE "Usuario"
+  ADD COLUMN IF NOT EXISTS "debe_cambiar_password" boolean NOT NULL DEFAULT true;
