@@ -15,7 +15,7 @@ se adapte al contrato existente que reescribir las vistas de los dos
 frontends.
 """
 
-from datetime import date, datetime  # noqa: F401  (datetime lo usan los *Out)
+from datetime import date, datetime, time  # noqa: F401  (los usan los *Out)
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
@@ -197,6 +197,150 @@ class SocioOut(BaseModel):
     apellido: str
     email: str | None = None
     tiene_cuenta: bool = False
+
+
+# =============================================================================
+# ASISTENCIA
+# =============================================================================
+
+class MetodoRegistro(str, Enum):
+    RFID = "RFID"
+    MANUAL = "MANUAL"
+
+
+class FicharRequest(BaseModel):
+    """
+    Un ingreso al gimnasio. Se identifica al socio por UNA de dos vías:
+
+      - `codigo_rfid`  → el socio pasó su tarjeta por el lector.
+      - `id_socio`     → alguien del mostrador lo cargó a mano.
+
+    Son excluyentes y el router valida que venga exactamente una: aceptar las
+    dos abriría la puerta a que discrepen y no quede claro a quién se fichó.
+    """
+    codigo_rfid: str | None = None
+    id_socio: int | None = None
+
+
+class AsistenciaOut(BaseModel):
+    id_asistencia: int
+    id_socio: int
+    socio: str
+    numero_socio: str | None = None
+    fecha_hora_ingreso: datetime
+    fecha_hora_egreso: datetime | None = None
+    metodo_registro: MetodoRegistro
+
+
+class FicharResponse(BaseModel):
+    """
+    El resultado del fichaje.
+
+    `permitido` puede ser False y aun así devolver 200: el ingreso se
+    REGISTRA igual, pero con una advertencia. Es una decisión de negocio —
+    dejar a alguien afuera del gimnasio por una deuda es algo que decide una
+    persona en el mostrador, no un torniquete. El sistema informa; no juzga.
+    """
+    asistencia: AsistenciaOut
+    permitido: bool
+    advertencia: str | None = None
+    mensaje: str
+
+
+# =============================================================================
+# ACTIVIDADES
+# =============================================================================
+
+class TipoLimite(str, Enum):
+    POR_SEMANA = "POR_SEMANA"
+    POR_MES = "POR_MES"
+
+
+class EstadoTurno(str, Enum):
+    HABILITADO = "HABILITADO"
+    CANCELADO = "CANCELADO"
+
+
+class EstadoReserva(str, Enum):
+    RESERVADA = "RESERVADA"
+    CANCELADA_SOCIO = "CANCELADA_SOCIO"
+    CANCELADA_GIMNASIO = "CANCELADA_GIMNASIO"
+
+
+class PlanActividadOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id_plan_actividad: int
+    id_actividad: int
+    nombre: str
+    tipo_limite: TipoLimite
+    cantidad: int
+    precio: float
+    activo: bool
+
+
+class ActividadOut(BaseModel):
+    id_actividad: int
+    nombre: str
+    descripcion: str | None = None
+    cupo_default: int
+    precio_clase_suelta: float
+    horas_anticipacion_cancelacion: int
+    activo: bool
+    planes: list[PlanActividadOut] = []
+
+
+class ActividadCrear(BaseModel):
+    nombre: str = Field(min_length=1, max_length=80)
+    descripcion: str | None = None
+    cupo_default: int = Field(ge=1)
+    precio_clase_suelta: float = Field(ge=0)
+    horas_anticipacion_cancelacion: int = Field(default=0, ge=0)
+
+
+class TurnoOut(BaseModel):
+    id_turno: int
+    id_actividad: int
+    actividad: str
+    fecha: date
+    hora: time
+    cupo_maximo: int
+    # Calculados: la grilla los necesita para pintar "3/15" y deshabilitar el
+    # botón. Contarlos en el cliente obligaría a bajarse todas las reservas.
+    reservados: int = 0
+    lugares_libres: int = 0
+    estado: EstadoTurno
+    profesor: str | None = None
+    motivo_cancelacion: str | None = None
+
+
+class TurnoCrear(BaseModel):
+    id_actividad: int
+    id_sede: int
+    fecha: date
+    hora: time
+    # Si no se indica, se usa el cupo_default de la actividad.
+    cupo_maximo: int | None = Field(default=None, ge=1)
+    id_profesor: int | None = None
+
+
+class ReservarRequest(BaseModel):
+    id_socio: int
+    # True cuando el socio paga la clase individual en vez de usar su abono.
+    es_clase_suelta: bool = False
+
+
+class ReservaOut(BaseModel):
+    id_reserva: int
+    id_turno: int
+    id_socio: int
+    socio: str
+    actividad: str
+    fecha: date
+    hora: time
+    estado: EstadoReserva
+    es_clase_suelta: bool
+    clases_restantes: int | None = None
 
 
 # =============================================================================

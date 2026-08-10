@@ -571,6 +571,196 @@ class AsignacionDieta(Base):
 
 
 # =============================================================================
+# ACTIVIDADES — clases con horario (yoga, spinning, boxeo)
+# =============================================================================
+
+class Actividad(Base):
+    """
+    El catálogo: qué clases ofrece el gimnasio.
+
+    `horas_anticipacion_cancelacion` es una regla de negocio POR ACTIVIDAD, no
+    global: cancelar un spinning con 2 horas de aviso puede estar bien, pero
+    una clase personalizada quizás exija 24. Guardarlo acá permite que cada
+    una tenga su propia política sin tocar código.
+    """
+    __tablename__ = "Actividad"
+
+    id_actividad = Column(Integer, primary_key=True)
+    nombre = Column(String(80), unique=True, nullable=False)
+    descripcion = Column(Text)
+    cupo_default = Column(Integer, nullable=False)
+    precio_clase_suelta = Column(Numeric(10, 2), nullable=False)
+    horas_anticipacion_cancelacion = Column(Integer, nullable=False, server_default=text("0"))
+    activo = Column(Boolean, server_default=text("true"))
+
+    planes = relationship("PlanActividad", back_populates="actividad")
+
+
+class PlanActividad(Base):
+    """
+    Un abono para una actividad: 'Yoga 2 veces por semana'.
+
+    `tipo_limite` + `cantidad` es lo que define el plan: POR_SEMANA/2 o
+    POR_MES/8. Modelarlo como dos columnas en vez de un texto libre es lo que
+    permite CONTAR las clases usadas y frenar al socio cuando se pasa.
+    """
+    __tablename__ = "Plan_Actividad"
+
+    id_plan_actividad = Column(Integer, primary_key=True)
+    id_actividad = Column(Integer, ForeignKey("Actividad.id_actividad"), nullable=False)
+    nombre = Column(String(80), nullable=False)
+    tipo_limite = Column(ENUM("POR_SEMANA", "POR_MES", name="tipo_limite",
+                               create_type=False), nullable=False)
+    cantidad = Column(Integer, nullable=False)
+    precio = Column(Numeric(10, 2), nullable=False)
+    activo = Column(Boolean, server_default=text("true"))
+
+    actividad = relationship("Actividad", back_populates="planes")
+
+
+class InscripcionActividad(Base):
+    """
+    Un socio anotado a un plan, con su período y su saldo de clases.
+
+    `clases_restantes` es un contador que se decrementa al reservar. Podría
+    calcularse contando reservas, pero tenerlo materializado hace que el
+    chequeo de "¿le quedan clases?" sea leer un número en vez de una consulta
+    agregada en cada reserva.
+
+    `precio_pactado` congela el precio del plan al momento de contratarlo, por
+    la misma razón que `Membresia.precio_pactado`: un aumento no puede
+    reescribir lo que alguien ya pagó.
+    """
+    __tablename__ = "Inscripcion_Actividad"
+
+    id_inscripcion = Column(Integer, primary_key=True)
+    id_socio = Column(Integer, ForeignKey("Socio.id_socio"), nullable=False)
+    id_plan_actividad = Column(Integer, ForeignKey("Plan_Actividad.id_plan_actividad"),
+                                nullable=False)
+    id_membresia = Column(Integer, ForeignKey("Membresia.id_membresia"), nullable=False)
+    precio_pactado = Column(Numeric(10, 2), nullable=False)
+    fecha_inicio = Column(Date, nullable=False)
+    fecha_vencimiento = Column(Date, nullable=False)
+    clases_restantes = Column(Integer)
+    estado = Column(ENUM("ACTIVA", "VENCIDA", "CANCELADA",
+                          name="estado_inscripcion", create_type=False),
+                     server_default=text("'ACTIVA'"))
+
+    socio = relationship("Socio")
+    plan = relationship("PlanActividad")
+    membresia = relationship("Membresia")
+
+
+class ProfesorActividad(Base):
+    """
+    Qué profesor puede dictar qué actividad. Tabla puente pura: su clave
+    primaria son las dos FK juntas, así que la misma combinación no se puede
+    repetir.
+    """
+    __tablename__ = "Profesor_Actividad"
+
+    id_profesor = Column(Integer, ForeignKey("Profesor.id_profesor"), primary_key=True)
+    id_actividad = Column(Integer, ForeignKey("Actividad.id_actividad"), primary_key=True)
+
+    profesor = relationship("Profesor")
+    actividad = relationship("Actividad")
+
+
+class Turno(Base):
+    """
+    Una clase concreta: 'Yoga, el martes 12 a las 18:00'.
+
+    Es una fila POR FECHA, no un horario recurrente. Eso permite cancelar una
+    clase puntual (con su motivo), cambiarle el profesor o ampliarle el cupo
+    sin afectar al resto de las semanas.
+    """
+    __tablename__ = "Turno"
+
+    id_turno = Column(Integer, primary_key=True)
+    id_sede = Column(Integer, ForeignKey("Sede.id_sede"), nullable=False)
+    id_actividad = Column(Integer, ForeignKey("Actividad.id_actividad"), nullable=False)
+    fecha = Column(Date, nullable=False)
+    hora = Column(Time, nullable=False)
+    cupo_maximo = Column(Integer, nullable=False)
+    estado = Column(ENUM("HABILITADO", "CANCELADO", name="estado_turno",
+                          create_type=False), server_default=text("'HABILITADO'"))
+    id_entrenador_a_cargo = Column(Integer, ForeignKey("Entrenador.id_entrenador"))
+    id_profesor = Column(Integer, ForeignKey("Profesor.id_profesor"))
+    motivo_cancelacion = Column(String(200))
+    observaciones = Column(String(200))
+
+    sede = relationship("Sede")
+    actividad = relationship("Actividad")
+    profesor = relationship("Profesor")
+    reservas = relationship("Reserva", back_populates="turno")
+
+
+class Reserva(Base):
+    """
+    Un socio anotado a un turno.
+
+    Cancelar NO borra la fila: le pone CANCELADA_SOCIO o CANCELADA_GIMNASIO.
+    La distinción importa para la regla de devolución — si la clase la canceló
+    el gimnasio, la clase se le devuelve al socio; si la canceló él fuera de
+    término, no.
+
+    `es_clase_suelta` distingue a quien pagó una clase individual de quien usa
+    su abono: los primeros no descuentan de ningún saldo.
+    """
+    __tablename__ = "Reserva"
+
+    id_reserva = Column(Integer, primary_key=True)
+    id_turno = Column(Integer, ForeignKey("Turno.id_turno"), nullable=False)
+    id_socio = Column(Integer, ForeignKey("Socio.id_socio"), nullable=False)
+    id_inscripcion = Column(Integer, ForeignKey("Inscripcion_Actividad.id_inscripcion"))
+    es_clase_suelta = Column(Boolean, server_default=text("false"))
+    id_pago = Column(Integer, ForeignKey("Pago.id_pago"))
+    fecha_reserva = Column(DateTime, server_default=func.now())
+    estado = Column(ENUM("RESERVADA", "CANCELADA_SOCIO", "CANCELADA_GIMNASIO",
+                          name="estado_reserva", create_type=False),
+                     server_default=text("'RESERVADA'"))
+    fecha_cancelacion = Column(DateTime)
+
+    turno = relationship("Turno", back_populates="reservas")
+    socio = relationship("Socio")
+    inscripcion = relationship("InscripcionActividad")
+
+
+# =============================================================================
+# ASISTENCIA
+# =============================================================================
+
+class Asistencia(Base):
+    """
+    Un ingreso al gimnasio.
+
+    `metodo_registro` distingue el fichaje con tarjeta RFID del que carga una
+    persona a mano. Importa al auditar: un registro MANUAL es una decisión de
+    alguien del mostrador y conviene poder filtrarlos.
+
+    `id_reserva` es opcional: entrar a entrenar por tu cuenta no está asociado
+    a ninguna clase. Cuando sí lo está, vincula el ingreso con el turno al que
+    vino.
+    """
+    __tablename__ = "Asistencia"
+
+    id_asistencia = Column(Integer, primary_key=True)
+    id_socio = Column(Integer, ForeignKey("Socio.id_socio"), nullable=False)
+    id_sede = Column(Integer, ForeignKey("Sede.id_sede"), nullable=False)
+    id_reserva = Column(Integer, ForeignKey("Reserva.id_reserva"))
+    fecha_hora_ingreso = Column(DateTime, nullable=False)
+    fecha_hora_egreso = Column(DateTime)
+    metodo_registro = Column(ENUM("RFID", "MANUAL", name="metodo_registro",
+                                   create_type=False), nullable=False,
+                              server_default=text("'MANUAL'"))
+    id_registrado_por = Column(Integer, ForeignKey("Usuario.id_usuario"))
+
+    socio = relationship("Socio")
+    sede = relationship("Sede")
+    reserva = relationship("Reserva")
+
+
+# =============================================================================
 # DERIVACIÓN DEL ROL
 # =============================================================================
 

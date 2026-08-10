@@ -125,7 +125,8 @@ app.middleware("http")(middleware_csrf)
 # API responde 404, como si no se hubieran escrito nunca.
 #
 from routers import (  # noqa: E402  (tras crear `app`)
-    auth_router, cobros, nutricion, personal, rutinas, socios, usuarios,
+    actividades, asistencia, auth_router, cobros, nutricion, personal, rutinas,
+    socios, usuarios,
 )
 
 app.include_router(auth_router.router)
@@ -134,6 +135,8 @@ app.include_router(personal.router)
 app.include_router(rutinas.router)
 app.include_router(nutricion.router)
 app.include_router(cobros.router)
+app.include_router(asistencia.router)
+app.include_router(actividades.router)
 app.include_router(usuarios.router)
 
 
