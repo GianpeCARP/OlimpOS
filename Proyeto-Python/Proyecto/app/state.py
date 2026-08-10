@@ -1,18 +1,23 @@
 # =============================================================================
-# state.py — Estado global de la aplicación (preparado para backend)
+# state.py — Estado global de la aplicación
 # =============================================================================
-# Este módulo implementa el patrón "estado centralizado" (similar a un store).
-# AppState es la única fuente de verdad sobre la sesión activa y los datos
-# mostrados en la UI. En el futuro, cada método marcado con "TODO" se reemplaza
-# con una llamada HTTP real al backend.
+# Patrón "estado centralizado" (similar a un store). AppState es la única
+# fuente de verdad sobre la sesión activa y los datos mostrados en la UI.
 # La instancia global `app_state` se importa desde cualquier parte de la app.
+#
+# Capa intermedia entre las vistas y api_client.py. Las vistas NO saben que
+# existe HTTP: piden datos acá y reciben diccionarios listos para dibujar.
+# Gemelo de los `services/*.ts` de la PWA.
+#
+# La AUTENTICACIÓN ya está conectada a la API real (FastAPI). El resto de los
+# métodos siguen devolviendo datos mock y se van migrando cuando se escriba el
+# router correspondiente — cada uno tiene su TODO con el endpoint que le toca.
+
+from app import api_client
 
 
 class AppState:
-    """
-    Estado centralizado de la aplicación.
-    En el futuro, este módulo se conectará con servicios/API reales.
-    """
+    """Estado centralizado de la aplicación."""
 
     def __init__(self):
         # ── Sesión de usuario ────────────────────────────────────────────────
@@ -20,89 +25,144 @@ class AppState:
         # Indica si hay un usuario autenticado. El router lo consulta como guard.
         self.logged_in: bool = False
 
-        # Diccionario con los datos del usuario actual (id, username, name, role, avatar).
+        # Datos del usuario actual: username, name, roles, avatar, id_socio.
         # Es None si no hay sesión activa.
         self.current_user: dict | None = None
 
         # Ruta actualmente activa; permite saber en qué sección está el usuario.
         self.current_route: str = "login"
 
-        # ── Datos mock (reemplazar con llamadas al backend) ──────────────────
-        # Lista de usuarios que pueden iniciar sesión en el sistema.
-        # Cuando se integre el backend, este bloque se elimina y `login()` hará
-        # una petición POST a /api/auth/login.
-        self._mock_users = [
-            {
-                "id": 1,
-                "username": "admin",     # Nombre de usuario para el login
-                "password": "admin123",  # Contraseña (sin hashear — solo para demo)
-                "name": "Administrador", # Nombre a mostrar en la UI
-                "role": "admin",         # Rol — controla acceso a secciones
-                "avatar": "A",           # Inicial para el avatar circular
-            },
-            {
-                "id": 2,
-                "username": "trainer",
-                "password": "train123",
-                "name": "Carlos Pérez",
-                "role": "trainer",       # Rol limitado — no ve la sección Usuarios
-                "avatar": "C",
-            },
-        ]
+        # Username que quedó pendiente de cambiar su contraseña. Lo escribe
+        # login() cuando la API contesta debe_cambiar_password, y lo lee la
+        # pantalla de cambio obligatorio para no volver a pedirlo. En ese
+        # momento NO hay sesión ni token: la API negó el acceso a propósito.
+        self.username_pendiente_cambio: str | None = None
 
     # ── Autenticación ─────────────────────────────────────────────────────────
 
-    def login(self, username: str, password: str) -> tuple[bool, str]:
+    def login(self, username: str, password: str) -> dict:
         """
-        Intenta autenticar al usuario comparando contra _mock_users.
-        TODO: reemplazar con llamada HTTP al backend (POST /api/auth/login).
-        Retorna una tupla (éxito: bool, mensaje: str).
-        Si el login es exitoso, actualiza logged_in y current_user.
+        Autentica contra POST /login.
+
+        Devuelve un diccionario con tres formas posibles, porque el login real
+        tiene tres desenlaces y no dos:
+
+            {"ok": False, "mensaje": "..."}      credenciales mal, o red caída
+            {"ok": True,  "requiere_cambio": True}   contraseña temporal
+            {"ok": True,  "requiere_cambio": False}  sesión abierta
+
+        El caso del medio es el que no existía con los datos mock: la API
+        verifica la contraseña, confirma que es correcta, y AUN ASÍ no emite
+        token — la cuenta tiene que definir una contraseña propia primero.
         """
-        for user in self._mock_users:
-            # Compara usuario y contraseña con cada registro mock
-            if user["username"] == username and user["password"] == password:
-                self.logged_in   = True   # Marca la sesión como activa
-                self.current_user = user  # Guarda el usuario autenticado
-                return True, "OK"
-        # Si ningún usuario coincidió, retorna fallo con mensaje de error
-        return False, "Usuario o contraseña incorrectos"
+        resultado = api_client.login(username, password)
+
+        if not resultado["ok"]:
+            return {"ok": False, "mensaje": resultado["error"]}
+
+        datos = resultado["data"]
+
+        if datos.get("debe_cambiar_password"):
+            # Se guarda el username, no la contraseña: la pantalla de cambio
+            # vuelve a pedir la actual, que es la forma de confirmar que quien
+            # está cambiando la clave es quien la conocía.
+            self.username_pendiente_cambio = username
+            return {"ok": True, "requiere_cambio": True}
+
+        api_client.guardar_token(datos["token"])
+
+        persona = datos.get("persona") or {}
+        nombre = f"{persona.get('nombre', '')} {persona.get('apellido', '')}".strip()
+
+        self.logged_in = True
+        self.current_user = {
+            "username": datos["usuario"]["username"],
+            "name": nombre or datos["usuario"]["username"],
+            # Lista, no string: los roles se acumulan (el dueño que además es
+            # socio del gimnasio tiene los dos).
+            "roles": datos.get("roles", []),
+            "avatar": (nombre or "U")[0].upper(),
+            "id_socio": datos.get("idSocio"),
+        }
+        self.username_pendiente_cambio = None
+        return {"ok": True, "requiere_cambio": False}
+
+    def cambiar_password(self, password_actual: str, password_nueva: str) -> dict:
+        """
+        Define la contraseña definitiva de la cuenta que quedó pendiente.
+
+        No abre sesión al terminar, a propósito: la persona vuelve al login y
+        entra de nuevo. Así el primer uso de la contraseña nueva es un login
+        normal y queda probada antes de que nadie dependa de ella.
+        """
+        if not self.username_pendiente_cambio:
+            return {"ok": False,
+                    "mensaje": "No hay ninguna cuenta pendiente de cambio de contraseña."}
+
+        resultado = api_client.cambiar_password(
+            self.username_pendiente_cambio, password_actual, password_nueva
+        )
+
+        if not resultado["ok"]:
+            return {"ok": False, "mensaje": resultado["error"]}
+
+        self.username_pendiente_cambio = None
+        return {"ok": True}
 
     def logout(self):
         """
-        Cierra la sesión actual limpiando el estado.
-        Llama el sidebar (botón de logout) y redirige al login desde router.
+        Cierra la sesión. Limpiar el token es imprescindible: sin eso, la
+        sesión siguiente heredaría el del usuario anterior.
         """
-        self.logged_in    = False   # Invalida la sesión
-        self.current_user = None    # Elimina datos del usuario activo
-        self.current_route = "login" # Resetea la ruta activa
+        api_client.limpiar_token()
+        self.logged_in = False
+        self.current_user = None
+        self.current_route = "login"
+        self.username_pendiente_cambio = None
 
     # ── Getters de sesión ─────────────────────────────────────────────────────
-    # Estos métodos proveen acceso seguro a los datos del usuario activo,
-    # retornando valores por defecto si no hay sesión (evitan errores de None).
+    # Acceso seguro a los datos del usuario activo, con valores por defecto si
+    # no hay sesión (evitan errores de None en las vistas).
 
     def get_user_name(self) -> str:
-        """Retorna el nombre para mostrar del usuario activo, o 'Invitado'."""
+        """Nombre para mostrar del usuario activo, o 'Invitado'."""
         if self.current_user:
             return self.current_user.get("name", "Usuario")
         return "Invitado"
 
-    def get_user_role(self) -> str:
-        """Retorna el rol del usuario activo, o 'guest' si no hay sesión."""
+    def get_user_roles(self) -> list[str]:
+        """Roles de la sesión activa. Lista vacía si no hay sesión."""
         if self.current_user:
-            return self.current_user.get("role", "guest")
-        return "guest"
+            return self.current_user.get("roles", [])
+        return []
+
+    def get_user_role(self) -> str:
+        """
+        Rol principal, para lo que necesita mostrar UNO solo (el subtítulo del
+        sidebar, por ejemplo). Las decisiones de permiso tienen que usar
+        get_user_roles(), que no pierde información.
+        """
+        roles = self.get_user_roles()
+        return roles[0] if roles else "guest"
 
     def get_user_avatar(self) -> str:
-        """Retorna la inicial del avatar del usuario activo, o 'U'."""
+        """Inicial del avatar del usuario activo, o 'U'."""
         if self.current_user:
             return self.current_user.get("avatar", "U")
         return "U"
 
     def is_admin(self) -> bool:
-        """Retorna True si el usuario activo tiene el rol 'admin'.
-        El router usa este método para proteger la sección de Usuarios."""
-        return self.get_user_role() == "admin"
+        """
+        True si la sesión puede administrar el sistema.
+
+        Provisorio: es el reemplazo mínimo del chequeo anterior contra el rol
+        'admin', que ya no existe — los roles ahora son los cinco reales
+        ('dueno', 'recepcionista', 'entrenador', 'nutricionista', 'socio').
+        Lo correcto es evaluar la matriz de permisos por sección, igual que
+        hace la PWA con PERMISOS de config.ts y el backend con permisos.py.
+        TODO: portar esa matriz a Flet y reemplazar este método.
+        """
+        return any(rol in ("dueno", "recepcionista") for rol in self.get_user_roles())
 
     # ── Datos mock de socios ──────────────────────────────────────────────────
 

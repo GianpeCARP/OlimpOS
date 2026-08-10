@@ -1,1 +1,8 @@
 flet==0.84.0
+
+# Cliente HTTP: la app le pega a la API de FastAPI (ver app/api_client.py).
+requests~=2.32.3
+
+# Lee API_URL del .env. Sin esto la URL del backend quedaría hardcodeada y
+# habría que editar el código para apuntar a otro servidor.
+python-dotenv~=1.0.1

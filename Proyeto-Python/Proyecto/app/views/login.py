@@ -28,7 +28,8 @@ def show_login(page: ft.Page, router):
 
     def handle_login(e=None):
         u = (username_ref.current.value or "").strip().lower()
-        p = (password_ref.current.value or "").strip()
+        # La contraseña NO se recorta: los espacios son parte de la contraseña.
+        p = password_ref.current.value or ""
 
         if not u or not p:
             error_ref.current.value   = "Completá usuario y contraseña."
@@ -36,17 +37,25 @@ def show_login(page: ft.Page, router):
             error_ref.current.update()
             return
 
-        ok, msg = app_state.login(u, p)
+        resultado = app_state.login(u, p)
 
-        if ok:
-            error_ref.current.visible = False
-            error_ref.current.update()
-            page.on_keyboard_event = None
-            _load_main_app(page, router)
-        else:
-            error_ref.current.value   = msg
+        if not resultado["ok"]:
+            error_ref.current.value   = resultado["mensaje"]
             error_ref.current.visible = True
             error_ref.current.update()
+            return
+
+        error_ref.current.visible = False
+        error_ref.current.update()
+        page.on_keyboard_event = None
+
+        # Credenciales correctas, pero la cuenta todavía tiene su contraseña
+        # temporal: la API confirmó la clave y aun así no emitió token. No hay
+        # sesión que cargar — el único camino es la pantalla de cambio.
+        if resultado["requiere_cambio"]:
+            show_cambiar_password(page, router)
+        else:
+            _load_main_app(page, router)
 
     def on_key(e: ft.KeyboardEvent):
         if e.key == "Enter":
@@ -89,20 +98,131 @@ def show_login(page: ft.Page, router):
             # ancho de la tarjeta (equivale al width="100%" de la web).
             ft.Row([_boton_ancho(primary_button("Ingresar", on_click=handle_login))]),
 
-            # ── Credenciales de prueba ───────────────────────────────────────
-            # Quedan a la vista mientras no exista la API. Cuando FastAPI esté
-            # conectado esto se borra junto con _mock_users de state.py.
+            # Acá vivía el bloque de "Credenciales de prueba" con admin/admin123
+            # y trainer/train123 a la vista. Se borró junto con _mock_users de
+            # state.py cuando el login pasó a la API real: las cuentas ahora
+            # son las de la base, y publicar credenciales en la pantalla de
+            # ingreso de un sistema de gestión no va ni en desarrollo.
             ft.Container(
-                content=ft.Column([
-                    ft.Text("Credenciales de prueba", color=Colors.TEXT_MUTED,
-                            size=12, font_family=Fonts.BODY),
-                    ft.Text("admin / admin123   ·   trainer / train123",
-                            color=Colors.TEXT_SECONDARY, size=12,
-                            font_family=Fonts.MONO),
-                ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                content=ft.Text(
+                    "Usá las credenciales que te dio el gimnasio.",
+                    color=Colors.TEXT_SECONDARY, size=12,
+                    font_family=Fonts.BODY, text_align=ft.TextAlign.CENTER,
+                ),
                 alignment=ft.Alignment.CENTER,
                 padding=ft.Padding.only(top=24),
             ),
+        ], spacing=8, tight=True),
+    )
+
+    page.controls.clear()
+    page.add(
+        ft.Container(
+            expand=True,
+            bgcolor=Colors.SURFACE_BASE,
+            alignment=ft.Alignment.CENTER,
+            content=card,
+        )
+    )
+    page.update()
+
+
+# =============================================================================
+# CAMBIO DE CONTRASEÑA OBLIGATORIO
+# =============================================================================
+# Segunda pantalla del flujo de ingreso, y la única forma de salir del estado
+# "credenciales correctas pero sin sesión".
+#
+# Se llega acá en tres casos, todos el mismo mecanismo: el primer ingreso del
+# dueño (cuenta creada por el seeder), el primer ingreso de cualquier cuenta
+# creada por el personal, y el reingreso después de que un admin resetee la
+# clave. Por eso el subtítulo menciona los dos motivos.
+#
+# Al terminar NO entra al sistema: vuelve al login. Es deliberado — así el
+# primer uso de la contraseña nueva es un login normal y queda probada.
+
+LARGO_MINIMO_PASSWORD = 8
+
+
+def show_cambiar_password(page: ft.Page, router):
+    """Pantalla de cambio obligatorio. Espejo visual de la tarjeta de login."""
+
+    actual_ref    = ft.Ref[ft.TextField]()
+    nueva_ref     = ft.Ref[ft.TextField]()
+    confirmar_ref = ft.Ref[ft.TextField]()
+    error_ref     = ft.Ref[ft.Text]()
+
+    def mostrar_error(texto: str):
+        error_ref.current.value   = texto
+        error_ref.current.visible = True
+        error_ref.current.update()
+
+    def handle_guardar(e=None):
+        actual    = actual_ref.current.value or ""
+        nueva     = nueva_ref.current.value or ""
+        confirmar = confirmar_ref.current.value or ""
+
+        if not actual or not nueva:
+            return mostrar_error("Completá todos los campos.")
+
+        # Las dos validaciones locales existen para no gastar un viaje al
+        # servidor en errores que se detectan acá. El largo mínimo lo vuelve a
+        # validar el backend igual (schemas.py), que es donde cuenta.
+        if nueva != confirmar:
+            return mostrar_error("Las contraseñas nuevas no coinciden.")
+
+        if len(nueva) < LARGO_MINIMO_PASSWORD:
+            return mostrar_error(
+                f"La contraseña nueva necesita al menos {LARGO_MINIMO_PASSWORD} caracteres."
+            )
+
+        resultado = app_state.cambiar_password(actual, nueva)
+
+        if not resultado["ok"]:
+            return mostrar_error(resultado["mensaje"])
+
+        page.on_keyboard_event = None
+        show_login(page, router)
+
+    def on_key(e: ft.KeyboardEvent):
+        if e.key == "Enter":
+            handle_guardar()
+
+    page.on_keyboard_event = on_key
+
+    card = ft.Container(
+        width=420,
+        bgcolor=Colors.SURFACE_CARD,
+        border=ft.Border.all(1, Colors.BORDER_IDLE),
+        border_radius=Radius.MD,
+        padding=ft.Padding.all(32),
+        content=ft.Column([
+            ft.Text("Cambiá tu contraseña", color=Colors.TEXT_MAIN, size=24,
+                    weight=ft.FontWeight.W_800, font_family=Fonts.TITLE),
+            ft.Container(
+                content=ft.Text(
+                    "Es tu primer ingreso, o te resetearon la clave. "
+                    "Definí una contraseña propia para continuar.",
+                    color=Colors.TEXT_SECONDARY, size=13, font_family=Fonts.BODY,
+                ),
+                padding=ft.Padding.only(top=4, bottom=20),
+            ),
+
+            input_field("Contraseña actual", "la que te dieron", password=True,
+                        icon=ft.Icons.LOCK_CLOCK_OUTLINED, ref=actual_ref),
+            ft.Container(height=2),
+            input_field("Contraseña nueva", "••••••••", password=True,
+                        icon=ft.Icons.LOCK_OUTLINE_ROUNDED, ref=nueva_ref),
+            ft.Container(height=2),
+            input_field("Repetí la nueva", "••••••••", password=True,
+                        icon=ft.Icons.LOCK_OUTLINE_ROUNDED, ref=confirmar_ref),
+
+            ft.Text(ref=error_ref, color=Colors.STATUS_DANGER, size=13,
+                    font_family=Fonts.BODY, visible=False, value=""),
+
+            ft.Container(height=10),
+            ft.Row([_boton_ancho(primary_button("Guardar y volver al ingreso",
+                                                 on_click=handle_guardar))]),
         ], spacing=8, tight=True),
     )
 
