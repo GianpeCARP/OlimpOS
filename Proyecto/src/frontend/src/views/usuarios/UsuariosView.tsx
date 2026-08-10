@@ -33,8 +33,11 @@ function Skeleton({ className }: { className: string }) {
 }
 
 export function UsuariosView() {
-  const idUsuarioActor = useAuthStore((s) => s.usuario?.id_usuario);
   const rolesActor = useAuthStore((s) => s.roles);
+  // Se sigue necesitando para las REGLAS DE FILA de la tabla: esconder los
+  // botones sobre la propia cuenta. Ya no viaja a los services —el backend
+  // toma el actor del token— pero la vista sí tiene que saber quién sos.
+  const idUsuarioActor = useAuthStore((s) => s.usuario?.id_usuario);
   const showSnack = useUiStore((s) => s.showSnack);
   const confirmDialog = useUiStore((s) => s.confirmDialog);
 
@@ -77,7 +80,13 @@ export function UsuariosView() {
     );
   }, [usuarios, busqueda]);
 
-  const actualizarEnLista = useCallback((actualizado: UsuarioListado) => {
+  // Null = el alta creó una cuenta y devolvió credenciales, no una fila.
+  // En ese caso no hay nada que insertar: se recarga la lista entera.
+  const actualizarEnLista = useCallback((actualizado: UsuarioListado | null) => {
+    if (!actualizado) {
+      recargar();
+      return;
+    }
     setUsuarios((lista) =>
       lista
         ? lista.some((u) => u.idUsuario === actualizado.idUsuario)
@@ -85,7 +94,7 @@ export function UsuariosView() {
           : [...lista, actualizado]
         : lista,
     );
-  }, []);
+  }, [recargar]);
 
   const pedirBaja = useCallback(
     (usuario: UsuarioListado) => {
@@ -93,7 +102,7 @@ export function UsuariosView() {
         `¿Desactivar el acceso de ${usuario.nombre}?`,
         'Pierde la posibilidad de iniciar sesión en la app. Esta acción queda registrada en Auditoría.',
         () => {
-          darDeBajaUsuario(usuario.idUsuario, idUsuarioActor)
+          darDeBajaUsuario(usuario.idUsuario)
             .then(() => {
               showSnack(`Acceso de ${usuario.nombre} desactivado`, colors.statusOk);
               recargar();
@@ -102,33 +111,33 @@ export function UsuariosView() {
         },
       );
     },
-    [confirmDialog, idUsuarioActor, showSnack, recargar],
+    [confirmDialog, showSnack, recargar],
   );
 
   // Sin confirmDialog: reactivar es reversible y de bajo riesgo, a
   // diferencia de pedirBaja. Mismo criterio que el resto de la app.
   const activar = useCallback(
     (usuario: UsuarioListado) => {
-      activarUsuario(usuario.idUsuario, idUsuarioActor)
+      activarUsuario(usuario.idUsuario)
         .then((actualizado) => {
           showSnack(`Acceso de ${usuario.nombre} reactivado`, colors.statusOk);
           actualizarEnLista(actualizado);
         })
         .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger));
     },
-    [idUsuarioActor, showSnack, actualizarEnLista],
+    [showSnack, actualizarEnLista],
   );
 
   const desbloquear = useCallback(
     (usuario: UsuarioListado) => {
-      desbloquearUsuario(usuario.idUsuario, idUsuarioActor)
+      desbloquearUsuario(usuario.idUsuario)
         .then((actualizado) => {
           showSnack(`Se desbloqueó la cuenta de ${usuario.nombre}`, colors.statusOk);
           actualizarEnLista(actualizado);
         })
         .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger));
     },
-    [idUsuarioActor, showSnack, actualizarEnLista],
+    [showSnack, actualizarEnLista],
   );
 
   const pedirReseteo = useCallback(
@@ -140,8 +149,8 @@ export function UsuariosView() {
         // temporal real en vez de simular un envío que no ocurre.
         'Se va a generar una contraseña temporal nueva. La actual deja de funcionar.',
         () => {
-          resetearPassword(usuario.idUsuario, idUsuarioActor)
-            .then(({ usuario: actualizado, passwordTemporal }) => {
+          resetearPassword(usuario.idUsuario)
+            .then(({ passwordTemporal }) => {
               // Persistente a propósito: esta contraseña se genera una sola
               // vez y no queda guardada en ningún lado consultable, así que
               // si el snack se cierra solo a los 4 segundos la cuenta queda
@@ -153,15 +162,15 @@ export function UsuariosView() {
                 SNACK_PERSISTENTE,
               );
               // El reseteo también destraba al usuario (ver
-              // usuariosService.ts) — actualizarEnLista ya refleja ese
-              // cambio de estado, no hace falta recargar todo.
-              actualizarEnLista(actualizado);
+              // usuariosService.ts). Se recarga la lista porque el endpoint
+              // devuelve las credenciales, no la fila actualizada.
+              recargar();
             })
             .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger));
         },
       );
     },
-    [confirmDialog, idUsuarioActor, showSnack, actualizarEnLista],
+    [confirmDialog, showSnack, recargar],
   );
 
   return (

@@ -1,41 +1,20 @@
-// Mock de estructura_usuarios.md: gestión de cuentas de acceso al sistema.
+// Sección Usuarios, conectada a la API real (routers/usuarios.py).
 //
-// El doc completo gira en torno a un modelo de permisos que no existe en
-// el esquema real: 4 roles de sistema ("admin"/"trainer"/"staff"/"nutri"),
-// cada uno con una lista fija de secciones visibles, en una lista
-// `_MOCK_SYSTEM_USERS` hardcodeada aparte de app_state. En db/schema.sql,
-// Usuario no tiene columna de rol — está atado 1:1 a una Persona, y el
-// único rol que el login realmente entiende hoy es Roles.SOCIO/Roles.DUENO
-// (ver mockDb.ts: "el rol todavía no es una tabla propia... viaja pegado
-// al usuario en el mock"). Reproducir admin/trainer/staff/nutri sería
-// mostrar una tabla de permisos que no corresponde a nada que la app
-// realmente aplique — peor que los casos de "duración"/"macros" de rutinas
-// y nutrición, porque ahí solo faltaba un dato, acá se estaría afirmando
-// algo falso sobre cómo funciona el sistema.
+// EL ROL NO SE ELIGE: SE DERIVA
+// El formulario no tiene selector de rol y no es un olvido. El rol sale de las
+// tablas donde la persona ya aparece —Socio, Entrenador, Dueno...— así que
+// elegirlo a mano permitiría que la cuenta diga una cosa y la realidad otra.
+// Para que alguien pase de recepcionista a entrenador se edita su ficha de
+// PERSONAL, y su rol de sesión cambia solo.
 //
-// En su lugar:
-// - La lista de usuarios son filas reales de Usuario (join con Persona),
-//   con su rol real (Socio/Dueño) y sus columnas reales: activo, bloqueado,
-//   intentos_fallidos, ultimo_acceso.
-// - El panel de permisos (en la vista) usa `puedeVerRuta` de config.ts —
-//   la misma función que ya usa el Sidebar para ocultar el link — así que
-//   lo que se muestra acá es exactamente lo que el guard aplica de verdad,
-//   no una tabla aparte que puede desincronizarse.
-// - "Nuevo Usuario" otorga acceso a una Persona que todavía no tiene login
-//   (Usuario.id_persona es NOT NULL — no se puede crear un Usuario sin
-//   Persona). Incluye socios Y empleados: el rol de la cuenta NO se elige
-//   en un dropdown, se DERIVA de lo que la persona ya es en el esquema
-//   (personalService.rolDeSesionDeEmpleado lee las tablas hijas de
-//   Empleado). Así el rol de sesión nunca puede contradecir la ficha.
+// LA CONTRASEÑA LA GENERA EL SISTEMA
+// Ni el alta ni la edición reciben contraseña. La genera el backend y la
+// cuenta nace obligada a cambiarla en el primer ingreso. Que un administrador
+// pudiera escribirla significaría que la conoce — y para siempre.
 
-import type { Persona } from '../types';
-import { EstadoUsuario, Roles, RolLabel, type EstadoUsuarioValue, type RolValue } from '../config';
-import { nombreCompleto } from '../utils/personas';
-import { ServiceError, delay } from './api';
-import { registrarAuditoria } from './auditoriaService';
-import { rolDeSesionDeEmpleado } from './personalService';
-import { esEmailValido, limpiar } from './validacion';
-import { empleados, personas, socios, usuarios, siguienteId, type UsuarioMock } from './mockDb';
+import type { RolValue, EstadoUsuarioValue } from '../config';
+import { EstadoUsuario, RolLabel } from '../config';
+import { pedir } from './api';
 
 // --- Listado ---
 
@@ -52,39 +31,65 @@ export interface UsuarioListado {
   bloqueado: boolean;
   activo: boolean;
   estado: EstadoUsuarioValue;
+  debeCambiarPassword: boolean;
 }
 
-function estadoDe(usuario: UsuarioMock): EstadoUsuarioValue {
-  if (!usuario.activo) return EstadoUsuario.INACTIVO;
-  if (usuario.bloqueado) return EstadoUsuario.BLOQUEADO;
+interface UsuarioApi {
+  id_usuario: number;
+  id_persona: number;
+  username: string;
+  dni: string;
+  nombre_completo: string;
+  email: string | null;
+  roles: string[];
+  activo: boolean;
+  bloqueado: boolean;
+  debe_cambiar_password: boolean;
+  ultimo_acceso: string | null;
+}
+
+/**
+ * El backend devuelve TODOS los roles de la persona, porque se acumulan: el
+ * dueño que además entrena tiene ['dueno', 'socio']. La tabla muestra uno
+ * solo, y el primero es el de mayor jerarquía por el orden en que
+ * roles_de_persona los arma (dueño, socio, y después los de empleado).
+ */
+function rolPrincipal(roles: string[]): RolValue {
+  return (roles[0] ?? 'socio') as RolValue;
+}
+
+function estadoDe(u: UsuarioApi): EstadoUsuarioValue {
+  // El orden importa: una cuenta inactiva Y bloqueada se muestra como
+  // inactiva, porque la baja es la decisión más fuerte de las dos.
+  if (!u.activo) return EstadoUsuario.INACTIVO;
+  if (u.bloqueado) return EstadoUsuario.BLOQUEADO;
   return EstadoUsuario.ACTIVO;
 }
 
-function aUsuarioListado(usuario: UsuarioMock, persona: Persona): UsuarioListado {
+function aUsuarioListado(u: UsuarioApi): UsuarioListado {
+  const rol = rolPrincipal(u.roles);
   return {
-    idUsuario: usuario.id_usuario,
-    idPersona: persona.id_persona,
-    nombre: nombreCompleto(persona),
-    username: usuario.username,
-    email: persona.email,
-    rol: usuario.rol,
-    rolLabel: RolLabel[usuario.rol],
-    ultimoAcceso: usuario.ultimo_acceso,
-    intentosFallidos: usuario.intentos_fallidos,
-    bloqueado: usuario.bloqueado,
-    activo: usuario.activo,
-    estado: estadoDe(usuario),
+    idUsuario: u.id_usuario,
+    idPersona: u.id_persona,
+    nombre: u.nombre_completo,
+    username: u.username,
+    email: u.email ?? undefined,
+    rol,
+    rolLabel: RolLabel[rol] ?? rol,
+    ultimoAcceso: u.ultimo_acceso ?? undefined,
+    // El backend no expone el contador: alcanza con saber si está bloqueada.
+    // Mostrar "3 de 5 intentos" tampoco le sirve a nadie del mostrador.
+    intentosFallidos: u.bloqueado ? 5 : 0,
+    bloqueado: u.bloqueado,
+    activo: u.activo,
+    estado: estadoDe(u),
+    debeCambiarPassword: u.debe_cambiar_password,
   };
 }
 
 export async function listarUsuarios(): Promise<UsuarioListado[]> {
-  await delay();
-  return usuarios
-    .map((usuario) => {
-      const persona = personas.find((p) => p.id_persona === usuario.id_persona);
-      return persona ? aUsuarioListado(usuario, persona) : null;
-    })
-    .filter((u): u is UsuarioListado => u !== null);
+  const datos = await pedir<UsuarioApi[]>('/usuarios');
+  return datos.map(aUsuarioListado);
 }
 
 // --- Candidatos para otorgar acceso nuevo ---
@@ -99,105 +104,83 @@ export interface PersonaSinUsuario {
 }
 
 /**
- * Rol de sesión que le corresponde a una Persona según lo que ya es en el
- * esquema. Empleado tiene prioridad sobre Socio: si alguien del staff
- * además entrena en el gimnasio, su cuenta es la de trabajo — darle rol
- * `socio` la dejaría sin acceso a su propio panel. Devuelve null si la
- * persona no es ni empleado con rol ni socio (no puede tener cuenta).
+ * Personas que podrían tener cuenta y todavía no la tienen.
+ *
+ * El backend filtra por ROL, no solo por "no tiene usuario": alguien sin rol
+ * de sesión —un Profesor, por ejemplo— no podría entrar a ninguna sección
+ * aunque se le creara la cuenta, así que ofrecerlo sería ofrecer crear una
+ * cuenta inútil.
  */
-function rolDeSesionDePersona(idPersona: number): RolValue | null {
-  const empleado = empleados.find((e) => e.id_persona === idPersona && e.activo);
-  if (empleado) return rolDeSesionDeEmpleado(empleado.id_empleado);
-  const socio = socios.find((s) => s.id_persona === idPersona && s.activo);
-  return socio ? Roles.SOCIO : null;
-}
-
 export async function listarPersonasSinUsuario(): Promise<PersonaSinUsuario[]> {
-  await delay();
-  return personas
-    .filter((p) => p.activo && !usuarios.some((u) => u.id_persona === p.id_persona))
-    .map((persona) => {
-      const rol = rolDeSesionDePersona(persona.id_persona);
-      return rol
-        ? {
-            idPersona: persona.id_persona,
-            nombre: nombreCompleto(persona),
-            dni: persona.dni,
-            rol,
-            rolLabel: RolLabel[rol],
-          }
-        : null;
-    })
-    .filter((p): p is PersonaSinUsuario => p !== null);
+  const datos = await pedir<{
+    id_persona: number;
+    dni: string;
+    nombre_completo: string;
+    email: string | null;
+    roles: string[];
+  }[]>('/usuarios/personas-sin-cuenta');
+
+  return datos.map((p) => {
+    const rol = rolPrincipal(p.roles);
+    return {
+      idPersona: p.id_persona,
+      nombre: p.nombre_completo,
+      dni: p.dni,
+      rol,
+      rolLabel: RolLabel[rol] ?? rol,
+    };
+  });
 }
 
 // --- Alta ---
 
 export interface CrearUsuarioInput {
   idPersona: number;
-  username: string;
-  password: string;
 }
 
-const LARGO_MINIMO_PASSWORD = 8;
+export interface ResultadoCredenciales {
+  username: string;
+  passwordTemporal: string;
+  mensaje: string;
+  emailEnviado: boolean;
+  /** Texto ya armado para mandar por WhatsApp si el mail no salió. */
+  textoCredenciales?: string;
+}
 
-export async function crearUsuario(
-  input: CrearUsuarioInput,
-  idUsuarioActor?: number,
-): Promise<UsuarioListado> {
-  await delay();
+interface CredencialesApi {
+  username: string;
+  password_temporal: string;
+  mensaje: string;
+  email_enviado: boolean;
+  texto_credenciales: string | null;
+}
 
-  const username = limpiar(input.username);
-  if (username === '') {
-    throw new ServiceError(400, 'El usuario es obligatorio');
-  }
-  if (input.password.length < LARGO_MINIMO_PASSWORD) {
-    throw new ServiceError(400, `La contraseña debe tener al menos ${LARGO_MINIMO_PASSWORD} caracteres`);
-  }
-  if (usuarios.some((u) => u.username === username)) {
-    throw new ServiceError(409, 'Ese nombre de usuario no está disponible');
-  }
-  const persona = personas.find((p) => p.id_persona === input.idPersona);
-  if (!persona) {
-    throw new ServiceError(400, 'La persona indicada no existe');
-  }
-  if (usuarios.some((u) => u.id_persona === input.idPersona)) {
-    throw new ServiceError(409, 'Esa persona ya tiene una cuenta de acceso');
-  }
-  const rol = rolDeSesionDePersona(input.idPersona);
-  if (!rol) {
-    throw new ServiceError(400, 'Esa persona no es socio ni empleado activo');
-  }
-
-  const usuario: UsuarioMock = {
-    id_usuario: siguienteId.usuario(),
-    id_persona: input.idPersona,
-    username,
-    password_hash: input.password,
-    intentos_fallidos: 0,
-    bloqueado: false,
-    activo: true,
-    rol,
+function aCredenciales(c: CredencialesApi): ResultadoCredenciales {
+  return {
+    username: c.username,
+    passwordTemporal: c.password_temporal,
+    mensaje: c.mensaje,
+    emailEnviado: c.email_enviado,
+    textoCredenciales: c.texto_credenciales ?? undefined,
   };
-  usuarios.push(usuario);
+}
 
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Usuario',
-    id_entidad: usuario.id_usuario,
-    accion: 'ALTA',
+/**
+ * Crea el acceso de una persona ya cargada.
+ *
+ * Solo recibe el id: los datos personales ya existen en Persona, y pedirlos
+ * de nuevo permitiría cargar dos versiones distintas de la misma persona.
+ * El username y la contraseña los genera el backend.
+ */
+export async function crearUsuario(input: CrearUsuarioInput): Promise<ResultadoCredenciales> {
+  const datos = await pedir<CredencialesApi>('/usuarios', {
+    metodo: 'POST',
+    cuerpo: { id_persona: input.idPersona },
   });
-
-  return aUsuarioListado(usuario, persona);
+  return aCredenciales(datos);
 }
 
 // --- Edición ---
-//
-// Solo username (columna propia de Usuario) y email (columna de Persona,
-// pero es un dato de "cómo te contacto para tu cuenta", tiene sentido
-// tratarlo acá). El nombre de la persona y su rol no se editan desde este
-// formulario: el nombre es responsabilidad de la ficha de Socio/Empleado,
-// y el rol no es una columna, se deriva — no hay nada que pisar.
 
 export interface EditarUsuarioInput {
   username: string;
@@ -207,201 +190,73 @@ export interface EditarUsuarioInput {
 export async function actualizarUsuario(
   idUsuario: number,
   input: EditarUsuarioInput,
-  idUsuarioActor?: number,
 ): Promise<UsuarioListado> {
-  await delay();
-
-  const usuario = usuarios.find((u) => u.id_usuario === idUsuario);
-  if (!usuario) {
-    throw new ServiceError(404, 'El usuario no existe');
-  }
-  const persona = personas.find((p) => p.id_persona === usuario.id_persona);
-  if (!persona) {
-    throw new ServiceError(404, 'El usuario no existe');
-  }
-
-  const username = limpiar(input.username);
-  if (username === '') {
-    throw new ServiceError(400, 'El usuario es obligatorio');
-  }
-  if (usuarios.some((u) => u.id_usuario !== idUsuario && u.username === username)) {
-    throw new ServiceError(409, 'Ese nombre de usuario no está disponible');
-  }
-  const email = limpiar(input.email).toLowerCase();
-  if (email && !esEmailValido(email)) {
-    throw new ServiceError(400, 'El email no tiene un formato válido');
-  }
-  if (email && personas.some((p) => p.id_persona !== persona.id_persona && p.email?.toLowerCase() === email)) {
-    throw new ServiceError(409, 'Ese email ya está en uso');
-  }
-
-  usuario.username = username;
-  persona.email = email || undefined;
-
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Usuario',
-    id_entidad: idUsuario,
-    accion: 'MODIFICACION',
+  const datos = await pedir<UsuarioApi>(`/usuarios/${idUsuario}`, {
+    metodo: 'PUT',
+    cuerpo: { username: input.username.trim(), email: input.email?.trim() || null },
   });
-
-  return aUsuarioListado(usuario, persona);
+  return aUsuarioListado(datos);
 }
 
-// --- Desbloqueo ---
-//
-// Usuario.bloqueado se prende solo, en authService.login, al quinto intento
-// fallido seguido (auth.spec.md 3.2). El camino de vuelta es manual: lo
-// hace el staff desde acá.
-export async function desbloquearUsuario(
-  idUsuario: number,
-  idUsuarioActor?: number,
-): Promise<UsuarioListado> {
-  await delay();
+// --- Acciones sobre una cuenta ---
 
-  const usuario = usuarios.find((u) => u.id_usuario === idUsuario);
-  if (!usuario) {
-    throw new ServiceError(404, 'El usuario no existe');
-  }
-  if (!usuario.bloqueado) {
-    throw new ServiceError(400, 'El usuario no está bloqueado');
-  }
-
-  usuario.bloqueado = false;
-  usuario.intentos_fallidos = 0;
-
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Usuario',
-    id_entidad: idUsuario,
-    accion: 'MODIFICACION',
-    detalle: 'Desbloqueo',
-  });
-
-  const persona = personas.find((p) => p.id_persona === usuario.id_persona);
-  if (!persona) {
-    throw new ServiceError(404, 'El usuario no existe');
-  }
-  return aUsuarioListado(usuario, persona);
-}
-
-// --- Reseteo de contraseña ---
-//
-// El doc simula un flujo por email ("se enviará un enlace de reseteo") que
-// no existe en este mock — no hay backend de correo al que mandarle nada.
-// En vez de fingir un envío que no pasa, se genera una contraseña temporal
-// real y se devuelve para que la vista se la muestre al staff (que es quien
-// se la va a comunicar al socio) — más honesto que simular un email al
-// vacío. También limpia el bloqueo: un reseteo es, en la práctica, una
-// segunda forma de recuperar acceso.
-
-function generarPasswordTemporal(): string {
-  // 8 caracteres alfanuméricos en mayúsculas — fácil de dictar por teléfono.
-  return crypto.randomUUID().replace(/-/g, '').slice(0, 8).toUpperCase();
+/**
+ * Levanta el bloqueo por intentos fallidos SIN tocar la contraseña.
+ *
+ * Es distinto de resetear: acá la persona sí se acuerda su clave y el bloqueo
+ * fue un accidente (tecleó mal, tenía el Bloq Mayús). Cambiársela en ese caso
+ * sería molestarla al pedo.
+ */
+export async function desbloquearUsuario(idUsuario: number): Promise<UsuarioListado> {
+  const datos = await pedir<UsuarioApi>(`/usuarios/${idUsuario}/desbloquear`, { metodo: 'POST' });
+  return aUsuarioListado(datos);
 }
 
 export interface ResultadoReseteo {
-  usuario: UsuarioListado;
   passwordTemporal: string;
+  mensaje: string;
+  emailEnviado: boolean;
+  textoCredenciales?: string;
 }
 
-export async function resetearPassword(
-  idUsuario: number,
-  idUsuarioActor?: number,
-): Promise<ResultadoReseteo> {
-  await delay();
-
-  const usuario = usuarios.find((u) => u.id_usuario === idUsuario);
-  if (!usuario) {
-    throw new ServiceError(404, 'El usuario no existe');
-  }
-  const persona = personas.find((p) => p.id_persona === usuario.id_persona);
-  if (!persona) {
-    throw new ServiceError(404, 'El usuario no existe');
-  }
-
-  const passwordTemporal = generarPasswordTemporal();
-  usuario.password_hash = passwordTemporal;
-  usuario.bloqueado = false;
-  usuario.intentos_fallidos = 0;
-
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Usuario',
-    id_entidad: idUsuario,
-    accion: 'MODIFICACION',
-    detalle: 'Reseteo de contraseña',
+/**
+ * Genera una contraseña temporal nueva y obliga a cambiarla en el próximo
+ * ingreso. De paso desbloquea: quien llegó a los 5 intentos fallidos casi
+ * siempre es porque no se acordaba la clave, que es justo lo que esto
+ * resuelve — dejarla bloqueada obligaría a llamar dos veces.
+ *
+ * ⚠️ Solo un Dueño puede resetearle la contraseña a otro Dueño. Es el vector
+ * de escalación de privilegios más directo del sistema: genera una clave y se
+ * la MUESTRA a quien apretó el botón, así que sin esa regla cualquier
+ * recepcionista podría reseteársela al dueño, leerla y entrar con control
+ * total. El backend responde 403.
+ */
+export async function resetearPassword(idUsuario: number): Promise<ResultadoReseteo> {
+  const datos = await pedir<CredencialesApi>(`/usuarios/${idUsuario}/resetear-password`, {
+    metodo: 'POST',
   });
-
-  return { usuario: aUsuarioListado(usuario, persona), passwordTemporal };
+  const c = aCredenciales(datos);
+  return {
+    passwordTemporal: c.passwordTemporal,
+    mensaje: c.mensaje,
+    emailEnviado: c.emailEnviado,
+    textoCredenciales: c.textoCredenciales,
+  };
 }
 
-// --- Baja y reactivación ---
-//
-// Usuario.activo es una columna propia, distinta de Socio.activo o
-// Empleado.activo: una persona puede seguir siendo socia del gimnasio con
-// su acceso a la app desactivado. Los dos caminos se construyen juntos
-// desde el principio (ver feedback-soft-delete-dos-caminos).
-
-export async function darDeBajaUsuario(idUsuario: number, idUsuarioActor?: number): Promise<void> {
-  await delay();
-
-  const usuario = usuarios.find((u) => u.id_usuario === idUsuario);
-  if (!usuario || !usuario.activo) {
-    throw new ServiceError(400, 'El usuario no está activo');
-  }
-
-  usuario.activo = false;
-
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Usuario',
-    id_entidad: idUsuario,
-    accion: 'BAJA',
-  });
+/**
+ * Activa o desactiva una cuenta.
+ *
+ * Desactivar es la ÚNICA forma de revocar una sesión en el acto: el token no
+ * se puede invalidar antes de que expire, pero el backend relee el usuario en
+ * cada pedido y corta apenas ve la cuenta inactiva. Ante un problema de
+ * seguridad, la herramienta es esta, no el logout.
+ */
+export async function alternarEstadoUsuario(idUsuario: number): Promise<UsuarioListado> {
+  const datos = await pedir<UsuarioApi>(`/usuarios/${idUsuario}/toggle-estado`, { metodo: 'POST' });
+  return aUsuarioListado(datos);
 }
 
-export async function activarUsuario(
-  idUsuario: number,
-  idUsuarioActor?: number,
-): Promise<UsuarioListado> {
-  await delay();
-
-  const usuario = usuarios.find((u) => u.id_usuario === idUsuario);
-  if (!usuario) {
-    throw new ServiceError(404, 'El usuario no existe');
-  }
-  if (usuario.activo) {
-    throw new ServiceError(400, 'El usuario ya está activo');
-  }
-
-  // Una cuenta desactivada por la baja del socio/empleado NO se puede
-  // revivir desde acá sola: rolDeSesionDePersona sólo devuelve rol si la
-  // persona sigue siendo socio o empleado ACTIVO. Sin este chequeo se podía
-  // dar de baja a un socio (que apagaba su cuenta en cascada) y devolverle
-  // el acceso con un click desde Usuarios, dejándolo "Dado de baja" en la
-  // ficha y entrando a la app al mismo tiempo. El acceso se recupera
-  // reactivando a la persona en su panel, no salteando ese paso.
-  if (!rolDeSesionDePersona(usuario.id_persona)) {
-    throw new ServiceError(
-      409,
-      'Esa persona está dada de baja como socio o empleado. Reactivala primero en su panel.',
-    );
-  }
-
-  usuario.activo = true;
-
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Usuario',
-    id_entidad: idUsuario,
-    accion: 'MODIFICACION',
-    detalle: 'Reactivación',
-  });
-
-  const persona = personas.find((p) => p.id_persona === usuario.id_persona);
-  if (!persona) {
-    throw new ServiceError(404, 'El usuario no existe');
-  }
-  return aUsuarioListado(usuario, persona);
-}
+/** Nombres que ya usaban las vistas — el backend resuelve las dos con el mismo endpoint. */
+export const darDeBajaUsuario = alternarEstadoUsuario;
+export const activarUsuario = alternarEstadoUsuario;

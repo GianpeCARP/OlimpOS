@@ -1,5 +1,5 @@
 import { useEffect, useState, type SubmitEvent } from 'react';
-import { IdCard, Lock, Mail, User } from 'lucide-react';
+import { IdCard, Mail, User } from 'lucide-react';
 import { InputField, PrimaryButton, SelectField, type SelectOption } from '../../components/ui';
 import { colors } from '../../config';
 import { mensajeDeError } from '../../services/api';
@@ -9,8 +9,7 @@ import {
   listarPersonasSinUsuario,
   type UsuarioListado,
 } from '../../services/usuariosService';
-import { useAuthStore } from '../../store/authStore';
-import { useUiStore } from '../../store/uiStore';
+import { useUiStore, SNACK_PERSISTENTE } from '../../store/uiStore';
 
 // Equivalente de _open_form (estructura_usuarios.md). Dos diferencias con
 // el doc, explicadas en usuariosService.ts: en vez de tipear un nombre
@@ -23,7 +22,11 @@ interface UsuarioFormModalProps {
   /** null = alta nueva. Con un usuario, abre en modo edición. */
   usuario: UsuarioListado | null;
   onClose: () => void;
-  onGuardado: (usuario: UsuarioListado) => void;
+  /**
+   * El alta devuelve credenciales, no una fila de la tabla: por eso puede
+   * llegar null y quien escucha recarga la lista en vez de insertar.
+   */
+  onGuardado: (usuario: UsuarioListado | null) => void;
 }
 
 export function UsuarioFormModal({ usuario, onClose, onGuardado }: UsuarioFormModalProps) {
@@ -31,13 +34,11 @@ export function UsuarioFormModal({ usuario, onClose, onGuardado }: UsuarioFormMo
 
   const [idPersona, setIdPersona] = useState('');
   const [username, setUsername] = useState(usuario?.username ?? '');
-  const [password, setPassword] = useState('');
   const [email, setEmail] = useState(usuario?.email ?? '');
 
   const [candidatos, setCandidatos] = useState<SelectOption[] | null>(null);
   const [guardando, setGuardando] = useState(false);
 
-  const idUsuarioActor = useAuthStore((s) => s.usuario?.id_usuario);
   const showSnack = useUiStore((s) => s.showSnack);
 
   useEffect(() => {
@@ -78,14 +79,26 @@ export function UsuarioFormModal({ usuario, onClose, onGuardado }: UsuarioFormMo
     e.preventDefault();
     setGuardando(true);
     try {
-      const resultado = usuario
-        ? await actualizarUsuario(usuario.idUsuario, { username, email }, idUsuarioActor)
-        : await crearUsuario({ idPersona: Number(idPersona), username, password }, idUsuarioActor);
-      showSnack(
-        usuario ? 'Usuario actualizado correctamente' : 'Usuario creado correctamente',
-        colors.statusOk,
-      );
-      onGuardado(resultado);
+      if (usuario) {
+        const actualizado = await actualizarUsuario(usuario.idUsuario, { username, email });
+        showSnack('Usuario actualizado correctamente', colors.statusOk);
+        onGuardado(actualizado);
+      } else {
+        // El alta no manda username ni contraseña: los genera el backend. Que
+        // un administrador eligiera la clave de otro significaría que la
+        // conoce, y para siempre.
+        const cred = await crearUsuario({ idPersona: Number(idPersona) });
+        showSnack(
+          `Cuenta creada. Usuario: ${cred.username} — Contraseña temporal: ` +
+            `${cred.passwordTemporal} (anotala, no se vuelve a mostrar)`,
+          colors.statusOk,
+          SNACK_PERSISTENTE,
+        );
+        // La lista se recarga desde el padre: el alta devuelve credenciales,
+        // no la fila de la tabla.
+        onGuardado(null);
+      }
+
       onClose();
     } catch (err) {
       showSnack(mensajeDeError(err), colors.statusDanger);
@@ -130,21 +143,21 @@ export function UsuarioFormModal({ usuario, onClose, onGuardado }: UsuarioFormMo
               />
             )}
 
-            <InputField label="Usuario" value={username} onChange={setUsername} icon={User} name="username" required />
-
+            {/* En el ALTA no se piden usuario ni contraseña: los genera el
+                backend y se muestran una sola vez al guardar. Que un
+                administrador eligiera la clave de otro significaría que la
+                conoce, y para siempre. */}
             {esEdicion ? (
-              <InputField label="Email" value={email} onChange={setEmail} icon={Mail} type="email" name="email" />
+              <>
+                <InputField label="Usuario" value={username} onChange={setUsername} icon={User} name="username" required />
+                <InputField label="Email" value={email} onChange={setEmail} icon={Mail} type="email" name="email" />
+              </>
             ) : (
-              <InputField
-                label="Contraseña inicial"
-                value={password}
-                onChange={setPassword}
-                password
-                icon={Lock}
-                name="password"
-                hint="El usuario deberá cambiar su contraseña en el primer inicio de sesión. Mínimo 8 caracteres."
-                required
-              />
+              <p className="font-body text-sm text-text-secondary">
+                El sistema va a generar el nombre de usuario y una contraseña
+                temporal. Se muestran una sola vez al guardar, y la persona
+                tiene que cambiarla en su primer ingreso.
+              </p>
             )}
           </div>
         )}

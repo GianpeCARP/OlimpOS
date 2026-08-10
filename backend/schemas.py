@@ -273,7 +273,11 @@ class EventoActividad(BaseModel):
     # Clave estable para React: tipo + id de la fila que lo originó. Sin esto
     # la lista usaría el índice y perdería el estado al reordenarse.
     id: str
-    tipo: str            # PAGO | ALTA_SOCIO | VENCIMIENTO | ASISTENCIA
+    # Los valores son minúsculas y coinciden con  de
+    # dashboardService.ts: la vista los usa como clave de un Record que mapea
+    # cada tipo a su ícono y su color. Mandar "PAGO" en vez de "pago" dejaría
+    # esos eventos sin ícono.
+    tipo: str            # pago | nuevo_socio | vencimiento
     descripcion: str
     fecha: datetime
 
@@ -936,6 +940,18 @@ class PersonaSinCuentaOut(BaseModel):
     nombre_completo: str
     email: str | None = None
     roles: list[str]
+
+
+class UsuarioEditarRequest(BaseModel):
+    """
+    Solo username y email. El ROL no se edita acá: se deriva de las tablas
+    donde la persona aparece, así que cambiarlo sería mentir — para eso se
+    edita su ficha de personal. Y la CONTRASEÑA tampoco: para eso está
+    resetear-password, que genera una temporal en vez de dejar que un admin
+    elija (y por lo tanto conozca) la clave de otro.
+    """
+    username: str = Field(min_length=1, max_length=50)
+    email: EmailStr | None = None
 
 
 class UsuarioCrearRequest(BaseModel):

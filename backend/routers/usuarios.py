@@ -48,7 +48,8 @@ from models import Persona, Rol, Usuario, roles_de_persona
 from notificaciones import enviar_credenciales
 from permisos import Accion, Seccion
 from schemas import (
-    CredencialesResponse, PersonaSinCuentaOut, UsuarioAdminOut, UsuarioCrearRequest,
+    CredencialesResponse, PersonaSinCuentaOut, UsuarioAdminOut,
+    UsuarioCrearRequest, UsuarioEditarRequest,
 )
 from security import Sesion, requiere_accion, requiere_seccion
 
@@ -363,6 +364,63 @@ def alternar_estado(
         # Reactivar y dejarla bloqueada sería reactivarla a medias.
         usuario.bloqueado = False
         usuario.intentos_fallidos = 0
+    db.commit()
+    db.refresh(usuario)
+    return _a_usuario_out(usuario)
+
+
+@router.put("/{id_usuario}", response_model=UsuarioAdminOut)
+def editar_usuario(
+    id_usuario: int,
+    datos: UsuarioEditarRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.GESTION_USUARIOS)),
+):
+    """
+    Cambia el nombre de usuario y el email de contacto.
+
+    NO cambia el rol: el rol se deriva de las tablas donde la persona aparece
+    (Socio, Entrenador, Dueno...), así que "cambiarlo" acá sería mentir. Para
+    que alguien pase de recepcionista a entrenador se edita su ficha de
+    PERSONAL, y su rol de sesión cambia solo.
+
+    NO cambia la contraseña: para eso está resetear-password, que genera una
+    temporal y obliga a definir una propia. Que un admin pueda escribir la
+    contraseña de otro significaría que la conoce.
+
+    Las dos reglas de fila aplican: nadie fuera del Dueño edita su propia
+    cuenta, y solo un Dueño toca la cuenta de un Dueño.
+    """
+    usuario = _buscar_usuario(db, id_usuario)
+    _validar_no_es_propia(sesion, usuario)
+    _validar_jerarquia(sesion, usuario)
+
+    username = datos.username.strip()
+    if not username:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="El nombre de usuario es obligatorio.")
+
+    # UNIQUE en el esquema: se chequea a mano para dar un mensaje claro en vez
+    # del error de restricción de PostgreSQL.
+    tomado = (db.query(Usuario)
+              .filter(Usuario.username == username, Usuario.id_usuario != id_usuario)
+              .first())
+    if tomado:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=f"El usuario '{username}' ya está en uso.")
+
+    if datos.email and datos.email != usuario.persona.email:
+        choca = (db.query(Persona)
+                 .filter(Persona.email == datos.email,
+                         Persona.id_persona != usuario.id_persona)
+                 .first())
+        if choca:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                detail="Ese email ya está registrado para otra persona.")
+
+    usuario.username = username
+    usuario.persona.email = datos.email
+
     db.commit()
     db.refresh(usuario)
     return _a_usuario_out(usuario)

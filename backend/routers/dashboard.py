@@ -187,8 +187,8 @@ def actividad_reciente(
         for p in pagos:
             nombre = p.socio.persona.nombre_completo if p.socio and p.socio.persona else "?"
             eventos.append(EventoActividad(
-                id=f"PAGO-{p.id_pago}",
-                tipo="PAGO",
+                id=f"pago-{p.id_pago}",
+                tipo="pago",
                 descripcion=f"{nombre} pagó ${float(p.monto):,.2f}",
                 fecha=p.fecha_pago,
             ))
@@ -203,8 +203,8 @@ def actividad_reciente(
     for s in altas:
         nombre = s.persona.nombre_completo if s.persona else "?"
         eventos.append(EventoActividad(
-            id=f"ALTA_SOCIO-{s.id_socio}",
-            tipo="ALTA_SOCIO",
+            id=f"nuevo_socio-{s.id_socio}",
+            tipo="nuevo_socio",
             descripcion=f"{nombre} se dio de alta como socio",
             # fecha_alta es un date; el feed ordena por datetime.
             fecha=datetime.combine(s.fecha_alta, datetime.min.time()),
@@ -224,8 +224,8 @@ def actividad_reciente(
         dias = (m.fecha_vencimiento - hoy).days
         cuando = "hoy" if dias == 0 else f"en {dias} día(s)"
         eventos.append(EventoActividad(
-            id=f"VENCIMIENTO-{m.id_membresia}",
-            tipo="VENCIMIENTO",
+            id=f"vencimiento-{m.id_membresia}",
+            tipo="vencimiento",
             descripcion=f"Vence la membresía de {nombre} {cuando}",
             fecha=datetime.combine(m.fecha_vencimiento, datetime.min.time()),
         ))
