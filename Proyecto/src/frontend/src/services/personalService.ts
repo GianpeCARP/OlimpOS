@@ -1,50 +1,21 @@
-// Mock de estructura_personal.md: grilla de tarjetas del personal, con alta
-// y edición.
+// Sección Personal, conectada a la API real (routers/personal.py).
 //
-// La diferencia grande con el doc está en el modelo: el .py original tenía
-// un dict con una key `rol` y otra `turno`, planas. El esquema real no —
-// Empleado guarda lo común y el rol sale de en cuál de las tres tablas
-// hijas (Entrenador / Nutricionista / Recepcionista) existe la fila. Este
-// service es el que traduce entre las dos formas: hacia afuera expone un
-// `rol` cómodo para la vista, y hacia adentro crea/mueve la fila hija que
-// corresponda.
+// EL ROL SIGUE SIENDO DERIVADO, PERO AHORA LO DERIVA EL BACKEND
+// El tipo de empleado no es una columna: sale de en cuál de las cuatro tablas
+// hijas (Entrenador / Nutricionista / Recepcionista / Profesor) existe su
+// fila. Esa traversal la hacía este archivo recorriendo arrays; ahora la hace
+// el servidor y el rol viaja resuelto en la respuesta.
 //
-// Consecuencia importante: `turno` NO es un campo de todo empleado, es
-// Recepcionista.turno_laboral. Los entrenadores tienen especialidad y los
-// nutricionistas título; la tarjeta muestra el dato que cada rol realmente
-// tiene, en vez de inventarle un turno a todos.
+// Se ganó algo concreto con la mudanza: la regla que impide cambiar el rol de
+// alguien que tiene rutinas o dietas a su nombre ahora corre del lado del
+// servidor. Antes vivía sólo acá, y su propio comentario advertía que "contra
+// el Postgres real el DELETE directamente fallaría por violación de FK" — o
+// sea, la regla existía en el mock pero nada la habría hecho valer en
+// producción.
 
-import type { Empleado, Persona } from '../types';
-import {
-  EstadoEmpleado,
-  RolEmpleado,
-  Roles,
-  type EstadoEmpleadoValue,
-  type RolEmpleadoValue,
-  type RolValue,
-  type TurnoLaboralValue,
-} from '../config';
-import { aFechaISO, aTimestampISO } from '../utils/fechas';
-import { iniciales, nombreCompleto } from '../utils/personas';
-import { ServiceError, delay } from './api';
-import { registrarAuditoria } from './auditoriaService';
-import { esEmailValido, limpiar } from './validacion';
-import {
-  personas,
-  telefonos,
-  sedes,
-  empleados,
-  entrenadores,
-  nutricionistas,
-  recepcionistas,
-  profesores,
-  profesorActividad,
-  rutinas,
-  dietas,
-  usuarios,
-  siguienteId,
-  proximoLegajo,
-} from './mockDb';
+import type { RolEmpleadoValue, TurnoLaboralValue, EstadoEmpleadoValue } from '../config';
+import { EstadoEmpleado, RolEmpleado } from '../config';
+import { pedir } from './api';
 
 // --- Listado ---
 
@@ -71,137 +42,85 @@ export interface EmpleadoListado {
   estado: EstadoEmpleadoValue;
   activo: boolean;
   fechaIngreso: string;
+  tieneCuenta: boolean;
+}
+
+/** La forma exacta en que responde el backend. */
+interface EmpleadoApi {
+  id_empleado: number;
+  id_persona: number;
+  legajo: string | null;
+  fecha_ingreso: string;
+  fecha_egreso: string | null;
+  activo: boolean;
+  rol: string | null;
+  titulo: string | null;
+  especialidad: string | null;
+  matricula: string | null;
+  turno_laboral: string | null;
+  dni: string;
+  nombre: string;
+  apellido: string;
+  email: string | null;
+  tiene_cuenta: boolean;
 }
 
 /**
- * Traduce el rol de empleado (derivado de las tablas hijas) al rol de
- * sesión que usa el login y la matriz de permisos. Son los mismos tres
- * roles vistos desde dos lados: RolEmpleado es la etiqueta de la ficha de
- * personal, Roles.* es el valor que viaja en la sesión.
- *
- * Parcial y no `Record<RolEmpleadoValue, RolValue>` a propósito: Profesor
- * es un cuarto tipo de empleado que NO tiene rol de sesión (da clases, no
- * inicia sesión), así que queda deliberadamente afuera de este mapa en vez
- * de forzarle un Roles.* que no existe.
+ * El dato que la tarjeta muestra debajo del nombre. Cada rol tiene el suyo, y
+ * por eso no se puede resolver con un solo campo: un recepcionista no tiene
+ * especialidad y un entrenador no tiene turno.
  */
-const ROL_SESION_POR_ROL_EMPLEADO: Partial<Record<RolEmpleadoValue, RolValue>> = {
-  [RolEmpleado.ENTRENADOR]: Roles.ENTRENADOR,
-  [RolEmpleado.NUTRICIONISTA]: Roles.NUTRICIONISTA,
-  [RolEmpleado.RECEPCIONISTA]: Roles.RECEPCIONISTA,
-};
-
-/**
- * Rol de sesión de un empleado, o null si no está en ninguna tabla hija
- * (empleado sin rol asignado) o si su rol —Profesor— no tiene sesión
- * propia. Lo usa usuariosService al crear una cuenta: el rol NO se elige a
- * mano en un dropdown, se deriva de lo que la persona realmente es en el
- * esquema, y un Profesor sin entrada acá simplemente nunca aparece como
- * candidato a cuenta nueva (listarPersonasSinUsuario filtra por rol no nulo).
- */
-export function rolDeSesionDeEmpleado(idEmpleado: number): RolValue | null {
-  const rol = resolverRol(idEmpleado);
-  return rol ? (ROL_SESION_POR_ROL_EMPLEADO[rol.rol] ?? null) : null;
+function detalleDeRol(e: EmpleadoApi): string | undefined {
+  switch (e.rol) {
+    case RolEmpleado.RECEPCIONISTA:
+      return e.turno_laboral ?? undefined;
+    case RolEmpleado.ENTRENADOR:
+    case RolEmpleado.PROFESOR:
+      return e.especialidad ?? e.titulo ?? undefined;
+    case RolEmpleado.NUTRICIONISTA:
+      return e.titulo ?? e.matricula ?? undefined;
+    default:
+      return undefined;
+  }
 }
 
-/**
- * Nombre completo de la persona detrás de un Empleado. Vive acá porque
- * personalService es la autoridad sobre Empleado — rutinasService y
- * nutricionService la usan para resolver "Entrenador a cargo" y
- * "Nutricionista a cargo" sin repetir la traversal Entrenador/Nutricionista
- * -> Empleado -> Persona.
- */
-export function nombrePorEmpleado(idEmpleado: number): string {
-  const empleado = empleados.find((e) => e.id_empleado === idEmpleado);
-  const persona = empleado && personas.find((p) => p.id_persona === empleado.id_persona);
-  return persona ? nombreCompleto(persona) : 'Sin asignar';
+function iniciales(nombre: string, apellido: string): string {
+  return ((nombre.trim()[0] ?? '') + (apellido.trim()[0] ?? '')).toUpperCase() || '?';
 }
 
-function telefonoPrincipal(idPersona: number): string | undefined {
-  const propios = telefonos.filter((t) => t.id_persona === idPersona);
-  return (propios.find((t) => t.principal) ?? propios[0])?.numero;
-}
-
-/**
- * Deriva el rol y su dato específico buscando la fila hija del empleado.
- * Devuelve null si no está en ninguna de las tres tablas: en el esquema eso
- * es un empleado sin rol asignado, que la vista simplemente no lista.
- */
-function resolverRol(
-  idEmpleado: number,
-): { rol: RolEmpleadoValue; detalle?: string; turno?: TurnoLaboralValue } | null {
-  const entrenador = entrenadores.find((e) => e.id_empleado === idEmpleado);
-  if (entrenador) {
-    return {
-      rol: RolEmpleado.ENTRENADOR,
-      detalle: entrenador.especialidad ?? entrenador.titulo,
-    };
-  }
-
-  const nutricionista = nutricionistas.find((n) => n.id_empleado === idEmpleado);
-  if (nutricionista) {
-    return {
-      rol: RolEmpleado.NUTRICIONISTA,
-      detalle: nutricionista.titulo,
-    };
-  }
-
-  const recepcionista = recepcionistas.find((r) => r.id_empleado === idEmpleado);
-  if (recepcionista) {
-    const turno = recepcionista.turno_laboral as TurnoLaboralValue | undefined;
-    return {
-      rol: RolEmpleado.RECEPCIONISTA,
-      detalle: turno ? `Turno ${turno}` : undefined,
-      turno,
-    };
-  }
-
-  const profesor = profesores.find((p) => p.id_empleado === idEmpleado);
-  if (profesor) {
-    return {
-      rol: RolEmpleado.PROFESOR,
-      detalle: profesor.especialidad ?? profesor.titulo,
-    };
-  }
-
-  return null;
-}
-
-function aEmpleadoListado(empleado: Empleado, persona: Persona): EmpleadoListado | null {
-  const rol = resolverRol(empleado.id_empleado);
-  if (!rol) return null;
-
+function aEmpleadoListado(e: EmpleadoApi): EmpleadoListado {
   return {
-    idEmpleado: empleado.id_empleado,
-    idPersona: persona.id_persona,
-    legajo: empleado.legajo,
-    dni: persona.dni,
-    nombre: persona.nombre,
-    apellido: persona.apellido,
-    nombreCompleto: nombreCompleto(persona),
-    iniciales: iniciales(persona),
-    email: persona.email,
-    telefono: telefonoPrincipal(persona.id_persona),
-    rol: rol.rol,
-    detalle: rol.detalle,
-    turno: rol.turno,
-    estado: empleado.activo ? EstadoEmpleado.ACTIVO : EstadoEmpleado.INACTIVO,
-    activo: empleado.activo,
-    fechaIngreso: empleado.fecha_ingreso,
+    idEmpleado: e.id_empleado,
+    idPersona: e.id_persona,
+    legajo: e.legajo ?? undefined,
+    dni: e.dni,
+    nombre: e.nombre,
+    apellido: e.apellido,
+    nombreCompleto: `${e.nombre} ${e.apellido}`.trim(),
+    iniciales: iniciales(e.nombre, e.apellido),
+    email: e.email ?? undefined,
+    telefono: undefined, // el listado no lo trae; está en el detalle
+    // Un empleado sin fila en ninguna hija es alguien cargado a quien
+    // todavía no se le asignó función. Se lo muestra como Recepcionista
+    // —el rol más genérico— en vez de romper la tarjeta con undefined.
+    rol: (e.rol ?? RolEmpleado.RECEPCIONISTA) as RolEmpleadoValue,
+    detalle: detalleDeRol(e),
+    turno: (e.turno_laboral ?? undefined) as TurnoLaboralValue | undefined,
+    estado: e.activo ? EstadoEmpleado.ACTIVO : EstadoEmpleado.INACTIVO,
+    activo: e.activo,
+    fechaIngreso: e.fecha_ingreso,
+    tieneCuenta: e.tiene_cuenta,
   };
 }
 
-/**
- * Trae todo el personal. Igual que en socios, la búsqueda y el filtro por
- * rol los resuelve la vista en memoria: es un solo fetch por visita.
- */
 export async function listarPersonal(): Promise<EmpleadoListado[]> {
-  await delay();
-  return empleados
-    .map((empleado) => {
-      const persona = personas.find((p) => p.id_persona === empleado.id_persona);
-      return persona ? aEmpleadoListado(empleado, persona) : null;
-    })
-    .filter((e): e is EmpleadoListado => e !== null);
+  const datos = await pedir<EmpleadoApi[]>('/personal');
+  return datos.map(aEmpleadoListado);
+}
+
+export async function obtenerEmpleado(idEmpleado: number): Promise<EmpleadoListado> {
+  const datos = await pedir<EmpleadoApi>(`/personal/${idEmpleado}`);
+  return aEmpleadoListado(datos);
 }
 
 // --- Alta y edición ---
@@ -218,363 +137,164 @@ export interface EmpleadoInput {
 }
 
 /**
- * Un cambio de rol borra la fila hija anterior (ver asignarRol), pero esa
- * fila es el destino de claves foráneas NOT NULL: Rutina.id_entrenador y
- * Dieta.id_nutricionista. Sacarla dejaba esos registros apuntando a un id
- * que ya no existe — en la vista se veían como "Entrenador: Sin asignar", y
- * contra el Postgres real el DELETE directamente fallaría por violación de
- * FK.
+ * Reparte el campo único `detalle` del formulario en la columna que
+ * corresponde a cada rol.
  *
- * Así que se corta antes: si el empleado tiene trabajo a su nombre, el
- * cambio de rol se rechaza con un mensaje que dice qué hay que reasignar
- * primero. Es la misma regla que aplicaría la base.
+ * El formulario tiene UN campo porque para el usuario es "el dato de este
+ * rol", pero en el esquema son columnas distintas en tablas distintas. La
+ * traducción vive acá y no en el componente para que el formulario no tenga
+ * que saber cómo está modelada la base.
  */
-function validarCambioDeRol(idEmpleado: number, rolNuevo: RolEmpleadoValue): void {
-  const rolActual = resolverRol(idEmpleado);
-  if (!rolActual || rolActual.rol === rolNuevo) return;
-
-  if (rolActual.rol === RolEmpleado.ENTRENADOR) {
-    const entrenador = entrenadores.find((e) => e.id_empleado === idEmpleado);
-    const propias = entrenador
-      ? rutinas.filter((r) => r.id_entrenador === entrenador.id_entrenador).length
-      : 0;
-    if (propias > 0) {
-      throw new ServiceError(
-        409,
-        `No se puede cambiar el rol: tiene ${propias} rutina(s) a su nombre. Reasignalas a otro entrenador primero.`,
-      );
-    }
-  }
-
-  if (rolActual.rol === RolEmpleado.NUTRICIONISTA) {
-    const nutricionista = nutricionistas.find((n) => n.id_empleado === idEmpleado);
-    const propios = nutricionista
-      ? dietas.filter((d) => d.id_nutricionista === nutricionista.id_nutricionista).length
-      : 0;
-    if (propios > 0) {
-      throw new ServiceError(
-        409,
-        `No se puede cambiar el rol: tiene ${propios} plan(es) nutricional(es) a su nombre. Reasignalos a otro nutricionista primero.`,
-      );
-    }
-  }
-
-  if (rolActual.rol === RolEmpleado.PROFESOR) {
-    const profesor = profesores.find((p) => p.id_empleado === idEmpleado);
-    const propias = profesor
-      ? profesorActividad.filter((pa) => pa.id_profesor === profesor.id_profesor).length
-      : 0;
-    if (propias > 0) {
-      throw new ServiceError(
-        409,
-        `No se puede cambiar el rol: tiene ${propias} actividad(es) asignada(s). Reasignalas a otro profesor primero.`,
-      );
-    }
-  }
-}
-
-/**
- * El rol de sesión se DERIVA de la tabla hija, pero el mock lo guarda
- * copiado en Usuario.rol (mockDb: "el rol todavía no es una tabla propia").
- * Si esa copia no se refresca al cambiar de rol, la ficha de Personal dice
- * una cosa y los permisos con los que la persona entra son otra: alguien
- * pasado a Recepcionista seguía navegando como Entrenador. Se resincroniza
- * acá, que es el único lugar donde el rol real cambia.
- */
-function sincronizarRolDeUsuario(idEmpleado: number): void {
-  const empleado = empleados.find((e) => e.id_empleado === idEmpleado);
-  if (!empleado) return;
-  const rolSesion = rolDeSesionDeEmpleado(idEmpleado);
-  if (!rolSesion) return;
-  const usuario = usuarios.find((u) => u.id_persona === empleado.id_persona);
-  if (usuario) usuario.rol = rolSesion;
-}
-
-/**
- * Deja al empleado en la tabla hija que corresponde a `rol`, sacándolo de
- * la anterior si cambió. Es la contracara de resolverRol: un cambio de rol
- * en el esquema real no es actualizar una columna, es mover la fila de
- * tabla.
- */
-function asignarRol(idEmpleado: number, rol: RolEmpleadoValue, detalle?: string): void {
-  const quitarDe = <T extends { id_empleado: number }>(tabla: T[]): T | undefined => {
-    const indice = tabla.findIndex((fila) => fila.id_empleado === idEmpleado);
-    return indice >= 0 ? tabla.splice(indice, 1)[0] : undefined;
-  };
-
-  const entrenadorPrevio = quitarDe(entrenadores);
-  const nutricionistaPrevio = quitarDe(nutricionistas);
-  const recepcionistaPrevio = quitarDe(recepcionistas);
-  const profesorPrevio = quitarDe(profesores);
-
+function repartirDetalle(rol: RolEmpleadoValue, detalle?: string) {
+  const valor = detalle?.trim() || null;
   switch (rol) {
-    case RolEmpleado.ENTRENADOR:
-      entrenadores.push({
-        // Si ya era entrenador se conserva su id y su matrícula; solo se
-        // reemplaza lo que el formulario edita.
-        id_entrenador: entrenadorPrevio?.id_entrenador ?? siguienteId.entrenador(),
-        id_empleado: idEmpleado,
-        titulo: entrenadorPrevio?.titulo,
-        especialidad: detalle,
-        matricula: entrenadorPrevio?.matricula,
-      });
-      break;
-    case RolEmpleado.NUTRICIONISTA:
-      nutricionistas.push({
-        id_nutricionista: nutricionistaPrevio?.id_nutricionista ?? siguienteId.nutricionista(),
-        id_empleado: idEmpleado,
-        titulo: detalle,
-        matricula: nutricionistaPrevio?.matricula,
-      });
-      break;
     case RolEmpleado.RECEPCIONISTA:
-      recepcionistas.push({
-        id_recepcionista: recepcionistaPrevio?.id_recepcionista ?? siguienteId.recepcionista(),
-        id_empleado: idEmpleado,
-        turno_laboral: detalle,
-      });
-      break;
-    case RolEmpleado.PROFESOR:
-      profesores.push({
-        id_profesor: profesorPrevio?.id_profesor ?? siguienteId.profesor(),
-        id_empleado: idEmpleado,
-        titulo: profesorPrevio?.titulo,
-        especialidad: detalle,
-      });
-      break;
+      return { turno_laboral: valor, titulo: null, especialidad: null, matricula: null };
+    case RolEmpleado.NUTRICIONISTA:
+      return { titulo: valor, matricula: null, especialidad: null, turno_laboral: null };
+    default: // Entrenador y Profesor
+      return { especialidad: valor, titulo: null, matricula: null, turno_laboral: null };
   }
 }
 
-/** Validaciones comunes al alta y a la edición. `idPersonaActual` se excluye de los chequeos de duplicado. */
-function validarDatos(input: EmpleadoInput, idPersonaActual?: number): void {
-  if (limpiar(input.nombre) === '' || limpiar(input.apellido) === '') {
-    throw new ServiceError(400, 'Nombre y apellido son obligatorios');
-  }
-
-  const email = limpiar(input.email).toLowerCase();
-  if (email && !esEmailValido(email)) {
-    throw new ServiceError(400, 'El email no tiene un formato válido');
-  }
-  if (
-    email &&
-    personas.some((p) => p.id_persona !== idPersonaActual && p.email?.toLowerCase() === email)
-  ) {
-    throw new ServiceError(409, 'Ese email ya está en uso');
-  }
+export interface AltaEmpleadoResultado {
+  empleado: EmpleadoListado;
+  username?: string;
+  passwordTemporal?: string;
+  mensaje: string;
+  emailEnviado: boolean;
+  textoCredenciales?: string;
 }
 
-export async function crearEmpleado(
-  input: EmpleadoInput,
-  idUsuarioActor?: number,
-): Promise<EmpleadoListado> {
-  await delay();
+interface AltaEmpleadoApi {
+  id_empleado: number;
+  legajo: string;
+  username: string | null;
+  password_temporal: string | null;
+  mensaje: string;
+  email_enviado: boolean;
+  texto_credenciales: string | null;
+}
 
-  const dni = limpiar(input.dni);
-  if (dni === '') {
-    throw new ServiceError(400, 'El DNI es obligatorio');
-  }
-  validarDatos(input);
-
-  if (personas.some((p) => p.dni === dni)) {
-    throw new ServiceError(409, 'Ya existe una persona con ese DNI');
-  }
-
-  const sede = sedes.find((s) => s.activo);
-  if (!sede) {
-    throw new ServiceError(500, 'No hay ninguna sede activa configurada');
-  }
-
-  const persona: Persona = {
-    id_persona: siguienteId.persona(),
-    dni,
-    nombre: limpiar(input.nombre),
-    apellido: limpiar(input.apellido),
-    email: limpiar(input.email).toLowerCase() || undefined,
-    fecha_alta: aTimestampISO(new Date()),
-    activo: true,
-  };
-  personas.push(persona);
-
-  const telefono = limpiar(input.telefono);
-  if (telefono) {
-    telefonos.push({
-      id_telefono: siguienteId.telefono(),
-      id_persona: persona.id_persona,
-      numero: telefono,
-      tipo: 'CELULAR',
-      principal: true,
-    });
-  }
-
-  const idEmpleado = siguienteId.empleado();
-  const empleado: Empleado = {
-    id_empleado: idEmpleado,
-    id_persona: persona.id_persona,
-    id_sede: sede.id_sede,
-    legajo: proximoLegajo(idEmpleado),
-    fecha_ingreso: aFechaISO(new Date()),
-    activo: true,
-  };
-  empleados.push(empleado);
-
-  asignarRol(idEmpleado, input.rol, limpiar(input.detalle) || undefined);
-
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Empleado',
-    id_entidad: idEmpleado,
-    accion: 'ALTA',
+/**
+ * Alta de empleado. El backend crea Persona + Empleado + su especialidad en
+ * una transacción, y genera las credenciales salvo que el rol sea Profesor
+ * —que no inicia sesión—, en cuyo caso lo avisa en el mensaje.
+ */
+export async function crearEmpleado(input: EmpleadoInput): Promise<AltaEmpleadoResultado> {
+  const datos = await pedir<AltaEmpleadoApi>('/personal', {
+    metodo: 'POST',
+    cuerpo: {
+      dni: input.dni.trim(),
+      nombre: input.nombre.trim(),
+      apellido: input.apellido.trim(),
+      email: input.email?.trim() || null,
+      telefono: input.telefono?.trim() || null,
+      id_sede: 1,
+      rol: input.rol,
+      crear_cuenta: true,
+      ...repartirDetalle(input.rol, input.detalle),
+    },
   });
 
-  const listado = aEmpleadoListado(empleado, persona);
-  if (!listado) {
-    // Inalcanzable: asignarRol siempre deja al empleado en una tabla hija.
-    throw new ServiceError(500, 'No se pudo determinar el rol del empleado');
-  }
-  return listado;
+  const empleado = await obtenerEmpleado(datos.id_empleado);
+
+  return {
+    empleado,
+    username: datos.username ?? undefined,
+    passwordTemporal: datos.password_temporal ?? undefined,
+    mensaje: datos.mensaje,
+    emailEnviado: datos.email_enviado,
+    textoCredenciales: datos.texto_credenciales ?? undefined,
+  };
 }
 
+/**
+ * Edita un empleado, incluido su rol.
+ *
+ * Si el cambio de rol dejaría rutinas o dietas huérfanas, el backend responde
+ * 409 con un mensaje que dice cuántas hay que reasignar. Esa validación tiene
+ * que estar del lado del servidor: la fila del rol es destino de claves
+ * foráneas NOT NULL, así que sin ella el DELETE fallaría con un error de
+ * Postgres incomprensible en pantalla.
+ */
 export async function actualizarEmpleado(
   idEmpleado: number,
   input: EmpleadoInput,
-  idUsuarioActor?: number,
 ): Promise<EmpleadoListado> {
-  await delay();
-
-  const empleado = empleados.find((e) => e.id_empleado === idEmpleado);
-  if (!empleado) {
-    throw new ServiceError(404, 'El empleado no existe');
-  }
-  const persona = personas.find((p) => p.id_persona === empleado.id_persona);
-  if (!persona) {
-    throw new ServiceError(404, 'El empleado no existe');
-  }
-
-  validarDatos(input, persona.id_persona);
-  // Antes de tocar nada: si el cambio de rol dejaría rutinas o dietas
-  // huérfanas, se corta acá y el empleado queda como estaba.
-  validarCambioDeRol(idEmpleado, input.rol);
-
-  persona.nombre = limpiar(input.nombre);
-  persona.apellido = limpiar(input.apellido);
-  persona.email = limpiar(input.email).toLowerCase() || undefined;
-
-  // Mismo criterio que en sociosService: el teléfono principal es un solo
-  // campo del formulario, así que se reemplaza entero.
-  const telefono = limpiar(input.telefono);
-  const indicePrincipal = telefonos.findIndex(
-    (t) => t.id_persona === persona.id_persona && t.principal,
-  );
-  if (telefono) {
-    if (indicePrincipal >= 0) {
-      telefonos[indicePrincipal].numero = telefono;
-    } else {
-      telefonos.push({
-        id_telefono: siguienteId.telefono(),
-        id_persona: persona.id_persona,
-        numero: telefono,
-        tipo: 'CELULAR',
-        principal: true,
-      });
-    }
-  } else if (indicePrincipal >= 0) {
-    telefonos.splice(indicePrincipal, 1);
-  }
-
-  asignarRol(idEmpleado, input.rol, limpiar(input.detalle) || undefined);
-  // El rol de la ficha y el rol con el que la persona inicia sesión son el
-  // mismo dato: si acá cambió, la cuenta tiene que enterarse.
-  sincronizarRolDeUsuario(idEmpleado);
-
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Empleado',
-    id_entidad: idEmpleado,
-    accion: 'MODIFICACION',
+  const datos = await pedir<EmpleadoApi>(`/personal/${idEmpleado}`, {
+    metodo: 'PUT',
+    cuerpo: {
+      nombre: input.nombre.trim(),
+      apellido: input.apellido.trim(),
+      email: input.email?.trim() || null,
+      telefono: input.telefono?.trim() ?? null,
+      rol: input.rol,
+      ...repartirDetalle(input.rol, input.detalle),
+    },
   });
-
-  const listado = aEmpleadoListado(empleado, persona);
-  if (!listado) {
-    throw new ServiceError(500, 'No se pudo determinar el rol del empleado');
-  }
-  return listado;
+  return aEmpleadoListado(datos);
 }
 
 // --- Baja ---
 //
-// No está en estructura_personal.md (el doc solo tiene alta/edición/
-// contactar), pero Empleado sí tiene fecha_egreso/activo en el esquema —
-// mismo criterio que sociosService: se marca inactivo y se guarda la fecha
-// de egreso, nunca se borra la fila (rompería el historial de auditoría).
-// La fila del rol (Entrenador/Nutricionista/Recepcionista) queda intacta:
-// un empleado dado de baja sigue teniendo el rol que tenía, solo que ya no
-// está activo.
+// Baja lógica, igual que con los socios: se marca inactivo y se guarda la
+// fecha de egreso. La fila del rol queda intacta —alguien dado de baja sigue
+// habiendo sido entrenador, y sus rutinas siguen atribuidas a él— y la cuenta
+// de acceso se desactiva. Sin eso la baja sería cosmética: la ficha diría
+// "Inactivo" y la persona seguiría entrando con todos los permisos de su rol.
+
 export async function darDeBajaEmpleado(
   idEmpleado: number,
   motivo?: string,
-  idUsuarioActor?: number,
-): Promise<void> {
-  await delay();
-
-  const empleado = empleados.find((e) => e.id_empleado === idEmpleado);
-  if (!empleado || !empleado.activo) {
-    throw new ServiceError(400, 'El empleado no está activo');
-  }
-
-  empleado.activo = false;
-  empleado.fecha_egreso = aFechaISO(new Date());
-
-  // Igual que la baja de socio (authService.darDeBaja), la baja arrastra el
-  // acceso: un empleado que ya no trabaja acá no tiene por qué seguir
-  // entrando al panel. Sin esto la baja era puramente cosmética — la ficha
-  // decía "Inactivo" y la persona seguía iniciando sesión con todos los
-  // permisos de su rol, que es el agujero clásico de offboarding.
-  const usuario = usuarios.find((u) => u.id_persona === empleado.id_persona);
-  if (usuario) {
-    usuario.activo = false;
-  }
-
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Empleado',
-    id_entidad: idEmpleado,
-    accion: 'BAJA',
-    detalle: limpiar(motivo) || undefined,
+): Promise<EmpleadoListado> {
+  const datos = await pedir<EmpleadoApi>(`/personal/${idEmpleado}/baja`, {
+    metodo: 'POST',
+    cuerpo: { motivo: motivo?.trim() || null },
   });
+  return aEmpleadoListado(datos);
+}
+
+export async function reactivarEmpleado(idEmpleado: number): Promise<EmpleadoListado> {
+  const datos = await pedir<EmpleadoApi>(`/personal/${idEmpleado}/reactivar`, { metodo: 'POST' });
+  return aEmpleadoListado(datos);
+}
+
+// =========================================================================
+// PUENTE TEMPORAL PARA LOS SERVICES QUE TODAVÍA NO SE MIGRARON
+// =========================================================================
+//
+// Estas dos funciones leen de mockDb, no de la API. Existen sólo porque
+// actividadService, nutricionService, rutinasService, socioService y
+// usuariosService siguen sobre datos mock y las necesitan para resolver
+// nombres y roles.
+//
+// SE BORRAN cuando esos cinco estén migrados: el backend ya devuelve el
+// nombre del entrenador y del nutricionista resueltos dentro de cada rutina
+// y cada dieta, así que ninguna pantalla va a necesitar hacer la traversal
+// por su cuenta. Mientras tanto conviven acá, marcadas, en vez de dejar el
+// proyecto sin compilar.
+
+import { empleados, entrenadores, nutricionistas, personas, recepcionistas } from './mockDb';
+import { Roles, type RolValue } from '../config';
+
+/** @deprecated Puente mock. Ver el bloque de arriba. */
+export function nombrePorEmpleado(idEmpleado: number): string {
+  const empleado = empleados.find((e) => e.id_empleado === idEmpleado);
+  const persona = empleado && personas.find((p) => p.id_persona === empleado.id_persona);
+  return persona ? `${persona.nombre} ${persona.apellido}`.trim() : 'Sin asignar';
 }
 
 /**
- * Camino de vuelta de darDeBajaEmpleado: reactiva y limpia fecha_egreso (si
- * está activo, no tiene sentido conservar una fecha de egreso). La fila del
- * rol no se toca — igual que en la baja, sigue teniendo el mismo rol que
- * tenía. No hay 'REACTIVACION' en Auditoria.accion, se audita como
- * MODIFICACION con el detalle aclarando qué cambió.
+ * @deprecated Puente mock. Ver el bloque de arriba.
+ *
+ * Devuelve null para el Profesor a propósito: es el cuarto tipo de empleado
+ * y NO tiene rol de sesión (da clases, no usa el sistema), así que nunca
+ * aparece como candidato a que se le cree una cuenta.
  */
-export async function reactivarEmpleado(
-  idEmpleado: number,
-  idUsuarioActor?: number,
-): Promise<void> {
-  await delay();
-
-  const empleado = empleados.find((e) => e.id_empleado === idEmpleado);
-  if (!empleado || empleado.activo) {
-    throw new ServiceError(400, 'El empleado ya está activo');
-  }
-
-  empleado.activo = true;
-  empleado.fecha_egreso = undefined;
-
-  // Camino de vuelta del acceso, simétrico a la baja.
-  const usuario = usuarios.find((u) => u.id_persona === empleado.id_persona);
-  if (usuario) {
-    usuario.activo = true;
-  }
-
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Empleado',
-    id_entidad: idEmpleado,
-    accion: 'MODIFICACION',
-    detalle: 'Reactivación',
-  });
+export function rolDeSesionDeEmpleado(idEmpleado: number): RolValue | null {
+  if (entrenadores.some((e) => e.id_empleado === idEmpleado)) return Roles.ENTRENADOR;
+  if (nutricionistas.some((n) => n.id_empleado === idEmpleado)) return Roles.NUTRICIONISTA;
+  if (recepcionistas.some((r) => r.id_empleado === idEmpleado)) return Roles.RECEPCIONISTA;
+  return null;
 }

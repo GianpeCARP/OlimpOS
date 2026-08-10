@@ -33,7 +33,6 @@ function Skeleton({ className }: { className: string }) {
 }
 
 export function PersonalView() {
-  const idUsuarioActor = useAuthStore((s) => s.usuario?.id_usuario);
   const idPersonaSesion = useAuthStore((s) => s.persona?.id_persona);
   const showSnack = useUiStore((s) => s.showSnack);
   const confirmDialog = useUiStore((s) => s.confirmDialog);
@@ -118,7 +117,7 @@ export function PersonalView() {
         `¿Dar de baja a ${empleado.nombreCompleto}?`,
         'El empleado deja de figurar como activo. Esta acción queda registrada en Auditoría.',
         () => {
-          darDeBajaEmpleado(empleado.idEmpleado, undefined, idUsuarioActor)
+          darDeBajaEmpleado(empleado.idEmpleado)
             .then(() => {
               // "Se dio de baja a X" y no "X fue dado de baja": Persona no
               // tiene sexo cargado en la mayoría de las filas, y el
@@ -132,7 +131,7 @@ export function PersonalView() {
         },
       );
     },
-    [confirmDialog, idUsuarioActor, showSnack, recargar],
+    [confirmDialog, showSnack, recargar],
   );
 
   // Sin diálogo de confirmación: reactivar es una acción de bajo riesgo y
@@ -140,14 +139,14 @@ export function PersonalView() {
   // pedirBaja.
   const activar = useCallback(
     (empleado: EmpleadoListado) => {
-      reactivarEmpleado(empleado.idEmpleado, idUsuarioActor)
+      reactivarEmpleado(empleado.idEmpleado)
         .then(() => {
           showSnack(`Se reactivó a ${empleado.nombreCompleto}`, colors.statusOk);
           recargar();
         })
         .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger));
     },
-    [idUsuarioActor, showSnack, recargar],
+    [showSnack, recargar],
   );
 
   return (

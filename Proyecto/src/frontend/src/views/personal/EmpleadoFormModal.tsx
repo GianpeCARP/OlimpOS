@@ -13,8 +13,7 @@ import {
   actualizarEmpleado,
   type EmpleadoListado,
 } from '../../services/personalService';
-import { useAuthStore } from '../../store/authStore';
-import { useUiStore } from '../../store/uiStore';
+import { useUiStore, SNACK_PERSISTENTE } from '../../store/uiStore';
 
 // Equivalente de _open_form/_save (estructura_personal.md), adaptado al
 // esquema real. El doc tiene un campo "turno" fijo para todos; acá el
@@ -60,7 +59,6 @@ export function EmpleadoFormModal({ empleado, onClose, onGuardado }: EmpleadoFor
 
   const [guardando, setGuardando] = useState(false);
 
-  const idUsuarioActor = useAuthStore((s) => s.usuario?.id_usuario);
   const showSnack = useUiStore((s) => s.showSnack);
 
   const campo = CAMPO_POR_ROL[rol];
@@ -77,14 +75,29 @@ export function EmpleadoFormModal({ empleado, onClose, onGuardado }: EmpleadoFor
     setGuardando(true);
     try {
       const datos = { dni, nombre, apellido, email, telefono, rol, detalle };
-      const resultado = empleado
-        ? await actualizarEmpleado(empleado.idEmpleado, datos, idUsuarioActor)
-        : await crearEmpleado(datos, idUsuarioActor);
-      showSnack(
-        empleado ? 'Empleado actualizado correctamente' : 'Empleado creado correctamente',
-        colors.statusOk,
-      );
-      onGuardado(resultado);
+
+      if (empleado) {
+        const actualizado = await actualizarEmpleado(empleado.idEmpleado, datos);
+        showSnack('Empleado actualizado correctamente', colors.statusOk);
+        onGuardado(actualizado);
+      } else {
+        const alta = await crearEmpleado(datos);
+        // Las credenciales se muestran UNA vez: el backend guarda solo el
+        // hash. Un Profesor no recibe ninguna —no inicia sesión— y en ese
+        // caso el backend lo explica en `mensaje`.
+        if (alta.passwordTemporal) {
+          showSnack(
+            `Empleado creado. Usuario: ${alta.username} — Contraseña temporal: ` +
+              `${alta.passwordTemporal} (anotala, no se vuelve a mostrar)`,
+            colors.statusOk,
+            SNACK_PERSISTENTE,
+          );
+        } else {
+          showSnack(alta.mensaje, colors.statusOk);
+        }
+        onGuardado(alta.empleado);
+      }
+
       onClose();
     } catch (err) {
       showSnack(mensajeDeError(err), colors.statusDanger);

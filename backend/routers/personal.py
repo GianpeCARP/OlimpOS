@@ -40,13 +40,14 @@ from sqlalchemy.orm import Session
 from auth import generar_password_temporal, generar_username, hashear_password
 from database import get_db
 from models import (
-    Empleado, Entrenador, Nutricionista, Persona, Profesor, Recepcionista,
-    Sede, Telefono, Usuario,
+    Dieta, Empleado, Entrenador, Nutricionista, Persona, Profesor,
+    Recepcionista, Rutina, Sede, Telefono, Usuario,
 )
 from notificaciones import enviar_credenciales
 from permisos import Accion, Seccion
 from schemas import (
-    EmpleadoAltaRequest, EmpleadoAltaResponse, EmpleadoOut, PersonaOut, RolEmpleado,
+    BajaEmpleadoRequest, EmpleadoAltaRequest, EmpleadoAltaResponse,
+    EmpleadoEditarRequest, EmpleadoOut, PersonaOut, RolEmpleado,
 )
 from security import Sesion, requiere_accion, requiere_seccion
 
@@ -278,3 +279,203 @@ def alta_empleado(
         detalle_envio=envio.detalle if envio else None,
         texto_credenciales=envio.texto if envio else None,
     )
+
+
+# =============================================================================
+# EDICIÓN Y BAJA
+# =============================================================================
+
+def _validar_cambio_de_rol(db: Session, empleado: Empleado, rol_nuevo: RolEmpleado) -> None:
+    """
+    Frena un cambio de rol que dejaría registros huérfanos.
+
+    Cambiar de rol implica BORRAR la fila de la especialidad actual. Pero esa
+    fila es el destino de claves foráneas NOT NULL: `Rutina.id_entrenador` y
+    `Dieta.id_nutricionista`. Borrarla con trabajo a su nombre haría fallar el
+    DELETE por violación de FK — un error de base de datos incomprensible para
+    quien está mirando la pantalla de personal.
+
+    Así que se corta antes, con un mensaje que dice QUÉ hay que reasignar. Es
+    la misma regla que aplicaría Postgres, pero explicada.
+    """
+    rol_actual, fila = _especialidad_de(empleado)
+    if rol_actual is None or rol_actual == rol_nuevo:
+        return
+
+    if rol_actual == RolEmpleado.ENTRENADOR:
+        cuantas = db.query(Rutina).filter(Rutina.id_entrenador == fila.id_entrenador).count()
+        if cuantas:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(f"No se puede cambiarle el rol: tiene {cuantas} rutina(s) a su "
+                        "nombre. Reasignalas a otro entrenador primero."),
+            )
+
+    if rol_actual == RolEmpleado.NUTRICIONISTA:
+        cuantas = db.query(Dieta).filter(Dieta.id_nutricionista == fila.id_nutricionista).count()
+        if cuantas:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(f"No se puede cambiarle el rol: tiene {cuantas} dieta(s) a su "
+                        "nombre. Reasignalas a otro nutricionista primero."),
+            )
+
+
+@router.get("/{id_empleado}", response_model=EmpleadoOut)
+def obtener_empleado(
+    id_empleado: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.PERSONAL)),
+):
+    empleado = db.get(Empleado, id_empleado)
+    if empleado is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="El empleado no existe.")
+    return _a_empleado_out(empleado)
+
+
+@router.put("/{id_empleado}", response_model=EmpleadoOut)
+def editar_empleado(
+    id_empleado: int,
+    datos: EmpleadoEditarRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.ALTA_BAJA_PERSONAL)),
+):
+    """
+    Edita un empleado, incluido su rol.
+
+    El cambio de rol es la parte delicada: borra la fila de la especialidad
+    vieja y crea la nueva. Antes de tocar nada se valida que eso no deje
+    trabajo huérfano — ver _validar_cambio_de_rol.
+    """
+    empleado = db.get(Empleado, id_empleado)
+    if empleado is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="El empleado no existe.")
+
+    persona = empleado.persona
+
+    if datos.email and datos.email != persona.email:
+        choca = (db.query(Persona)
+                 .filter(Persona.email == datos.email,
+                         Persona.id_persona != persona.id_persona)
+                 .first())
+        if choca:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                detail="Ese email ya está registrado para otra persona.")
+
+    _validar_cambio_de_rol(db, empleado, datos.rol)
+
+    persona.nombre = datos.nombre.strip()
+    persona.apellido = datos.apellido.strip()
+    persona.email = datos.email
+
+    if datos.telefono is not None:
+        numero = datos.telefono.strip()
+        principal = (db.query(Telefono)
+                     .filter(Telefono.id_persona == persona.id_persona)
+                     .order_by(Telefono.principal.desc(), Telefono.id_telefono)
+                     .first())
+        if numero:
+            if principal:
+                principal.numero = numero
+            else:
+                db.add(Telefono(id_persona=persona.id_persona, numero=numero,
+                                tipo="CELULAR", principal=True))
+        elif principal:
+            db.delete(principal)
+
+    # --- El rol -------------------------------------------------------------
+    rol_actual, fila_actual = _especialidad_de(empleado)
+    clase, campos = ESPECIALIDADES[datos.rol]
+
+    if rol_actual == datos.rol and fila_actual is not None:
+        # Mismo rol: solo se actualizan sus campos propios.
+        for campo in campos:
+            setattr(fila_actual, campo, getattr(datos, campo))
+    else:
+        # Cambio de rol: fuera la vieja, adentro la nueva.
+        if fila_actual is not None:
+            db.delete(fila_actual)
+            # flush antes del insert: sin esto SQLAlchemy puede reordenar las
+            # operaciones y el UNIQUE de id_empleado chocaría con la fila vieja
+            # todavía sin borrar.
+            db.flush()
+        valores = {campo: getattr(datos, campo) for campo in campos}
+        db.add(clase(id_empleado=empleado.id_empleado, **valores))
+
+    db.commit()
+    db.refresh(empleado)
+    return _a_empleado_out(empleado)
+
+
+@router.post("/{id_empleado}/baja", response_model=EmpleadoOut)
+def dar_de_baja_empleado(
+    id_empleado: int,
+    datos: BajaEmpleadoRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.ALTA_BAJA_PERSONAL)),
+):
+    """
+    Da de baja a un empleado. Baja lógica: se marca inactivo y se guarda la
+    fecha de egreso, nunca se borra la fila.
+
+    La fila del rol queda intacta: alguien dado de baja sigue habiendo sido
+    entrenador, y sus rutinas siguen atribuidas a él.
+
+    Y arrastra el acceso: un empleado que ya no trabaja acá no tiene por qué
+    seguir entrando al panel. Sin eso la baja sería cosmética —la ficha diría
+    "Inactivo" y la persona seguiría iniciando sesión con todos los permisos de
+    su rol—, que es el agujero clásico de offboarding.
+    """
+    empleado = db.get(Empleado, id_empleado)
+    if empleado is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="El empleado no existe.")
+    if not empleado.activo:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{empleado.persona.nombre_completo} ya estaba dado de baja.")
+
+    # Nadie se da de baja a sí mismo: se quedaría sin acceso en el acto, y si
+    # era el único con el permiso no habría quien lo revierta.
+    if empleado.id_persona == sesion.id_persona:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No podés darte de baja a vos mismo.")
+
+    empleado.activo = False
+    empleado.fecha_egreso = date.today()
+
+    if empleado.persona.usuario is not None:
+        empleado.persona.usuario.activo = False
+
+    db.commit()
+    db.refresh(empleado)
+    return _a_empleado_out(empleado)
+
+
+@router.post("/{id_empleado}/reactivar", response_model=EmpleadoOut)
+def reactivar_empleado(
+    id_empleado: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.ALTA_BAJA_PERSONAL)),
+):
+    """Vuelve a activar a un empleado y su cuenta de acceso."""
+    empleado = db.get(Empleado, id_empleado)
+    if empleado is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="El empleado no existe.")
+    if empleado.activo:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{empleado.persona.nombre_completo} ya estaba activo.")
+
+    empleado.activo = True
+    empleado.fecha_egreso = None
+    if empleado.persona.usuario is not None:
+        empleado.persona.usuario.activo = True
+
+    db.commit()
+    db.refresh(empleado)
+    return _a_empleado_out(empleado)

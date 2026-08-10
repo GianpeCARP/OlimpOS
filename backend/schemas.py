@@ -825,6 +825,27 @@ class EmpleadoOut(BaseModel):
     tiene_cuenta: bool = False
 
 
+class EmpleadoEditarRequest(BaseModel):
+    """
+    Edición de un empleado. Puede incluir un CAMBIO DE ROL, que no es un
+    cambio cualquiera: implica borrar la fila de su especialidad actual y
+    crear otra. Ver `validar_cambio_de_rol` en el router.
+    """
+    nombre: str = Field(min_length=1, max_length=100)
+    apellido: str = Field(min_length=1, max_length=100)
+    email: EmailStr | None = None
+    telefono: str | None = None
+    rol: RolEmpleado
+    titulo: str | None = None
+    especialidad: str | None = None
+    matricula: str | None = None
+    turno_laboral: str | None = None
+
+
+class BajaEmpleadoRequest(BaseModel):
+    motivo: str | None = None
+
+
 class EmpleadoAltaResponse(BaseModel):
     id_empleado: int
     legajo: str
