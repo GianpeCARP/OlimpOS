@@ -1,9 +1,9 @@
 import { useUiStore } from '../../store/uiStore';
 
 // Equivalente de show_snack (ui.md). Se monta una vez en App.tsx (NO en
-// AppLayout: LoginView y RegistroView no pasan por ese layout y también
-// necesitan mostrar mensajes) y lee del uiStore global — equivalente a
-// page.snack_bar en Flet.
+// AppLayout: LoginView no pasa por ese layout y también necesita mostrar
+// mensajes — los errores de credenciales salen por acá) y lee del uiStore
+// global — equivalente a page.snack_bar en Flet.
 export function Snackbar() {
   const { open, message, color } = useUiStore((s) => s.snackbar);
   const closeSnack = useUiStore((s) => s.closeSnack);

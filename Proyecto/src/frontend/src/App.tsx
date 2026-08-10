@@ -1,9 +1,11 @@
+import { useEffect } from 'react';
 import { BrowserRouter, Routes as RouterRoutes, Route } from 'react-router';
+import { useAuthStore } from './store/authStore';
 import { AppLayout } from './layout/AppLayout';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { RedirectInicial } from './components/RedirectInicial';
 import { LoginView } from './views/LoginView';
-import { RegistroView } from './views/RegistroView';
+import { CambiarPasswordView } from './views/CambiarPasswordView';
 import { DashboardView } from './views/dashboard/DashboardView';
 import { SociosView } from './views/socios/SociosView';
 import { AsistenciaView } from './views/asistencia/AsistenciaView';
@@ -21,7 +23,7 @@ import { MiDietaView } from './views/socio/MiDietaView';
 import { MiCuotaView } from './views/socio/MiCuotaView';
 import { Snackbar } from './components/ui/Snackbar';
 import { ConfirmDialog } from './components/ui/ConfirmDialog';
-import { Routes } from './config';
+import { APP_NAME, Routes } from './config';
 
 // Routes de config.ts choca de nombre con el componente Routes de
 // react-router — se importa aliaseado como RouterRoutes.
@@ -31,14 +33,50 @@ import { Routes } from './config';
 // Cada ruta privada declara su `seccion`: ProtectedRoute la cruza contra la
 // matriz de permisos de config.ts, así entrar por URL a algo que el rol no
 // puede ver redirige en vez de renderizar.
+// Pantalla mínima mientras se rehidrata. No es un spinner elaborado a
+// propósito: si el backend responde normalmente dura menos de lo que tarda un
+// parpadeo, y sólo se ve cuando la API está lenta o dormida (Neon tarda unos
+// segundos en despertar tras un rato sin uso).
+function Rehidratando() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-surface-base">
+      <p className="font-heading text-3xl font-extrabold text-text-main">{APP_NAME}</p>
+    </div>
+  );
+}
+
 export default function App() {
+  // Al arrancar —y eso incluye cada F5— se le pregunta al backend por el token
+  // que quedó en sessionStorage. Hasta que conteste no se monta el router: si
+  // se montara, ProtectedRoute vería isAuthenticated en false y redirigiría al
+  // login antes de que llegue la respuesta, con lo cual el F5 seguiría
+  // cerrando la sesión.
+  const rehidratar = useAuthStore((s) => s.rehidratar);
+  const isRehidratando = useAuthStore((s) => s.isRehidratando);
+
+  useEffect(() => {
+    void rehidratar();
+  }, [rehidratar]);
+
+  if (isRehidratando) return <Rehidratando />;
+
   return (
     <BrowserRouter>
       <Snackbar />
       <ConfirmDialog />
       <RouterRoutes>
+        {/* Las dos únicas rutas públicas. La de registro se eliminó a
+            propósito (consigna: nada de auto-registro). Se sacó la ruta y no
+            solo el link del login: dejando la ruta viva, escribir /registro
+            en la barra de direcciones seguía abriendo la pantalla — que es
+            exactamente el antipatrón de "el front esconde pero no rechaza".
+
+            CAMBIAR_PASSWORD tiene que ser pública porque quien llega ahí no
+            tiene sesión: el backend se la negó por tener clave temporal. Se
+            protege sola — sin un username pendiente en el store, redirige al
+            login. */}
         <Route path={`/${Routes.LOGIN}`} element={<LoginView />} />
-        <Route path={`/${Routes.REGISTRO}`} element={<RegistroView />} />
+        <Route path={`/${Routes.CAMBIAR_PASSWORD}`} element={<CambiarPasswordView />} />
 
         <Route element={<ProtectedRoute />}>
           <Route element={<AppLayout />}>

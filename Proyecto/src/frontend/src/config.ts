@@ -81,10 +81,16 @@ export const TOPBAR_HEIGHT = 64;
 // el resto sigue el mismo patrón (minúsculas, sin prefijo).
 export const Routes = {
   LOGIN: 'login',
-  // No está en la lista de config.md — agregada acá porque auth.spec.md
-  // (3.1, registro de socio) necesita una pantalla propia, pública, igual
-  // que LOGIN.
-  REGISTRO: 'registro',
+  // Acá vivía REGISTRO (auth.spec.md 3.1, registro de socio). Se eliminó: la
+  // consigna prohíbe el auto-registro en un sistema interno de gestión. El
+  // alta de un socio la hace el personal y el backend genera una contraseña
+  // temporal.
+  //
+  // Esa contraseña temporal es lo que hace falta cambiar acá. Es la segunda
+  // ruta pública, y tiene que serlo: quien llega no tiene sesión —el backend
+  // se la negó justamente por tener la clave temporal— así que exigir token
+  // dejaría la cuenta en un punto muerto del que no se puede salir.
+  CAMBIAR_PASSWORD: 'cambiar-password',
   DASHBOARD: 'dashboard',
   SOCIOS: 'socios',
   PERSONAL: 'personal',
@@ -132,6 +138,20 @@ export const Routes = {
 } as const;
 
 export type RouteValue = (typeof Routes)[keyof typeof Routes];
+
+/**
+ * Intentos fallidos antes de que el backend bloquee una cuenta.
+ *
+ * ⚠️ Espejo de MAX_INTENTOS_FALLIDOS en backend/routers/auth_router.py, que es
+ * quien REALMENTE cuenta y bloquea. Acá se usa sólo para avisarlo en la
+ * pantalla de login. Si divergen, el aviso miente pero nada se rompe.
+ *
+ * El aviso es genérico a propósito: se muestra ante cualquier error de
+ * credenciales, sin decir cuántos intentos quedan. Decir "te quedan 2" sería
+ * confirmarle a un atacante que ese usuario existe, que es justo lo que evita
+ * el mensaje único de auth.spec.md 3.2.
+ */
+export const MAX_INTENTOS_FALLIDOS = 5;
 
 // Roles del sistema. Única fuente de verdad del nombre de cada rol: lo usan
 // el guard de ruta (ProtectedRoute), el filtro del sidebar y el mock de
@@ -197,10 +217,10 @@ export const Acceso = {
 
 export type AccesoValue = (typeof Acceso)[keyof typeof Acceso];
 
-/** Las secciones con permisos. LOGIN y REGISTRO son públicas, quedan afuera. */
+/** Las secciones con permisos. Las dos rutas públicas quedan afuera. */
 export type SeccionPrivada = Exclude<
   RouteValue,
-  typeof Routes.LOGIN | typeof Routes.REGISTRO
+  typeof Routes.LOGIN | typeof Routes.CAMBIAR_PASSWORD
 >;
 
 /**

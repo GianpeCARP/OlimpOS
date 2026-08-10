@@ -8,7 +8,7 @@
 import type { Persona, Usuario, Telefono, Socio, Sede, Baja } from '../types';
 import { Roles } from '../config';
 import { aFechaISO, aTimestampISO } from '../utils/fechas';
-import { ServiceError, delay } from './api';
+import { ServiceError, delay, pedir } from './api';
 import { registrarAuditoria } from './auditoriaService';
 import { esEmailValido, limpiar } from './validacion';
 import {
@@ -76,6 +76,18 @@ export async function obtenerSedePorDefecto(): Promise<Sede> {
 }
 
 // --- 3.1 Registro de socio ---
+//
+// DESCONECTADO — no lo llama nadie, y no hay que volver a conectarlo.
+// La pantalla, la ruta y la acción del store se eliminaron porque la consigna
+// prohíbe el auto-registro en un sistema interno (ver config.ts y
+// backend/README.md). Se conserva el cuerpo de la función solo como
+// referencia de las validaciones y del orden de inserción
+// (Persona -> Usuario -> Telefono -> Socio), que es lo que va a tener que
+// replicar el endpoint de alta por parte del personal.
+//
+// Ojo con la diferencia al portarlo: en el alta por invitación el socio NO
+// elige su username ni su password — el backend genera una contraseña
+// temporal y marca debe_cambiar_password.
 
 export interface RegistroSocioInput {
   dni: string;
@@ -207,11 +219,17 @@ export async function registrarSocio(
 
 // --- 3.2 Inicio de sesión ---
 
-export interface LoginResultado {
+/**
+ * Sesión abierta. Es una de las dos formas que puede tomar LoginResultado.
+ */
+export interface SesionAbierta {
+  debeCambiarPassword: false;
   usuario: Omit<Usuario, 'password_hash'>;
   persona: Persona;
   roles: string[];
-  token: string;
+  // No hay campo `token`: en el navegador la sesión vive en una cookie
+  // httponly que este código no puede leer. Declararlo sería mentir sobre
+  // algo que nunca va a tener valor.
   /**
    * Id de la fila Socio de esta persona, si la tiene. Es lo único con lo
    * que trabaja el portal del socio: cada función de socioService lo recibe
@@ -228,62 +246,127 @@ export interface LoginResultado {
   idSocio?: number;
 }
 
-// Un único mensaje para usuario inexistente, inactivo, bloqueado o
-// contraseña incorrecta: distinguirlos le confirmaría a un atacante qué
-// usuarios existen (regla de seguridad de auth.spec.md 3.2).
-const CREDENCIALES_INVALIDAS = 'Usuario o contraseña incorrectos';
+/**
+ * Credenciales correctas, pero la cuenta todavía tiene su contraseña
+ * temporal. NO hay sesión: el backend verificó la contraseña y aun así se
+ * negó a emitir un token hasta que la persona defina una propia.
+ *
+ * Se llega acá en tres casos, todos el mismo mecanismo: el primer ingreso de
+ * una cuenta recién creada por el personal, el primer ingreso del dueño
+ * (cuenta del seeder), y el reingreso después de que un admin resetee la
+ * clave.
+ */
+export interface CambioRequerido {
+  debeCambiarPassword: true;
+}
 
-const MAX_INTENTOS_FALLIDOS = 5;
+/**
+ * Unión discriminada, no un objeto con campos opcionales: así TypeScript
+ * OBLIGA a chequear `debeCambiarPassword` antes de tocar `token` o `roles`.
+ * Con campos opcionales, olvidarse del caso compilaría igual y el bug
+ * aparecería recién en runtime, con la sesión a medio abrir.
+ */
+export type LoginResultado = SesionAbierta | CambioRequerido;
+
+/** La forma exacta en que responde POST /login (ver backend/schemas.py). */
+interface LoginResponseApi {
+  debe_cambiar_password: boolean;
+  token: string | null;
+  usuario: Omit<Usuario, 'password_hash'>;
+  persona: Persona;
+  roles: string[];
+  idSocio: number | null;
+}
 
 export async function login(username: string, password: string): Promise<LoginResultado> {
-  await delay();
-
-  // Campos vacíos se cortan antes de tocar los datos: sin esto, un login con
-  // todo en blanco entra a buscar el username '' y devuelve "usuario o
-  // contraseña incorrectos", que es confuso — el problema no son los datos,
-  // es que faltan. No revela nada: todavía no se consultó ningún usuario.
+  // Los campos vacíos se cortan antes de salir a la red. No es una regla de
+  // seguridad —el backend la revalida— sino de claridad: un formulario en
+  // blanco tiene que decir "faltan datos", no "usuario o contraseña
+  // incorrectos", que manda a buscar el problema donde no está.
   if (limpiar(username) === '' || password === '') {
     throw new ServiceError(400, 'Completá usuario y contraseña');
   }
 
-  const usuario = usuarios.find((u) => u.username === limpiar(username));
-
-  if (!usuario || !usuario.activo || usuario.bloqueado) {
-    throw new ServiceError(401, CREDENCIALES_INVALIDAS);
-  }
-
-  if (usuario.password_hash !== password) {
-    usuario.intentos_fallidos += 1;
-    if (usuario.intentos_fallidos >= MAX_INTENTOS_FALLIDOS) {
-      usuario.bloqueado = true;
-    }
-    throw new ServiceError(401, CREDENCIALES_INVALIDAS);
-  }
-
-  usuario.intentos_fallidos = 0;
-  usuario.ultimo_acceso = aTimestampISO(new Date());
-
-  const persona = personas.find((p) => p.id_persona === usuario.id_persona);
-  if (!persona) {
-    throw new ServiceError(401, CREDENCIALES_INVALIDAS);
-  }
-
-  // Spec 3.2 paso 6: se audita el login recién acá, con el usuario ya
-  // validado — nunca se audita un intento fallido como LOGIN.
-  registrarAuditoria({
-    id_usuario: usuario.id_usuario,
-    entidad: 'Usuario',
-    id_entidad: usuario.id_usuario,
-    accion: 'LOGIN',
+  // Todo lo demás lo decide el backend: el mensaje único para credenciales
+  // inválidas (que no revela si el usuario existe) y el bloqueo a los cinco
+  // intentos ahora viven en routers/auth_router.py. Estaban acá cuando esta
+  // capa hacía de API; ahora duplicarlos sería peor que no tenerlos, porque
+  // el mock podría decir una cosa y el servidor otra.
+  const datos = await pedir<LoginResponseApi>('/login', {
+    metodo: 'POST',
+    cuerpo: { username: limpiar(username), password },
   });
 
+  if (datos.debe_cambiar_password) {
+    return { debeCambiarPassword: true };
+  }
+
+  // `datos.token` viene null a propósito para clientes web: la sesión quedó en
+  // una cookie httponly que este código no puede ver ni necesita ver. El
+  // campo sigue existiendo en el tipo porque la app Flet, que le dice al
+  // backend que es de escritorio, sí lo recibe.
   return {
-    usuario: sinHash(usuario),
-    persona,
-    roles: [usuario.rol],
-    token: crypto.randomUUID(),
-    idSocio: socios.find((s) => s.id_persona === persona.id_persona)?.id_socio,
+    debeCambiarPassword: false,
+    usuario: datos.usuario,
+    persona: datos.persona,
+    roles: datos.roles,
+    idSocio: datos.idSocio ?? undefined,
   };
+}
+
+/**
+ * Cierra la sesión en el servidor.
+ *
+ * Hace falta pedírselo al backend: la cookie de sesión es httponly y
+ * JavaScript no puede borrarla. Sin este llamado, "cerrar sesión" limpiaría
+ * la pantalla pero dejaría la cookie viva en el navegador — y el próximo que
+ * use esa máquina entraría con la sesión abierta.
+ */
+export async function logout(): Promise<void> {
+  await pedir<{ mensaje: string }>('/logout', { metodo: 'POST' });
+}
+
+/**
+ * Reconstruye la sesión a partir del token guardado. Es lo que hace que un F5
+ * no cierre la sesión.
+ *
+ * Devuelve los mismos datos que el login pero SIN token, porque el cliente ya
+ * lo tiene. Lanza ServiceError 401 si el token venció, fue alterado, o la
+ * cuenta se desactivó desde que se emitió — en cualquiera de esos casos hay
+ * que volver al login.
+ */
+export async function sesionActual(): Promise<SesionAbierta> {
+  const datos = await pedir<LoginResponseApi>('/me');
+  return {
+    debeCambiarPassword: false,
+    usuario: datos.usuario,
+    persona: datos.persona,
+    roles: datos.roles,
+    idSocio: datos.idSocio ?? undefined,
+  };
+}
+
+/**
+ * Define la contraseña definitiva de una cuenta con clave temporal.
+ *
+ * No abre sesión al terminar, a propósito: la persona vuelve al login y entra
+ * de nuevo, así el primer uso de la contraseña nueva es un login normal y
+ * queda probada antes de que nadie dependa de ella.
+ */
+export async function cambiarPassword(
+  username: string,
+  passwordActual: string,
+  passwordNueva: string,
+): Promise<string> {
+  const datos = await pedir<{ mensaje: string }>('/cambiar-password', {
+    metodo: 'POST',
+    cuerpo: {
+      username: limpiar(username),
+      password_actual: passwordActual,
+      password_nueva: passwordNueva,
+    },
+  });
+  return datos.mensaje;
 }
 
 // --- 3.3 Baja de socio ---
