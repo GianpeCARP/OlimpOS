@@ -41,7 +41,7 @@ from models import (
 from permisos import Acceso, Accion, Seccion
 from schemas import (
     AsignacionRutinaOut, AsignarRutinaRequest, EjercicioCrear, EjercicioOut,
-    RutinaCrear, RutinaEjercicioOut, RutinaOut,
+    RutinaCrear, RutinaEditarRequest, RutinaEjercicioOut, RutinaOut,
 )
 from security import Sesion, requiere_accion, requiere_seccion
 
@@ -77,6 +77,49 @@ def _entrenador_de_sesion(db: Session, sesion: Sesion) -> Entrenador | None:
         .first()
     )
     return empleado.entrenador if empleado else None
+
+
+def _resolver_entrenador(db: Session, sesion: Sesion, id_pedido: int | None) -> Entrenador:
+    """
+    Decide a nombre de quién queda la rutina.
+
+    La regla, y por qué no es la misma para todos:
+
+      - Si quien pide ES entrenador, la rutina es suya. Mandar el id de otro
+        se rechaza con 403: sería crear rutinas a nombre ajeno, y el historial
+        de quién armó qué dejaría de significar algo.
+
+      - Si NO es entrenador (Dueño, Recepcionista), tiene que elegir uno.
+        `Rutina.id_entrenador` es NOT NULL y ellos no tienen ficha de
+        entrenador, así que sin elegir no hay a quién atribuirla. Para ellos
+        elegir no es suplantar: es delegar, y tienen el permiso.
+    """
+    propio = _entrenador_de_sesion(db, sesion)
+
+    if propio is not None:
+        if id_pedido is not None and id_pedido != propio.id_entrenador:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No podés crear rutinas a nombre de otro entrenador.",
+            )
+        return propio
+
+    if id_pedido is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Elegí el entrenador que va a quedar a cargo de la rutina.",
+        )
+
+    entrenador = db.get(Entrenador, id_pedido)
+    if entrenador is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="El entrenador indicado no existe.")
+    if entrenador.empleado is None or not entrenador.empleado.activo:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ese entrenador está dado de baja. Elegí uno activo.",
+        )
+    return entrenador
 
 
 def _a_rutina_out(rutina: Rutina, con_ejercicios: bool = True) -> RutinaOut:
@@ -208,22 +251,7 @@ def crear_rutina(
     `Rutina.id_entrenador` es NOT NULL. Se usa el primero activo: la rutina
     tiene que quedar atribuida a alguien real del plantel.
     """
-    entrenador = _entrenador_de_sesion(db, sesion)
-
-    if entrenador is None:
-        entrenador = (
-            db.query(Entrenador)
-            .join(Empleado, Entrenador.id_empleado == Empleado.id_empleado)
-            .filter(Empleado.activo == True)  # noqa: E712
-            .order_by(Entrenador.id_entrenador)
-            .first()
-        )
-        if entrenador is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=("No hay ningún entrenador activo cargado. Una rutina tiene que "
-                        "estar a cargo de un entrenador — dá de alta uno primero."),
-            )
+    entrenador = _resolver_entrenador(db, sesion, datos.id_entrenador)
 
     rutina = Rutina(
         id_entrenador=entrenador.id_entrenador,
@@ -368,3 +396,88 @@ def rutinas_de_socio(
         )
         for a in asignaciones
     ]
+
+
+# =============================================================================
+# EDICIÓN Y BAJA
+# =============================================================================
+
+@router.put("/{id_rutina}", response_model=RutinaOut)
+def editar_rutina(
+    id_rutina: int,
+    datos: RutinaEditarRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.GESTION_RUTINAS)),
+):
+    """
+    Edita los datos de la rutina. Los ejercicios se manejan aparte.
+
+    Cambiar el entrenador a cargo sigue la misma regla que el alta: un
+    entrenador no puede pasarle su rutina a otro ni quedarse con la de un
+    colega; el Dueño y el Recepcionista sí pueden reasignarla — es lo que hace
+    falta cuando alguien se va del gimnasio.
+    """
+    rutina = db.get(Rutina, id_rutina)
+    if rutina is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La rutina no existe.")
+
+    if datos.id_entrenador is not None and datos.id_entrenador != rutina.id_entrenador:
+        rutina.id_entrenador = _resolver_entrenador(db, sesion, datos.id_entrenador).id_entrenador
+
+    rutina.nombre = datos.nombre.strip()
+    rutina.objetivo = datos.objetivo
+    rutina.nivel = datos.nivel
+    rutina.dias_por_semana = datos.dias_por_semana
+
+    db.commit()
+    db.refresh(rutina)
+    return _a_rutina_out(rutina)
+
+
+@router.post("/{id_rutina}/baja", response_model=RutinaOut)
+def dar_de_baja_rutina(
+    id_rutina: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.GESTION_RUTINAS)),
+):
+    """
+    Desactiva una rutina del catálogo. Baja lógica: la fila queda.
+
+    Borrarla rompería las asignaciones históricas —quedarían apuntando a una
+    rutina inexistente— y con ellas el registro de qué entrenó cada socio.
+
+    Los socios que la están siguiendo AHORA no se tocan: la rutina desactivada
+    deja de ofrecerse para asignaciones nuevas, pero quien ya la tiene la
+    termina. Cortársela de un día para el otro dejaría a alguien sin plan de
+    entrenamiento sin que nadie lo decidiera.
+    """
+    rutina = db.get(Rutina, id_rutina)
+    if rutina is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La rutina no existe.")
+    if not rutina.activo:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Esa rutina ya estaba desactivada.")
+
+    rutina.activo = False
+    db.commit()
+    db.refresh(rutina)
+    return _a_rutina_out(rutina)
+
+
+@router.post("/{id_rutina}/reactivar", response_model=RutinaOut)
+def reactivar_rutina(
+    id_rutina: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.GESTION_RUTINAS)),
+):
+    rutina = db.get(Rutina, id_rutina)
+    if rutina is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La rutina no existe.")
+    if rutina.activo:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Esa rutina ya estaba activa.")
+
+    rutina.activo = True
+    db.commit()
+    db.refresh(rutina)
+    return _a_rutina_out(rutina)

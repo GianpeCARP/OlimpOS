@@ -9,7 +9,6 @@ import {
   activarRutina,
   type RutinaListado,
 } from '../../services/rutinasService';
-import { useAuthStore } from '../../store/authStore';
 import { useUiStore } from '../../store/uiStore';
 import { usePuedeAccion } from '../../hooks/usePermisos';
 import { RutinaCard } from './RutinaCard';
@@ -31,7 +30,6 @@ function Skeleton({ className }: { className: string }) {
 }
 
 export function RutinasView() {
-  const idUsuarioActor = useAuthStore((s) => s.usuario?.id_usuario);
   const showSnack = useUiStore((s) => s.showSnack);
   const confirmDialog = useUiStore((s) => s.confirmDialog);
 
@@ -105,7 +103,7 @@ export function RutinasView() {
         `¿Dar de baja "${rutina.nombre}"?`,
         'La rutina deja de figurar como activa. Esta acción queda registrada en Auditoría.',
         () => {
-          darDeBajaRutina(rutina.idRutina, idUsuarioActor)
+          darDeBajaRutina(rutina.idRutina)
             .then(() => {
               showSnack(`"${rutina.nombre}" fue dada de baja`, colors.statusOk);
               recargar();
@@ -114,7 +112,7 @@ export function RutinasView() {
         },
       );
     },
-    [confirmDialog, idUsuarioActor, showSnack, recargar],
+    [confirmDialog, showSnack, recargar],
   );
 
   // Sin diálogo de confirmación: reactivar es una acción de bajo riesgo y
@@ -122,14 +120,14 @@ export function RutinasView() {
   // pedirBaja.
   const activar = useCallback(
     (rutina: RutinaListado) => {
-      activarRutina(rutina.idRutina, idUsuarioActor)
+      activarRutina(rutina.idRutina)
         .then((actualizada) => {
           showSnack(`"${rutina.nombre}" fue reactivada`, colors.statusOk);
           actualizarEnLista(actualizada);
         })
         .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger));
     },
-    [idUsuarioActor, showSnack, actualizarEnLista],
+    [showSnack, actualizarEnLista],
   );
 
   return (

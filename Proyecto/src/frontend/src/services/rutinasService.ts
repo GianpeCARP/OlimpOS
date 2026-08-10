@@ -1,37 +1,26 @@
-// Mock de estructura_rutinas.md: grilla de tarjetas de rutinas, con alta,
-// edición y detalle de solo lectura.
+// Sección Rutinas, conectada a la API real (routers/rutinas.py).
 //
-// Dos diferencias con el doc, las dos porque Rutina no tiene esas columnas
-// en db/schema.sql:
+// La rutina es una PLANTILLA que arma un entrenador, no algo de un socio en
+// particular: que alguien la siga se registra aparte, en Asignacion_Rutina.
+// Esa separación es la que permite asignar la misma rutina a quince personas
+// sin duplicarla, y que cada una tenga sus propias fechas.
 //
-// 1. El doc pide un campo "duración en min" y otro "descripción" (textarea).
-//    Rutina no tiene ninguna de las dos columnas — lo único de texto libre
-//    es `objetivo` (varchar(100)). En vez de inventar una columna que no
-//    existe, `objetivo` hace las dos cosas: es el pill de la tarjeta que el
-//    doc llamaba "duración" y el campo de texto del formulario que el doc
-//    llamaba "descripción".
-// 2. El doc no tiene selector de entrenador en el alta — pero
-//    Rutina.id_entrenador es NOT NULL. Se agregó un campo obligatorio
-//    "Entrenador a cargo", con las mismas opciones que ya existen en
-//    personalService (los entrenadores activos).
-//
-// "Asignar" queda como stub, tal cual lo describe el doc ("snack
-// próximamente"): asignar una rutina a un socio necesita una pantalla de
-// selección de socio que no es parte de esta spec.
+// El nombre del entrenador YA VIENE resuelto: el backend recorre
+// Entrenador -> Empleado -> Persona. Antes eso lo hacía este archivo con
+// nombrePorEmpleado, que leía de mockDb.
 
-import type { Rutina } from '../types';
-import {
-  CAPACIDAD_MAXIMA_RUTINA,
-  EstadoRutina,
-  type EstadoRutinaValue,
-  type NivelRutinaValue,
-} from '../config';
-import { aFechaISO } from '../utils/fechas';
-import { ServiceError, delay } from './api';
-import { registrarAuditoria } from './auditoriaService';
-import { nombrePorEmpleado } from './personalService';
-import { limpiar } from './validacion';
-import { entrenadores, empleados, rutinas, asignacionesRutina, siguienteId } from './mockDb';
+import type { NivelRutinaValue, EstadoRutinaValue } from '../config';
+import { EstadoRutina } from '../config';
+import { pedir } from './api';
+
+/**
+ * Cuántos socios se consideran "rutina llena" para la barra de progreso.
+ *
+ * Es un número de PRESENTACIÓN, no una regla de negocio: el backend no impide
+ * asignar más. Por eso vive acá y no en el servidor — si mañana se decide que
+ * una rutina tiene cupo real, ahí sí pasa a ser del backend.
+ */
+const CAPACIDAD_MAXIMA_RUTINA = 20;
 
 // --- Listado ---
 
@@ -51,37 +40,94 @@ export interface RutinaListado {
   estado: EstadoRutinaValue;
 }
 
-function nombreEntrenador(idEntrenador: number): string {
-  const entrenador = entrenadores.find((e) => e.id_entrenador === idEntrenador);
-  return entrenador ? nombrePorEmpleado(entrenador.id_empleado) : 'Sin asignar';
+export interface EjercicioDeRutina {
+  idRutinaEjercicio: number;
+  idEjercicio: number;
+  nombre: string;
+  grupoMuscular: string;
+  dia: number;
+  orden: number;
+  series?: number;
+  /** Texto libre: en el gimnasio se escribe "8-12" o "al fallo". */
+  repeticiones?: string;
+  pesoSugerido?: number;
+  descansoSegundos?: number;
+  observaciones?: string;
 }
 
-/** Cuántas asignaciones ACTIVA tiene la rutina — FINALIZADA/CANCELADA no cuentan como socios asignados hoy. */
-function asignadosActivos(idRutina: number): number {
-  return asignacionesRutina.filter((a) => a.id_rutina === idRutina && a.estado === 'ACTIVA').length;
+interface RutinaApi {
+  id_rutina: number;
+  id_entrenador: number;
+  entrenador: string;
+  nombre: string;
+  objetivo: string | null;
+  nivel: string | null;
+  dias_por_semana: number | null;
+  fecha_creacion: string | null;
+  activo: boolean;
+  asignados: number;
+  ejercicios: {
+    id_rutina_ejercicio: number;
+    id_ejercicio: number;
+    nombre_ejercicio: string;
+    grupo_muscular: string;
+    dia: number;
+    orden: number;
+    series: number | null;
+    repeticiones: string | null;
+    peso_sugerido: number | null;
+    descanso_segundos: number | null;
+    observaciones: string | null;
+  }[];
 }
 
-function aRutinaListado(rutina: Rutina): RutinaListado {
-  const asignados = asignadosActivos(rutina.id_rutina);
+function aRutinaListado(r: RutinaApi): RutinaListado {
   return {
-    idRutina: rutina.id_rutina,
-    nombre: rutina.nombre,
-    nivel: rutina.nivel as NivelRutinaValue | undefined,
-    objetivo: rutina.objetivo,
-    diasPorSemana: rutina.dias_por_semana,
-    asignados,
-    progreso: Math.min(asignados / CAPACIDAD_MAXIMA_RUTINA, 1),
-    idEntrenador: rutina.id_entrenador,
-    entrenador: nombreEntrenador(rutina.id_entrenador),
-    fechaCreacion: rutina.fecha_creacion,
-    activo: rutina.activo,
-    estado: rutina.activo ? EstadoRutina.ACTIVA : EstadoRutina.INACTIVA,
+    idRutina: r.id_rutina,
+    nombre: r.nombre,
+    nivel: (r.nivel ?? undefined) as NivelRutinaValue | undefined,
+    objetivo: r.objetivo ?? undefined,
+    diasPorSemana: r.dias_por_semana ?? undefined,
+    asignados: r.asignados,
+    progreso: Math.min(r.asignados / CAPACIDAD_MAXIMA_RUTINA, 1),
+    idEntrenador: r.id_entrenador,
+    entrenador: r.entrenador,
+    fechaCreacion: r.fecha_creacion ?? '',
+    activo: r.activo,
+    estado: r.activo ? EstadoRutina.ACTIVA : EstadoRutina.INACTIVA,
   };
 }
 
 export async function listarRutinas(): Promise<RutinaListado[]> {
-  await delay();
-  return rutinas.map(aRutinaListado);
+  const datos = await pedir<RutinaApi[]>('/rutinas');
+  return datos.map(aRutinaListado);
+}
+
+/**
+ * El detalle SÍ trae los ejercicios, ya ordenados por día y orden — que es
+ * como se lee la planilla en el gimnasio. El listado no los trae porque la
+ * grilla muestra tarjetas y bajarlos sería traer datos que nadie mira.
+ */
+export async function obtenerRutina(
+  idRutina: number,
+): Promise<RutinaListado & { ejercicios: EjercicioDeRutina[] }> {
+  const r = await pedir<RutinaApi>(`/rutinas/${idRutina}`);
+  return {
+    ...aRutinaListado(r),
+    ejercicios: r.ejercicios.map((e) => ({
+      idRutinaEjercicio: e.id_rutina_ejercicio,
+      idEjercicio: e.id_ejercicio,
+      nombre: e.nombre_ejercicio,
+      grupoMuscular: e.grupo_muscular,
+      dia: e.dia,
+      orden: e.orden,
+      series: e.series ?? undefined,
+      repeticiones: e.repeticiones ?? undefined,
+      pesoSugerido: e.peso_sugerido ?? undefined,
+      descansoSegundos: e.descanso_segundos ?? undefined,
+      observaciones: e.observaciones ?? undefined,
+    })),
+  };
 }
 
 // --- Entrenadores para el selector del formulario ---
@@ -91,12 +137,14 @@ export interface EntrenadorOpcion {
   nombre: string;
 }
 
-/** Solo entrenadores con el empleado activo: no tiene sentido asignar una rutina nueva a alguien que ya no trabaja acá. */
+/**
+ * Solo entrenadores con el empleado ACTIVO: no tiene sentido asignarle una
+ * rutina nueva a alguien que ya no trabaja acá. El filtro lo aplica el
+ * backend, que además rechaza el alta si igual se le manda uno de baja.
+ */
 export async function listarEntrenadoresActivos(): Promise<EntrenadorOpcion[]> {
-  await delay();
-  return entrenadores
-    .filter((e) => empleados.find((emp) => emp.id_empleado === e.id_empleado)?.activo)
-    .map((e) => ({ idEntrenador: e.id_entrenador, nombre: nombreEntrenador(e.id_entrenador) }));
+  const datos = await pedir<{ id: number; nombre: string }[]>('/personal/entrenadores');
+  return datos.map((e) => ({ idEntrenador: e.id, nombre: e.nombre }));
 }
 
 // --- Alta y edición ---
@@ -106,142 +154,81 @@ export interface RutinaInput {
   nivel: NivelRutinaValue;
   diasPorSemana: number;
   objetivo?: string;
-  idEntrenador: number;
+  /**
+   * A cargo de quién queda.
+   *
+   * Un ENTRENADOR puede omitirlo: la rutina queda a su nombre, y mandar el id
+   * de otro le da 403 — no puede crear rutinas a nombre ajeno. El Dueño y el
+   * Recepcionista SÍ tienen que mandarlo: tienen el permiso pero no son
+   * entrenadores, así que para ellos elegir no es suplantar, es delegar.
+   */
+  idEntrenador?: number;
 }
 
-const DIAS_MIN = 1;
-const DIAS_MAX = 7;
-
-function validar(input: RutinaInput): void {
-  if (limpiar(input.nombre) === '') {
-    throw new ServiceError(400, 'El nombre de la rutina es obligatorio');
-  }
-  if (!Number.isInteger(input.diasPorSemana) || input.diasPorSemana < DIAS_MIN || input.diasPorSemana > DIAS_MAX) {
-    throw new ServiceError(400, `Los días por semana deben estar entre ${DIAS_MIN} y ${DIAS_MAX}`);
-  }
-  if (!entrenadores.some((e) => e.id_entrenador === input.idEntrenador)) {
-    throw new ServiceError(400, 'El entrenador a cargo no existe');
-  }
-}
-
-export async function crearRutina(
-  input: RutinaInput,
-  idUsuarioActor?: number,
-): Promise<RutinaListado> {
-  await delay();
-  validar(input);
-
-  const idRutina = siguienteId.rutina();
-  const rutina: Rutina = {
-    id_rutina: idRutina,
-    id_entrenador: input.idEntrenador,
-    nombre: limpiar(input.nombre),
-    objetivo: limpiar(input.objetivo) || undefined,
-    nivel: input.nivel,
-    dias_por_semana: input.diasPorSemana,
-    fecha_creacion: aFechaISO(new Date()),
-    activo: true,
-  };
-  rutinas.push(rutina);
-
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Rutina',
-    id_entidad: idRutina,
-    accion: 'ALTA',
+export async function crearRutina(input: RutinaInput): Promise<RutinaListado> {
+  const datos = await pedir<RutinaApi>('/rutinas', {
+    metodo: 'POST',
+    cuerpo: {
+      nombre: input.nombre.trim(),
+      nivel: input.nivel,
+      dias_por_semana: input.diasPorSemana,
+      objetivo: input.objetivo?.trim() || null,
+      id_entrenador: input.idEntrenador ?? null,
+      ejercicios: [],
+    },
   });
-
-  return aRutinaListado(rutina);
+  return aRutinaListado(datos);
 }
 
 export async function actualizarRutina(
   idRutina: number,
   input: RutinaInput,
-  idUsuarioActor?: number,
 ): Promise<RutinaListado> {
-  await delay();
-  validar(input);
-
-  const rutina = rutinas.find((r) => r.id_rutina === idRutina);
-  if (!rutina) {
-    throw new ServiceError(404, 'La rutina no existe');
-  }
-
-  rutina.nombre = limpiar(input.nombre);
-  rutina.objetivo = limpiar(input.objetivo) || undefined;
-  rutina.nivel = input.nivel;
-  rutina.dias_por_semana = input.diasPorSemana;
-  rutina.id_entrenador = input.idEntrenador;
-
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Rutina',
-    id_entidad: idRutina,
-    accion: 'MODIFICACION',
+  const datos = await pedir<RutinaApi>(`/rutinas/${idRutina}`, {
+    metodo: 'PUT',
+    cuerpo: {
+      nombre: input.nombre.trim(),
+      nivel: input.nivel,
+      dias_por_semana: input.diasPorSemana,
+      objetivo: input.objetivo?.trim() || null,
+      id_entrenador: input.idEntrenador ?? null,
+    },
   });
-
-  return aRutinaListado(rutina);
+  return aRutinaListado(datos);
 }
 
-// --- Baja ---
+// --- Baja lógica ---
 //
-// No está en estructura_rutinas.md, pero Rutina sí tiene `activo` en el
-// esquema — mismo criterio que socios/personal: se marca inactiva, nunca
-// se borra la fila. A diferencia de esos dos, Rutina no tiene fecha_baja ni
-// motivo en el esquema, así que acá no hay nada más que guardar.
+// La fila queda: borrarla rompería las asignaciones históricas —quedarían
+// apuntando a una rutina inexistente— y con ellas el registro de qué entrenó
+// cada socio.
 //
-// Las asignaciones (Asignacion_Rutina) existentes no se tocan: dar de baja
-// el plan no cancela retroactivamente lo que ya se le asignó a un socio.
-export async function darDeBajaRutina(
+// Los socios que la están siguiendo AHORA no se tocan: la rutina desactivada
+// deja de ofrecerse para asignaciones nuevas, pero quien ya la tiene la
+// termina. Cortársela de un día para el otro dejaría a alguien sin plan sin
+// que nadie lo hubiera decidido.
+
+export async function darDeBajaRutina(idRutina: number): Promise<RutinaListado> {
+  const datos = await pedir<RutinaApi>(`/rutinas/${idRutina}/baja`, { metodo: 'POST' });
+  return aRutinaListado(datos);
+}
+
+export async function activarRutina(idRutina: number): Promise<RutinaListado> {
+  const datos = await pedir<RutinaApi>(`/rutinas/${idRutina}/reactivar`, { metodo: 'POST' });
+  return aRutinaListado(datos);
+}
+
+// --- Asignación a socios ---
+
+export async function asignarRutinaASocio(
   idRutina: number,
-  idUsuarioActor?: number,
+  idSocio: number,
 ): Promise<void> {
-  await delay();
-
-  const rutina = rutinas.find((r) => r.id_rutina === idRutina);
-  if (!rutina || !rutina.activo) {
-    throw new ServiceError(400, 'La rutina no está activa');
-  }
-
-  rutina.activo = false;
-
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Rutina',
-    id_entidad: idRutina,
-    accion: 'BAJA',
+  // Si el socio ya tenía una rutina activa, el backend la FINALIZA y deja
+  // esta: nadie sigue dos rutinas de musculación a la vez. La anterior queda
+  // como historial, no se borra.
+  await pedir(`/rutinas/${idRutina}/asignar`, {
+    metodo: 'POST',
+    cuerpo: { id_socio: idSocio },
   });
-}
-
-/**
- * Camino de vuelta de darDeBajaRutina: no hay 'REACTIVACION' en
- * Auditoria.accion (el enum del esquema es ALTA/MODIFICACION/BAJA/CONSULTA/
- * LOGIN), así que se audita como MODIFICACION con el detalle aclarando qué
- * cambió — igual que se auditaría cualquier otro cambio de atributo.
- */
-export async function activarRutina(
-  idRutina: number,
-  idUsuarioActor?: number,
-): Promise<RutinaListado> {
-  await delay();
-
-  const rutina = rutinas.find((r) => r.id_rutina === idRutina);
-  if (!rutina) {
-    throw new ServiceError(404, 'La rutina no existe');
-  }
-  if (rutina.activo) {
-    throw new ServiceError(400, 'La rutina ya está activa');
-  }
-
-  rutina.activo = true;
-
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Rutina',
-    id_entidad: idRutina,
-    accion: 'MODIFICACION',
-    detalle: 'Reactivación',
-  });
-
-  return aRutinaListado(rutina);
 }

@@ -9,7 +9,6 @@ import {
   type RutinaInput,
   type RutinaListado,
 } from '../../services/rutinasService';
-import { useAuthStore } from '../../store/authStore';
 import { useUiStore } from '../../store/uiStore';
 
 // Equivalente de _open_form/_save (estructura_rutinas.md), con dos
@@ -41,7 +40,6 @@ export function RutinaFormModal({ rutina, onClose, onGuardado }: RutinaFormModal
   const [entrenadores, setEntrenadores] = useState<SelectOption[] | null>(null);
   const [guardando, setGuardando] = useState(false);
 
-  const idUsuarioActor = useAuthStore((s) => s.usuario?.id_usuario);
   const showSnack = useUiStore((s) => s.showSnack);
 
   useEffect(() => {
@@ -88,8 +86,8 @@ export function RutinaFormModal({ rutina, onClose, onGuardado }: RutinaFormModal
         idEntrenador: Number(idEntrenador),
       };
       const resultado = rutina
-        ? await actualizarRutina(rutina.idRutina, input, idUsuarioActor)
-        : await crearRutina(input, idUsuarioActor);
+        ? await actualizarRutina(rutina.idRutina, input)
+        : await crearRutina(input);
       showSnack(
         rutina ? 'Rutina actualizada correctamente' : 'Rutina creada correctamente',
         colors.statusOk,

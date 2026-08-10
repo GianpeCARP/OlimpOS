@@ -47,7 +47,8 @@ from notificaciones import enviar_credenciales
 from permisos import Accion, Seccion
 from schemas import (
     BajaEmpleadoRequest, EmpleadoAltaRequest, EmpleadoAltaResponse,
-    EmpleadoEditarRequest, EmpleadoOut, PersonaOut, RolEmpleado,
+    EmpleadoEditarRequest, EmpleadoOut, PersonaOut, ProfesionalOpcion,
+    RolEmpleado,
 )
 from security import Sesion, requiere_accion, requiere_seccion
 
@@ -319,6 +320,60 @@ def _validar_cambio_de_rol(db: Session, empleado: Empleado, rol_nuevo: RolEmplea
                 detail=(f"No se puede cambiarle el rol: tiene {cuantas} dieta(s) a su "
                         "nombre. Reasignalas a otro nutricionista primero."),
             )
+
+
+# =============================================================================
+# SELECTORES DE PROFESIONALES
+# =============================================================================
+# Los usan los formularios de Rutinas y Nutrición para elegir a cargo de quién
+# queda cada plantilla. Van declarados ANTES que /{id_empleado} o FastAPI
+# intentaría leer "entrenadores" como si fuera un id.
+
+
+def _opciones(db: Session, clase, id_attr: str) -> list[ProfesionalOpcion]:
+    """
+    Los profesionales de un tipo cuyo empleado está ACTIVO.
+
+    El filtro por activo importa: ofrecer a alguien que ya no trabaja en el
+    gimnasio haría que el formulario permita asignarle trabajo nuevo, y el
+    backend lo rechazaría después con un mensaje que el usuario no esperaba.
+    """
+    filas = (
+        db.query(clase)
+        .join(Empleado, clase.id_empleado == Empleado.id_empleado)
+        .filter(Empleado.activo == True)  # noqa: E712
+        .all()
+    )
+    opciones = []
+    for fila in filas:
+        persona = fila.empleado.persona if fila.empleado else None
+        opciones.append(ProfesionalOpcion(
+            id=getattr(fila, id_attr),
+            nombre=persona.nombre_completo if persona else "Sin asignar",
+        ))
+    return sorted(opciones, key=lambda o: o.nombre)
+
+
+@router.get("/entrenadores", response_model=list[ProfesionalOpcion])
+def listar_entrenadores(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.RUTINAS)),
+):
+    """
+    Para el selector del formulario de rutinas. Pide permiso sobre RUTINAS y
+    no sobre PERSONAL: quien arma una rutina necesita elegir el entrenador
+    aunque no tenga acceso a la ficha de personal.
+    """
+    return _opciones(db, Entrenador, "id_entrenador")
+
+
+@router.get("/nutricionistas", response_model=list[ProfesionalOpcion])
+def listar_nutricionistas(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.NUTRICION)),
+):
+    """Espejo del anterior, para el formulario de dietas."""
+    return _opciones(db, Nutricionista, "id_nutricionista")
 
 
 @router.get("/{id_empleado}", response_model=EmpleadoOut)

@@ -38,7 +38,8 @@ from models import (
 )
 from permisos import Acceso, Accion, Seccion
 from schemas import (
-    AsignacionDietaOut, AsignarDietaRequest, ComidaOut, DietaCrear, DietaOut,
+    AsignacionDietaOut, AsignarDietaRequest, ComidaOut, DietaCrear,
+    DietaEditarRequest, DietaOut,
 )
 from security import Sesion, requiere_accion, requiere_seccion
 
@@ -73,6 +74,40 @@ def _nutricionista_de_sesion(db: Session, sesion: Sesion) -> Nutricionista | Non
         .first()
     )
     return empleado.nutricionista if empleado else None
+
+
+def _resolver_nutricionista(db: Session, sesion: Sesion, id_pedido: int | None) -> Nutricionista:
+    """
+    Espejo exacto de _resolver_entrenador en rutinas.py: un nutricionista solo
+    crea dietas a su nombre; el Dueño y el Recepcionista tienen que elegir a
+    cargo de quién queda.
+    """
+    propio = _nutricionista_de_sesion(db, sesion)
+
+    if propio is not None:
+        if id_pedido is not None and id_pedido != propio.id_nutricionista:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No podés crear dietas a nombre de otro nutricionista.",
+            )
+        return propio
+
+    if id_pedido is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Elegí el nutricionista que va a quedar a cargo de la dieta.",
+        )
+
+    nutri = db.get(Nutricionista, id_pedido)
+    if nutri is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="El nutricionista indicado no existe.")
+    if nutri.empleado is None or not nutri.empleado.activo:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ese nutricionista está dado de baja. Elegí uno activo.",
+        )
+    return nutri
 
 
 def _a_dieta_out(dieta: Dieta, con_comidas: bool = True) -> DietaOut:
@@ -132,27 +167,11 @@ def crear_dieta(
     """
     Crea una dieta con sus comidas, en una transacción.
 
-    El autor sale de la sesión, igual que en rutinas: si viniera en el cuerpo,
-    un nutricionista podría crear dietas a nombre de otro. Para el Dueño y el
-    Recepcionista —que tienen el permiso sin ser nutricionistas— se usa el
-    primero activo del plantel, porque `Dieta.id_nutricionista` es NOT NULL.
+    A nombre de quién queda lo decide _resolver_nutricionista: si quien crea
+    ES nutricionista, la dieta es suya; si no lo es (Dueño, Recepcionista),
+    tiene que elegir a cargo de quién queda.
     """
-    nutri = _nutricionista_de_sesion(db, sesion)
-
-    if nutri is None:
-        nutri = (
-            db.query(Nutricionista)
-            .join(Empleado, Nutricionista.id_empleado == Empleado.id_empleado)
-            .filter(Empleado.activo == True)  # noqa: E712
-            .order_by(Nutricionista.id_nutricionista)
-            .first()
-        )
-        if nutri is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=("No hay ningún nutricionista activo cargado. Una dieta tiene que "
-                        "estar a cargo de uno — dá de alta un nutricionista primero."),
-            )
+    nutri = _resolver_nutricionista(db, sesion, datos.id_nutricionista)
 
     dieta = Dieta(
         id_nutricionista=nutri.id_nutricionista,
@@ -283,3 +302,76 @@ def dietas_de_socio(
         )
         for a in asignaciones
     ]
+
+
+# =============================================================================
+# EDICIÓN Y BAJA
+# =============================================================================
+
+@router.put("/{id_dieta}", response_model=DietaOut)
+def editar_dieta(
+    id_dieta: int,
+    datos: DietaEditarRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.GESTION_DIETAS)),
+):
+    """Edita los datos de la dieta. Las comidas se manejan aparte."""
+    dieta = db.get(Dieta, id_dieta)
+    if dieta is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La dieta no existe.")
+
+    if datos.id_nutricionista is not None and datos.id_nutricionista != dieta.id_nutricionista:
+        nutri = _resolver_nutricionista(db, sesion, datos.id_nutricionista)
+        dieta.id_nutricionista = nutri.id_nutricionista
+
+    dieta.nombre = datos.nombre.strip()
+    dieta.objetivo = datos.objetivo
+    dieta.calorias_diarias = datos.calorias_diarias
+    dieta.descripcion = datos.descripcion
+
+    db.commit()
+    db.refresh(dieta)
+    return _a_dieta_out(dieta)
+
+
+@router.post("/{id_dieta}/baja", response_model=DietaOut)
+def dar_de_baja_dieta(
+    id_dieta: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.GESTION_DIETAS)),
+):
+    """
+    Desactiva una dieta del catálogo. Baja lógica, mismo criterio que rutinas:
+    los socios que la están siguiendo la terminan, pero deja de ofrecerse para
+    asignaciones nuevas.
+    """
+    dieta = db.get(Dieta, id_dieta)
+    if dieta is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La dieta no existe.")
+    if not dieta.activo:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Esa dieta ya estaba desactivada.")
+
+    dieta.activo = False
+    db.commit()
+    db.refresh(dieta)
+    return _a_dieta_out(dieta)
+
+
+@router.post("/{id_dieta}/reactivar", response_model=DietaOut)
+def reactivar_dieta(
+    id_dieta: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.GESTION_DIETAS)),
+):
+    dieta = db.get(Dieta, id_dieta)
+    if dieta is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La dieta no existe.")
+    if dieta.activo:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Esa dieta ya estaba activa.")
+
+    dieta.activo = True
+    db.commit()
+    db.refresh(dieta)
+    return _a_dieta_out(dieta)

@@ -9,7 +9,6 @@ import {
   type PlanInput,
   type PlanListado,
 } from '../../services/nutricionService';
-import { useAuthStore } from '../../store/authStore';
 import { useUiStore } from '../../store/uiStore';
 
 // Equivalente de _open_form/_save (estructura_nutricion.md), con las
@@ -44,7 +43,6 @@ export function PlanFormModal({ plan, onClose, onGuardado }: PlanFormModalProps)
   const [nutricionistas, setNutricionistas] = useState<SelectOption[] | null>(null);
   const [guardando, setGuardando] = useState(false);
 
-  const idUsuarioActor = useAuthStore((s) => s.usuario?.id_usuario);
   const showSnack = useUiStore((s) => s.showSnack);
 
   useEffect(() => {
@@ -90,8 +88,8 @@ export function PlanFormModal({ plan, onClose, onGuardado }: PlanFormModalProps)
         idNutricionista: Number(idNutricionista),
       };
       const resultado = plan
-        ? await actualizarPlan(plan.idDieta, input, idUsuarioActor)
-        : await crearPlan(input, idUsuarioActor);
+        ? await actualizarPlan(plan.idDieta, input)
+        : await crearPlan(input);
       showSnack(
         plan ? 'Plan actualizado correctamente' : 'Plan nutricional creado correctamente',
         colors.statusOk,

@@ -9,7 +9,6 @@ import {
   activarPlan,
   type PlanListado,
 } from '../../services/nutricionService';
-import { useAuthStore } from '../../store/authStore';
 import { useUiStore } from '../../store/uiStore';
 import { usePuedeAccion } from '../../hooks/usePermisos';
 import { formatearNumero } from '../../utils/format';
@@ -46,7 +45,6 @@ function calcularResumen(planes: PlanListado[]) {
 }
 
 export function NutricionView() {
-  const idUsuarioActor = useAuthStore((s) => s.usuario?.id_usuario);
   const showSnack = useUiStore((s) => s.showSnack);
   const confirmDialog = useUiStore((s) => s.confirmDialog);
 
@@ -114,7 +112,7 @@ export function NutricionView() {
         `¿Dar de baja "${plan.nombre}"?`,
         'El plan deja de figurar como activo. Esta acción queda registrada en Auditoría.',
         () => {
-          darDeBajaPlan(plan.idDieta, idUsuarioActor)
+          darDeBajaPlan(plan.idDieta)
             .then(() => {
               showSnack(`"${plan.nombre}" fue dado de baja`, colors.statusOk);
               recargar();
@@ -123,21 +121,21 @@ export function NutricionView() {
         },
       );
     },
-    [confirmDialog, idUsuarioActor, showSnack, recargar],
+    [confirmDialog, showSnack, recargar],
   );
 
   // Sin confirmDialog: reactivar es reversible y de bajo riesgo, a
   // diferencia de pedirBaja. Mismo criterio que rutinas/socios/personal.
   const activar = useCallback(
     (plan: PlanListado) => {
-      activarPlan(plan.idDieta, idUsuarioActor)
+      activarPlan(plan.idDieta)
         .then((actualizado) => {
           showSnack(`"${plan.nombre}" fue reactivado`, colors.statusOk);
           actualizarEnLista(actualizado);
         })
         .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger));
     },
-    [idUsuarioActor, showSnack, actualizarEnLista],
+    [showSnack, actualizarEnLista],
   );
 
   return (

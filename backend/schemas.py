@@ -641,14 +641,33 @@ class RutinaEjercicioOut(BaseModel):
 
 class RutinaCrear(BaseModel):
     """
-    El entrenador autor NO se recibe: sale de la sesión de quien crea. Si
-    viniera en el cuerpo, un entrenador podría crear rutinas a nombre de otro.
+    `id_entrenador` es OPCIONAL y quién puede mandarlo depende de quién sea:
+
+      - Un ENTRENADOR no lo manda: la rutina queda a su nombre. Si mandara el
+        id de otro, estaría creando rutinas a nombre ajeno y el historial de
+        quién armó qué dejaría de significar algo.
+
+      - El DUEÑO o el RECEPCIONISTA SÍ tienen que mandarlo: tienen el permiso
+        de gestionar rutinas pero no son entrenadores, y `Rutina.id_entrenador`
+        es NOT NULL. Para ellos elegir el entrenador a cargo no es suplantar a
+        nadie, es delegar.
+
+    El router hace valer esa distinción.
     """
     nombre: str = Field(min_length=1, max_length=100)
     objetivo: str | None = None
     nivel: str | None = None
     dias_por_semana: int | None = Field(default=None, ge=1, le=7)
+    id_entrenador: int | None = None
     ejercicios: list[RutinaEjercicioCrear] = []
+
+
+class RutinaEditarRequest(BaseModel):
+    nombre: str = Field(min_length=1, max_length=100)
+    objetivo: str | None = None
+    nivel: str | None = None
+    dias_por_semana: int | None = Field(default=None, ge=1, le=7)
+    id_entrenador: int | None = None
 
 
 class RutinaOut(BaseModel):
@@ -707,11 +726,32 @@ class ComidaOut(BaseModel):
 
 
 class DietaCrear(BaseModel):
+    """`id_nutricionista` sigue la misma regla que RutinaCrear.id_entrenador."""
     nombre: str = Field(min_length=1, max_length=100)
     objetivo: str | None = None
     calorias_diarias: int | None = None
     descripcion: str | None = None
+    id_nutricionista: int | None = None
     comidas: list[ComidaCrear] = []
+
+
+class DietaEditarRequest(BaseModel):
+    nombre: str = Field(min_length=1, max_length=100)
+    objetivo: str | None = None
+    calorias_diarias: int | None = None
+    descripcion: str | None = None
+    id_nutricionista: int | None = None
+
+
+class ProfesionalOpcion(BaseModel):
+    """
+    Un entrenador o nutricionista para el selector del formulario.
+
+    Solo se ofrecen los que tienen el empleado ACTIVO: no tiene sentido
+    asignarle una rutina nueva a alguien que ya no trabaja en el gimnasio.
+    """
+    id: int
+    nombre: str
 
 
 class DietaOut(BaseModel):
