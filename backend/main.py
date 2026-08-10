@@ -125,11 +125,12 @@ app.middleware("http")(middleware_csrf)
 # API responde 404, como si no se hubieran escrito nunca.
 #
 from routers import (  # noqa: E402  (tras crear `app`)
-    actividades, asistencia, auth_router, cobros, nutricion, personal, rutinas,
-    socios, usuarios,
+    actividades, asistencia, auth_router, cobros, dashboard, nutricion,
+    personal, portal, rutinas, socios, usuarios,
 )
 
 app.include_router(auth_router.router)
+app.include_router(dashboard.router)
 app.include_router(socios.router)
 app.include_router(personal.router)
 app.include_router(rutinas.router)
@@ -138,6 +139,9 @@ app.include_router(cobros.router)
 app.include_router(asistencia.router)
 app.include_router(actividades.router)
 app.include_router(usuarios.router)
+# El portal va último: son las rutas del socio, y tenerlas juntas al final de
+# /docs deja claro que son un grupo aparte del resto (gestión).
+app.include_router(portal.router)
 
 
 @app.get("/", tags=["Salud"])

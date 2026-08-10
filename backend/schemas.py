@@ -200,6 +200,50 @@ class SocioOut(BaseModel):
 
 
 # =============================================================================
+# DASHBOARD
+# =============================================================================
+# Los nombres son camelCase y no snake_case: coinciden con los que ya espera
+# dashboardService.ts en la PWA. Adaptar el backend al contrato existente es
+# más barato que reescribir las vistas de los dos frontends.
+
+class Metrica(BaseModel):
+    """
+    Un número del dashboard con su variación contra el período anterior.
+
+    `deltaPorcentual` es None cuando no hay base de comparación —el período
+    anterior fue cero y dividir daría infinito—. La vista, en ese caso, no
+    muestra nada en vez de inventar un "+100%".
+    """
+    valor: float
+    deltaPorcentual: float | None = None  # noqa: N815
+
+
+class DashboardStats(BaseModel):
+    sociosActivos: Metrica  # noqa: N815
+    ingresosMes: Metrica  # noqa: N815
+    clasesHoy: Metrica  # noqa: N815
+    nuevosMes: Metrica  # noqa: N815
+
+
+class EventoActividad(BaseModel):
+    """Una línea del feed de actividad reciente."""
+    # Clave estable para React: tipo + id de la fila que lo originó. Sin esto
+    # la lista usaría el índice y perdería el estado al reordenarse.
+    id: str
+    tipo: str            # PAGO | ALTA_SOCIO | VENCIMIENTO | ASISTENCIA
+    descripcion: str
+    fecha: datetime
+
+
+class SocioResumen(BaseModel):
+    idSocio: int  # noqa: N815
+    nombre: str
+    iniciales: str
+    plan: str
+    estado: str
+
+
+# =============================================================================
 # ASISTENCIA
 # =============================================================================
 
@@ -459,6 +503,40 @@ class EstadoCuentaOut(BaseModel):
     al_dia: bool
     deuda_total: float
     deudas: list[DeudaOut] = []
+    ultimos_pagos: list[PagoOut] = []
+
+
+# =============================================================================
+# PORTAL DEL SOCIO
+# =============================================================================
+# Todo lo de acá se filtra por el id_socio FIRMADO en el token, nunca por un
+# parámetro de la URL. Es la diferencia entre "mostrame mi rutina" y
+# "mostrame la rutina 7": lo segundo permitiría leer la ficha de otro
+# cambiando un número.
+
+class MiPerfilOut(BaseModel):
+    id_socio: int
+    numero_socio: str | None = None
+    dni: str
+    nombre: str
+    apellido: str
+    email: str | None = None
+    telefono: str | None = None
+    fecha_nacimiento: date | None = None
+    fecha_alta: date
+    objetivo: str | None = None
+    sede: str | None = None
+    emergencia_nombre: str | None = None
+    emergencia_telefono: str | None = None
+    emergencia_parentesco: str | None = None
+
+
+class MiCuotaOut(BaseModel):
+    al_dia: bool
+    plan: str | None = None
+    fecha_vencimiento: date | None = None
+    dias_restantes: int | None = None
+    deuda_total: float = 0
     ultimos_pagos: list[PagoOut] = []
 
 

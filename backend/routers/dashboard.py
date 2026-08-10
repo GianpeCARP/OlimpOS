@@ -1,0 +1,282 @@
+"""
+routers/dashboard.py
+--------------------
+Las métricas de la pantalla principal.
+
+POR QUÉ ESTO ES UN ENDPOINT Y NO SE CALCULA EN EL FRONTEND
+----------------------------------------------------------
+Cada número de acá resume TODAS las filas de una tabla. "Ingresos del mes" es
+la suma de todos los pagos confirmados; "socios activos" cuenta todos los
+socios. Calcularlo en el cliente obligaría a bajarse la tabla entera para
+mostrar un número — con cien socios ya es absurdo, con mil es inviable.
+
+Además el delta compara contra el mes anterior, que son datos que el cliente
+directamente no tiene: nadie se baja el historial completo para pintar una
+flechita verde.
+
+TODO SE COMPARA CONTRA EL MES ANTERIOR
+--------------------------------------
+Un número solo ("9 socios activos") no dice nada. Lo que hace útil un
+dashboard es la tendencia: 9 socios con +80% es un gimnasio creciendo; con
+-30% es uno que se está vaciando. Por eso cada métrica viaja con su delta.
+
+El delta es None —no cero— cuando el mes anterior fue cero: dividir daría
+infinito, y mostrar "+100%" cuando se pasó de 0 a 1 socio es engañoso.
+"""
+
+from datetime import date, datetime, timedelta
+
+from fastapi import APIRouter, Depends
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from database import get_db
+from models import Membresia, Pago, Persona, Socio, Turno
+from permisos import Accion, Seccion
+from schemas import DashboardStats, EventoActividad, Metrica, SocioResumen
+from security import Sesion, obtener_sesion, requiere_seccion
+from permisos import puede_accion
+
+router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
+
+EVENTOS_RECIENTES = 10
+SOCIOS_RECIENTES = 5
+# Días de anticipación con que se avisa un vencimiento. Una semana da tiempo
+# a que el mostrador llame antes de que el socio quede sin acceso.
+DIAS_AVISO_VENCIMIENTO = 7
+
+
+def _delta(actual: float, anterior: float) -> float | None:
+    """
+    Variación porcentual. None si no hay base de comparación.
+
+    El caso a evitar es 0 -> 1: matemáticamente es un aumento infinito, y
+    mostrar "+100%" sería inventar un dato. La vista, con None, no muestra
+    nada, que es lo honesto.
+    """
+    if anterior == 0:
+        return None
+    return round(((actual - anterior) / anterior) * 100, 1)
+
+
+def _rango_mes(referencia: date) -> tuple[date, date]:
+    """Primer y último día del mes de `referencia`."""
+    primero = referencia.replace(day=1)
+    if primero.month == 12:
+        siguiente = primero.replace(year=primero.year + 1, month=1)
+    else:
+        siguiente = primero.replace(month=primero.month + 1)
+    return primero, siguiente - timedelta(days=1)
+
+
+def _iniciales(nombre: str, apellido: str) -> str:
+    """'Ana García' -> 'AG'. Es el avatar circular de la tabla."""
+    a = nombre.strip()[:1].upper()
+    b = apellido.strip()[:1].upper()
+    return (a + b) or "?"
+
+
+@router.get("/stats", response_model=DashboardStats)
+def estadisticas(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.DASHBOARD)),
+):
+    """
+    Las cuatro métricas de la portada.
+
+    OJO con `ingresosMes`: es un dato de NEGOCIO, no operativo. Quien no tenga
+    el permiso `verIngresos` —hoy, todos menos el Dueño— recibe ceros. No se
+    omite el campo ni se devuelve null porque la vista espera la métrica
+    siempre; devolver cero mantiene el contrato sin filtrar la cifra real.
+    """
+    hoy = date.today()
+    inicio_mes, _ = _rango_mes(hoy)
+    inicio_mes_previo, fin_mes_previo = _rango_mes(inicio_mes - timedelta(days=1))
+
+    # --- Socios activos -----------------------------------------------------
+    activos = db.query(func.count(Socio.id_socio)).filter(Socio.activo == True).scalar() or 0  # noqa: E712
+    # Comparación: cuántos había al cerrar el mes pasado, contando por fecha
+    # de alta. No es exacto (no descuenta las bajas posteriores) pero es la
+    # aproximación que se puede hacer sin una tabla de snapshots diarios.
+    activos_previo = (
+        db.query(func.count(Socio.id_socio))
+        .filter(Socio.activo == True, Socio.fecha_alta <= fin_mes_previo)  # noqa: E712
+        .scalar() or 0
+    )
+
+    # --- Ingresos del mes ---------------------------------------------------
+    def ingresos(desde: date, hasta: date) -> float:
+        total = (
+            db.query(func.coalesce(func.sum(Pago.monto), 0))
+            .filter(Pago.estado == "CONFIRMADO",
+                    func.date(Pago.fecha_pago) >= desde,
+                    func.date(Pago.fecha_pago) <= hasta)
+            .scalar()
+        )
+        return float(total or 0)
+
+    ve_ingresos = puede_accion(sesion.roles, Accion.VER_INGRESOS)
+    ingresos_mes = ingresos(inicio_mes, hoy) if ve_ingresos else 0.0
+    ingresos_previo = ingresos(inicio_mes_previo, fin_mes_previo) if ve_ingresos else 0.0
+
+    # --- Clases de hoy ------------------------------------------------------
+    clases_hoy = (
+        db.query(func.count(Turno.id_turno))
+        .filter(Turno.fecha == hoy, Turno.estado == "HABILITADO")
+        .scalar() or 0
+    )
+    clases_ayer = (
+        db.query(func.count(Turno.id_turno))
+        .filter(Turno.fecha == hoy - timedelta(days=1), Turno.estado == "HABILITADO")
+        .scalar() or 0
+    )
+
+    # --- Altas del mes ------------------------------------------------------
+    nuevos = (
+        db.query(func.count(Socio.id_socio))
+        .filter(Socio.fecha_alta >= inicio_mes, Socio.fecha_alta <= hoy)
+        .scalar() or 0
+    )
+    nuevos_previo = (
+        db.query(func.count(Socio.id_socio))
+        .filter(Socio.fecha_alta >= inicio_mes_previo, Socio.fecha_alta <= fin_mes_previo)
+        .scalar() or 0
+    )
+
+    return DashboardStats(
+        sociosActivos=Metrica(valor=activos, deltaPorcentual=_delta(activos, activos_previo)),
+        ingresosMes=Metrica(valor=ingresos_mes,
+                             deltaPorcentual=_delta(ingresos_mes, ingresos_previo)),
+        clasesHoy=Metrica(valor=clases_hoy, deltaPorcentual=_delta(clases_hoy, clases_ayer)),
+        nuevosMes=Metrica(valor=nuevos, deltaPorcentual=_delta(nuevos, nuevos_previo)),
+    )
+
+
+@router.get("/actividad", response_model=list[EventoActividad])
+def actividad_reciente(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.DASHBOARD)),
+):
+    """
+    El feed de la portada: qué pasó últimamente y qué está por pasar.
+
+    Mezcla tres orígenes distintos (pagos, altas, vencimientos próximos) en
+    una sola lista ordenada por fecha. Que sea un solo endpoint y no tres es
+    lo que permite que el feed esté ordenado entre sí — con tres listas
+    separadas, la vista tendría que intercalarlas a mano.
+
+    Los vencimientos son eventos FUTUROS y aparecen igual: "vence en 3 días"
+    es lo más accionable del panel, porque es sobre lo único que el mostrador
+    puede hacer algo antes de que pase.
+    """
+    eventos: list[EventoActividad] = []
+    hoy = date.today()
+
+    ve_ingresos = puede_accion(sesion.roles, Accion.VER_INGRESOS)
+
+    # --- Pagos recientes ----------------------------------------------------
+    # Solo para quien puede ver ingresos: el monto es dato de negocio.
+    if ve_ingresos:
+        pagos = (
+            db.query(Pago)
+            .filter(Pago.estado == "CONFIRMADO")
+            .order_by(Pago.fecha_pago.desc())
+            .limit(EVENTOS_RECIENTES)
+            .all()
+        )
+        for p in pagos:
+            nombre = p.socio.persona.nombre_completo if p.socio and p.socio.persona else "?"
+            eventos.append(EventoActividad(
+                id=f"PAGO-{p.id_pago}",
+                tipo="PAGO",
+                descripcion=f"{nombre} pagó ${float(p.monto):,.2f}",
+                fecha=p.fecha_pago,
+            ))
+
+    # --- Altas de socios ----------------------------------------------------
+    altas = (
+        db.query(Socio)
+        .order_by(Socio.id_socio.desc())
+        .limit(EVENTOS_RECIENTES)
+        .all()
+    )
+    for s in altas:
+        nombre = s.persona.nombre_completo if s.persona else "?"
+        eventos.append(EventoActividad(
+            id=f"ALTA_SOCIO-{s.id_socio}",
+            tipo="ALTA_SOCIO",
+            descripcion=f"{nombre} se dio de alta como socio",
+            # fecha_alta es un date; el feed ordena por datetime.
+            fecha=datetime.combine(s.fecha_alta, datetime.min.time()),
+        ))
+
+    # --- Vencimientos próximos ----------------------------------------------
+    limite = hoy + timedelta(days=DIAS_AVISO_VENCIMIENTO)
+    por_vencer = (
+        db.query(Membresia)
+        .filter(Membresia.estado == "ACTIVA",
+                Membresia.fecha_vencimiento >= hoy,
+                Membresia.fecha_vencimiento <= limite)
+        .all()
+    )
+    for m in por_vencer:
+        nombre = m.socio.persona.nombre_completo if m.socio and m.socio.persona else "?"
+        dias = (m.fecha_vencimiento - hoy).days
+        cuando = "hoy" if dias == 0 else f"en {dias} día(s)"
+        eventos.append(EventoActividad(
+            id=f"VENCIMIENTO-{m.id_membresia}",
+            tipo="VENCIMIENTO",
+            descripcion=f"Vence la membresía de {nombre} {cuando}",
+            fecha=datetime.combine(m.fecha_vencimiento, datetime.min.time()),
+        ))
+
+    eventos.sort(key=lambda e: e.fecha, reverse=True)
+    return eventos[:EVENTOS_RECIENTES]
+
+
+@router.get("/socios-recientes", response_model=list[SocioResumen])
+def socios_recientes(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.DASHBOARD)),
+):
+    """
+    Las últimas altas, con su estado de cuota.
+
+    El `estado` no es una columna: se deriva de la membresía vigente —Activo,
+    Por vencer o Vencido—. Es el mismo criterio que usa la sección Cobros, y
+    se calcula acá para que la tarjeta del dashboard no tenga que pedir el
+    estado de cuenta de cada socio por separado.
+    """
+    socios = db.query(Socio).order_by(Socio.id_socio.desc()).limit(SOCIOS_RECIENTES).all()
+    hoy = date.today()
+
+    salida = []
+    for s in socios:
+        persona = s.persona
+        membresia = (
+            db.query(Membresia)
+            .filter(Membresia.id_socio == s.id_socio, Membresia.estado == "ACTIVA")
+            .order_by(Membresia.fecha_vencimiento.desc())
+            .first()
+        )
+
+        if membresia is None or membresia.fecha_vencimiento is None:
+            estado, plan = "Vencido", "Sin plan"
+        else:
+            dias = (membresia.fecha_vencimiento - hoy).days
+            plan = membresia.tipo.nombre if membresia.tipo else "?"
+            if dias < 0:
+                estado = "Vencido"
+            elif dias <= DIAS_AVISO_VENCIMIENTO:
+                estado = "Por vencer"
+            else:
+                estado = "Activo"
+
+        salida.append(SocioResumen(
+            idSocio=s.id_socio,
+            nombre=persona.nombre_completo if persona else "?",
+            iniciales=_iniciales(persona.nombre, persona.apellido) if persona else "?",
+            plan=plan,
+            estado=estado,
+        ))
+    return salida
