@@ -1,83 +1,27 @@
-// Portal del socio (docs/prompt_portal_socio.md).
+// Portal del socio, conectado a la API real (routers/portal.py).
 //
-// ⚠️ LA REGLA QUE MANDA EN ESTE ARCHIVO, y la razón de que exista separado
-// de sociosService.ts:
+// NINGUNA FUNCIÓN DE ACÁ RECIBE UN idSocio
+// Y ese es el cambio más importante del archivo. Antes todas lo tomaban como
+// parámetro; ahora el backend lo saca del token, firmado en el login.
 //
-//   Toda función de acá recibe `idSocio` y devuelve ÚNICAMENTE datos de ESE
-//   socio. Nunca una lista de otros, nunca un total del gimnasio, nunca un
-//   dato de otra persona.
+//     antes:  getMiRutina(idSocio)   ← el número lo elegía el cliente
+//     ahora:  getMiRutina()          ← solo puede ser la propia
 //
-// El nombre es a propósito casi igual al de sociosService (singular vs
-// plural) porque son las dos caras de la misma tabla, y conviene que
-// chirríe al leerlo:
+// Con el id como parámetro, alcanzaba con que UNA pantalla se olvidara de
+// pasar el correcto —o con que alguien cambiara un número en las devtools—
+// para que un socio viera la ficha médica, la dieta o el estado de cuenta de
+// otro. Sin parámetro, ese olvido no es posible.
 //
-//   sociosService.ts  -> lo que el STAFF ve de TODOS los socios.
-//   socioService.ts   -> lo que UN socio ve de SÍ MISMO.
-//
-// Si alguna vez una función de este archivo necesita `.filter()` sobre una
-// lista completa para después quedarse con varios resultados de personas
-// distintas, está en el archivo equivocado.
-//
-// Esto es la mitad de la historia: la otra mitad es que el backend valide
-// que el idSocio del token es el mismo que el de la request. Un `fetch`
-// hecho a mano con otro id tiene que devolver 403, no datos. Acá el id sale
-// de authStore, que cualquiera puede editar desde las devtools.
+// Es lo que ya advertía el comentario de LoginResultado.idSocio: "si cada
+// pantalla hiciera la traversal persona -> socio por su cuenta, alcanzaría con
+// que una sola se olvidara de filtrar".
 
-import type { Pago, Persona, RegistroSalud, Socio } from '../types';
-import type { EstadoSocioValue, NivelRutinaValue, ObjetivoDietaValue } from '../config';
-import { aFechaISO, diasEntre, parsearFecha } from '../utils/fechas';
-import { ServiceError, delay } from './api';
-import { registrarAuditoria } from './auditoriaService';
-import { estadoDeSocio, membresiaVigente, nombrePlan } from './membresiaService';
-import { nombrePorEmpleado } from './personalService';
-import { esEmailValido, limpiar } from './validacion';
-import {
-  personas,
-  socios,
-  sedes,
-  telefonos,
-  siguienteId,
-  asignacionesRutina,
-  rutinas,
-  rutinaEjercicios,
-  ejercicios,
-  entrenadores,
-  registrosSalud,
-  asignacionesDieta,
-  dietas,
-  comidas,
-  nutricionistas,
-  deudas,
-  pagos,
-} from './mockDb';
+import type { EstadoSocioValue, NivelRutinaValue } from '../config';
+import { pedir } from './api';
 
-// --- Helpers internos ---
-
-/**
- * Resuelve el par Socio+Persona de un id, o corta con 404.
- *
- * Todas las funciones públicas arrancan por acá en vez de buscar sueltas:
- * así ninguna puede olvidarse de verificar que el socio existe y devolver
- * `undefined` disfrazado de dato válido.
- */
-function resolver(idSocio: number): { socio: Socio; persona: Persona } {
-  const socio = socios.find((s) => s.id_socio === idSocio);
-  if (!socio) {
-    throw new ServiceError(404, 'No encontramos tu ficha de socio');
-  }
-  const persona = personas.find((p) => p.id_persona === socio.id_persona);
-  if (!persona) {
-    throw new ServiceError(404, 'No encontramos tu ficha de socio');
-  }
-  return { socio, persona };
-}
-
-function telefonoPrincipal(idPersona: number): string | undefined {
-  const propios = telefonos.filter((t) => t.id_persona === idPersona);
-  return (propios.find((t) => t.principal) ?? propios[0])?.numero;
-}
-
-// --- 1. Mi Perfil ---
+// =========================================================================
+// MI PERFIL
+// =========================================================================
 
 export interface MiPerfil {
   idSocio: number;
@@ -85,10 +29,16 @@ export interface MiPerfil {
   nombreCompleto: string;
   dni: string;
   fechaNacimiento?: string;
-  /** Domicilio ya armado ("Av. Victorica 1450, Moreno"), o undefined si no cargó ninguno. */
+  /** Ya armado ("Av. Victorica 1450, Moreno"), o undefined si no cargó ninguno. */
   domicilio?: string;
   sede: string;
   fechaAlta: string;
+  objetivo?: string;
+
+  // Solo lectura, para el encabezado.
+  plan: string;
+  estado: EstadoSocioValue;
+  vencimiento?: string;
 
   // Editables por el socio.
   email?: string;
@@ -96,70 +46,55 @@ export interface MiPerfil {
   emergenciaNombre?: string;
   emergenciaTelefono?: string;
   emergenciaParentesco?: string;
+}
 
-  // Solo lectura, para el encabezado.
+interface PerfilApi {
+  id_socio: number;
+  numero_socio: string | null;
+  dni: string;
+  nombre: string;
+  apellido: string;
+  email: string | null;
+  telefono: string | null;
+  fecha_nacimiento: string | null;
+  fecha_alta: string;
+  objetivo: string | null;
+  sede: string | null;
+  emergencia_nombre: string | null;
+  emergencia_telefono: string | null;
+  emergencia_parentesco: string | null;
+  domicilio: string | null;
   plan: string;
-  estado: EstadoSocioValue;
-  vencimiento?: string;
+  estado: string;
+  vencimiento: string | null;
 }
 
-/** Une calle + número + localidad saltando lo que falte, sin dejar comas sueltas. */
-function armarDomicilio(persona: Persona): string | undefined {
-  const linea = [persona.calle, persona.numero_calle].filter(Boolean).join(' ').trim();
-  const partes = [linea, persona.localidad].filter((p) => p && p !== '');
-  return partes.length > 0 ? partes.join(', ') : undefined;
-}
-
-/**
- * Arma el perfil sin latencia simulada. Existe separado de getMiPerfil para
- * que actualizarMisDatosDeContacto pueda devolver el perfil ya actualizado
- * sin encadenar un segundo `delay()`: guardar tardaría el doble que cargar
- * y se nota.
- */
-function armarPerfil(idSocio: number): MiPerfil {
-  const { socio, persona } = resolver(idSocio);
-  const membresia = membresiaVigente(idSocio);
-
+function aMiPerfil(p: PerfilApi): MiPerfil {
   return {
-    idSocio: socio.id_socio,
-    numeroSocio: socio.numero_socio,
-    nombreCompleto: `${persona.nombre} ${persona.apellido}`.trim(),
-    dni: persona.dni,
-    fechaNacimiento: persona.fecha_nacimiento,
-    domicilio: armarDomicilio(persona),
-    sede: sedes.find((s) => s.id_sede === socio.id_sede)?.nombre ?? 'Sin sede',
-    fechaAlta: socio.fecha_alta,
-
-    email: persona.email,
-    telefono: telefonoPrincipal(persona.id_persona),
-    emergenciaNombre: persona.emergencia_nombre,
-    emergenciaTelefono: persona.emergencia_telefono,
-    emergenciaParentesco: persona.emergencia_parentesco,
-
-    plan: nombrePlan(idSocio),
-    estado: estadoDeSocio(socio),
-    vencimiento: membresia?.fecha_vencimiento,
+    idSocio: p.id_socio,
+    numeroSocio: p.numero_socio ?? undefined,
+    nombreCompleto: `${p.nombre} ${p.apellido}`.trim(),
+    dni: p.dni,
+    fechaNacimiento: p.fecha_nacimiento ?? undefined,
+    domicilio: p.domicilio ?? undefined,
+    sede: p.sede ?? 'Sin sede',
+    plan: p.plan,
+    estado: p.estado as EstadoSocioValue,
+    vencimiento: p.vencimiento ?? undefined,
+    fechaAlta: p.fecha_alta,
+    objetivo: p.objetivo ?? undefined,
+    email: p.email ?? undefined,
+    telefono: p.telefono ?? undefined,
+    emergenciaNombre: p.emergencia_nombre ?? undefined,
+    emergenciaTelefono: p.emergencia_telefono ?? undefined,
+    emergenciaParentesco: p.emergencia_parentesco ?? undefined,
   };
 }
 
-export async function getMiPerfil(idSocio: number): Promise<MiPerfil> {
-  await delay();
-  return armarPerfil(idSocio);
+export async function getMiPerfil(): Promise<MiPerfil> {
+  return aMiPerfil(await pedir<PerfilApi>('/portal/mi-perfil'));
 }
 
-/**
- * Lo único que el socio puede modificar de su ficha.
- *
- * Lo que NO está en esta interfaz es tan importante como lo que está: no
- * hay dni, ni nombre, ni sede, ni plan, ni numero_socio, ni activo. No es
- * que el formulario no los muestre editables — es que no existe forma de
- * mandarlos. Un campo que no está en el input no se puede colar con un
- * fetch a mano, y ese es justamente el tipo de agujero que un formulario
- * "casi igual al de admin" deja abierto sin que se note.
- *
- * El plan queda afuera a propósito aunque el socio lo vea: cambiarlo es
- * facturar, y eso lo hace recepción.
- */
 export interface MisDatosDeContacto {
   email?: string;
   telefono?: string;
@@ -168,84 +103,40 @@ export interface MisDatosDeContacto {
   emergenciaParentesco?: string;
 }
 
+/**
+ * El socio edita SU contacto. Nada más.
+ *
+ * No están el DNI, el nombre ni la sede: eso lo administra el gimnasio, y
+ * dejar que el socio los cambie permitiría, por ejemplo, editarse el DNI para
+ * figurar como otra persona. El objetivo tampoco: lo acuerda con su
+ * entrenador.
+ */
 export async function actualizarMisDatosDeContacto(
-  idSocio: number,
-  input: MisDatosDeContacto,
-  idUsuarioActor?: number,
+  datos: MisDatosDeContacto,
 ): Promise<MiPerfil> {
-  await delay();
-  const { persona } = resolver(idSocio);
-
-  const email = limpiar(input.email).toLowerCase() || undefined;
-  if (email && !esEmailValido(email)) {
-    throw new ServiceError(400, 'El email no tiene un formato válido');
-  }
-  // Persona.email es unique en el esquema: hay que excluirse a uno mismo del
-  // chequeo o guardar sin cambiar el mail daría "ya está en uso".
-  if (email && personas.some((p) => p.id_persona !== persona.id_persona && p.email?.toLowerCase() === email)) {
-    throw new ServiceError(409, 'Ese email ya está en uso');
-  }
-
-  const telefono = limpiar(input.telefono) || undefined;
-  const emergenciaNombre = limpiar(input.emergenciaNombre) || undefined;
-  const emergenciaTelefono = limpiar(input.emergenciaTelefono) || undefined;
-  const emergenciaParentesco = limpiar(input.emergenciaParentesco) || undefined;
-
-  // Un contacto de emergencia con teléfono pero sin nombre no sirve para
-  // nada el día que haga falta usarlo, así que se exige el par completo.
-  // Vacío del todo sí se acepta: es opcional en el esquema.
-  if (emergenciaTelefono && !emergenciaNombre) {
-    throw new ServiceError(400, 'Poné también el nombre de tu contacto de emergencia');
-  }
-  if (emergenciaNombre && !emergenciaTelefono) {
-    throw new ServiceError(400, 'Poné también el teléfono de tu contacto de emergencia');
-  }
-
-  persona.email = email;
-  persona.emergencia_nombre = emergenciaNombre;
-  persona.emergencia_telefono = emergenciaTelefono;
-  persona.emergencia_parentesco = emergenciaParentesco;
-
-  // Mismo criterio que sociosService/personalService: el teléfono principal
-  // es un solo campo del formulario, así que se reemplaza entero.
-  const indicePrincipal = telefonos.findIndex(
-    (t) => t.id_persona === persona.id_persona && t.principal,
-  );
-  if (telefono) {
-    if (indicePrincipal >= 0) {
-      telefonos[indicePrincipal].numero = telefono;
-    } else {
-      telefonos.push({
-        id_telefono: siguienteId.telefono(),
-        id_persona: persona.id_persona,
-        numero: telefono,
-        tipo: 'CELULAR',
-        principal: true,
-      });
-    }
-  } else if (indicePrincipal >= 0) {
-    telefonos.splice(indicePrincipal, 1);
-  }
-
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Persona',
-    id_entidad: persona.id_persona,
-    accion: 'MODIFICACION',
-    detalle: 'Datos de contacto actualizados por el socio',
+  const p = await pedir<PerfilApi>('/portal/mi-perfil', {
+    metodo: 'PUT',
+    cuerpo: {
+      email: datos.email?.trim() || null,
+      telefono: datos.telefono?.trim() ?? null,
+      emergencia_nombre: datos.emergenciaNombre?.trim() || null,
+      emergencia_telefono: datos.emergenciaTelefono?.trim() || null,
+      emergencia_parentesco: datos.emergenciaParentesco?.trim() || null,
+    },
   });
-
-  return armarPerfil(idSocio);
+  return aMiPerfil(p);
 }
 
-// --- 2. Mi Rutina ---
+// =========================================================================
+// MI RUTINA
+// =========================================================================
 
 export interface EjercicioDelDia {
   idRutinaEjercicio: number;
   nombre: string;
   grupoMuscular: string;
   series?: number;
-  /** Texto libre: "10-12", "al fallo", "45 seg". Ver RutinaEjercicio. */
+  /** Texto libre: "10-12", "al fallo", "45 seg". */
   repeticiones?: string;
   pesoSugerido?: number;
   descansoSegundos?: number;
@@ -264,85 +155,179 @@ export interface MiRutina {
   objetivo?: string;
   diasPorSemana?: number;
   entrenador: string;
-  fechaInicio: string;
-  /** La rutina fue dada de baja pero la asignación sigue activa — ver abajo. */
+  /** La rutina fue dada de baja pero la asignación sigue activa. */
   rutinaDeBaja: boolean;
+  /** Desde cuándo la tiene asignada. Viene de la asignación, no de la plantilla. */
+  fechaInicio: string;
   dias: DiaDeRutina[];
 }
 
+interface RutinaApi {
+  id_rutina: number;
+  nombre: string;
+  nivel: string | null;
+  objetivo: string | null;
+  dias_por_semana: number | null;
+  entrenador: string;
+  rutina_de_baja: boolean;
+  fecha_inicio: string;
+  ejercicios: {
+    id_rutina_ejercicio: number;
+    nombre_ejercicio: string;
+    grupo_muscular: string;
+    dia: number;
+    orden: number;
+    series: number | null;
+    repeticiones: string | null;
+    peso_sugerido: number | null;
+    descanso_segundos: number | null;
+    observaciones: string | null;
+  }[];
+}
+
 /**
- * La rutina que el socio tiene asignada HOY, o null si no tiene ninguna.
+ * Agrupa la lista plana de ejercicios en días.
  *
- * Se busca por Asignacion_Rutina con estado ACTIVA y no por la rutina más
- * reciente: una asignación FINALIZADA o CANCELADA es justamente la que ya
- * no está vigente. Si hubiera más de una activa (no debería, pero el
- * esquema no lo impide), gana la de fecha_inicio más nueva.
+ * El backend los manda ya ordenados por día y orden, así que alcanza con
+ * recorrerlos una vez: cada vez que cambia el día, arranca un grupo nuevo.
+ * Ordenarlos acá sería repetir un trabajo ya hecho.
  */
-export async function getMiRutina(idSocio: number): Promise<MiRutina | null> {
-  await delay();
-  resolver(idSocio); // valida que el socio exista antes de devolver null
-
-  const asignacion = asignacionesRutina
-    .filter((a) => a.id_socio === idSocio && a.estado === 'ACTIVA')
-    .sort((a, b) => b.fecha_inicio.localeCompare(a.fecha_inicio))[0];
-  if (!asignacion) return null;
-
-  const rutina = rutinas.find((r) => r.id_rutina === asignacion.id_rutina);
-  if (!rutina) return null;
-
-  // Los ejercicios se ordenan por (dia, orden), que es el índice que tiene
-  // el esquema: `orden` es el que manda dentro del día, no la posición en
-  // la tabla.
-  const propios = rutinaEjercicios
-    .filter((re) => re.id_rutina === rutina.id_rutina)
-    .sort((a, b) => a.dia - b.dia || a.orden - b.orden);
-
+function agruparPorDia(ejercicios: RutinaApi['ejercicios']): DiaDeRutina[] {
   const dias: DiaDeRutina[] = [];
-  for (const re of propios) {
-    const ejercicio = ejercicios.find((e) => e.id_ejercicio === re.id_ejercicio);
-    if (!ejercicio) continue;
-    let grupo = dias.find((d) => d.dia === re.dia);
+  for (const e of ejercicios) {
+    let grupo = dias.find((d) => d.dia === e.dia);
     if (!grupo) {
-      grupo = { dia: re.dia, ejercicios: [] };
+      grupo = { dia: e.dia, ejercicios: [] };
       dias.push(grupo);
     }
     grupo.ejercicios.push({
-      idRutinaEjercicio: re.id_rutina_ejercicio,
-      nombre: ejercicio.nombre,
-      grupoMuscular: ejercicio.grupo_muscular,
-      series: re.series,
-      repeticiones: re.repeticiones,
-      pesoSugerido: re.peso_sugerido,
-      descansoSegundos: re.descanso_segundos,
-      observaciones: re.observaciones,
+      idRutinaEjercicio: e.id_rutina_ejercicio,
+      nombre: e.nombre_ejercicio,
+      grupoMuscular: e.grupo_muscular,
+      series: e.series ?? undefined,
+      repeticiones: e.repeticiones ?? undefined,
+      pesoSugerido: e.peso_sugerido ?? undefined,
+      descansoSegundos: e.descanso_segundos ?? undefined,
+      observaciones: e.observaciones ?? undefined,
     });
   }
+  return dias;
+}
 
-  const entrenadorDeLaRutina = entrenadores.find(
-    (e) => e.id_entrenador === rutina.id_entrenador,
-  );
-
+/**
+ * La rutina asignada HOY, o null si no tiene ninguna.
+ *
+ * Null y no un error: un socio recién anotado sin rutina es un estado normal.
+ * La vista muestra "todavía no tenés rutina asignada" en vez de una pantalla
+ * de error.
+ */
+export async function getMiRutina(): Promise<MiRutina | null> {
+  const r = await pedir<RutinaApi | null>('/portal/mi-rutina');
+  if (!r) return null;
   return {
-    idRutina: rutina.id_rutina,
-    nombre: rutina.nombre,
-    nivel: rutina.nivel as NivelRutinaValue | undefined,
-    objetivo: rutina.objetivo,
-    diasPorSemana: rutina.dias_por_semana,
-    entrenador: entrenadorDeLaRutina
-      ? nombrePorEmpleado(entrenadorDeLaRutina.id_empleado)
-      : 'Sin asignar',
-    fechaInicio: asignacion.fecha_inicio,
-    // Puede pasar: el entrenador da de baja la rutina y las asignaciones
-    // existentes NO se cancelan (decisión documentada en rutinasService).
-    // El socio la sigue teniendo asignada, así que se le muestra igual —
-    // pero con un aviso, porque es la clase de detalle que si se oculta
-    // termina en "seguí entrenando tres meses un plan discontinuado".
-    rutinaDeBaja: !rutina.activo,
-    dias,
+    idRutina: r.id_rutina,
+    nombre: r.nombre,
+    nivel: (r.nivel ?? undefined) as NivelRutinaValue | undefined,
+    objetivo: r.objetivo ?? undefined,
+    diasPorSemana: r.dias_por_semana ?? undefined,
+    entrenador: r.entrenador,
+    // La rutina se dio de baja del catálogo pero la asignación sigue activa:
+    // el socio la termina. La vista lo avisa para que sepa que no se la van a
+    // renovar.
+    rutinaDeBaja: r.rutina_de_baja,
+    fechaInicio: r.fecha_inicio,
+    dias: agruparPorDia(r.ejercicios),
   };
 }
 
-// --- 3. Mi Progreso ---
+// =========================================================================
+// MI DIETA
+// =========================================================================
+
+export interface ComidaDelDia {
+  idComida: number;
+  momento?: string;
+  descripcion: string;
+  calorias?: number;
+}
+
+export interface DiaDeDieta {
+  dia: number;
+  comidas: ComidaDelDia[];
+  /** Suma de las calorías del día. undefined si ninguna comida las tiene. */
+  caloriasDelDia?: number;
+}
+
+export interface MiDieta {
+  idDieta: number;
+  nombre: string;
+  objetivo?: string;
+  caloriasDiarias?: number;
+  descripcion?: string;
+  nutricionista: string;
+  dietaDeBaja: boolean;
+  /** Desde cuándo la tiene asignada. Viene de la asignación, no de la plantilla. */
+  fechaInicio: string;
+  /** Nota que le dejó el nutricionista al asignársela. */
+  observaciones?: string;
+  dias: DiaDeDieta[];
+}
+
+interface DietaApi {
+  id_dieta: number;
+  nombre: string;
+  objetivo: string | null;
+  calorias_diarias: number | null;
+  descripcion: string | null;
+  nutricionista: string;
+  dieta_de_baja: boolean;
+  fecha_inicio: string;
+  observaciones: string | null;
+  dias: {
+    dia: number;
+    calorias_del_dia: number | null;
+    comidas: {
+      id_comida: number;
+      momento: string | null;
+      descripcion: string;
+      calorias: number | null;
+    }[];
+  }[];
+}
+
+export async function getMiDieta(): Promise<MiDieta | null> {
+  const d = await pedir<DietaApi | null>('/portal/mi-dieta');
+  if (!d) return null;
+
+  // Ya vienen agrupadas por día y en el orden del día (Desayuno → Almuerzo →
+  // Cena), con las calorías sumadas. Eso lo hace el backend: es la misma
+  // cuenta para todos y ordenar alfabéticamente pondría Almuerzo primero.
+  return {
+    idDieta: d.id_dieta,
+    nombre: d.nombre,
+    objetivo: d.objetivo ?? undefined,
+    caloriasDiarias: d.calorias_diarias ?? undefined,
+    descripcion: d.descripcion ?? undefined,
+    nutricionista: d.nutricionista,
+    dietaDeBaja: d.dieta_de_baja,
+    fechaInicio: d.fecha_inicio,
+    observaciones: d.observaciones ?? undefined,
+    dias: d.dias.map((g) => ({
+      dia: g.dia,
+      caloriasDelDia: g.calorias_del_dia ?? undefined,
+      comidas: g.comidas.map((c) => ({
+        idComida: c.id_comida,
+        momento: c.momento ?? undefined,
+        descripcion: c.descripcion,
+        calorias: c.calorias ?? undefined,
+      })),
+    })),
+  };
+}
+
+// =========================================================================
+// MI PROGRESO
+// =========================================================================
 
 export interface MedicionListada {
   idRegistroSalud: number;
@@ -361,51 +346,42 @@ export interface MiProgreso {
   variacionPeso?: number;
   grasaActual?: number;
   altura?: number;
-  /** True si ya cargó una medición hoy — el unique del esquema no deja otra. */
+  /** True si ya cargó una medición hoy — es una por día. */
   yaCargoHoy: boolean;
 }
 
-/** Las mediciones del socio, ordenadas cronológicamente. */
-function medicionesDe(idSocio: number): RegistroSalud[] {
-  return registrosSalud
-    .filter((r) => r.id_socio === idSocio)
-    .sort((a, b) => a.fecha.localeCompare(b.fecha));
+interface ProgresoApi {
+  mediciones: {
+    id_registro_salud: number;
+    fecha: string;
+    peso: number | null;
+    grasa_corporal: number | null;
+    masa_muscular: number | null;
+    observaciones: string | null;
+  }[];
+  peso_actual: number | null;
+  variacion_peso: number | null;
+  grasa_actual: number | null;
+  altura: number | null;
+  ya_cargo_hoy: boolean;
 }
 
-export async function getMiProgreso(idSocio: number): Promise<MiProgreso> {
-  await delay();
-  resolver(idSocio);
-  return armarProgreso(idSocio);
-}
-
-function armarProgreso(idSocio: number): MiProgreso {
-  const propias = medicionesDe(idSocio);
-  const primera = propias[0];
-  const ultima = propias[propias.length - 1];
-  const hoy = aFechaISO(new Date());
-
+export async function getMiProgreso(): Promise<MiProgreso> {
+  const p = await pedir<ProgresoApi>('/portal/mi-progreso');
   return {
-    mediciones: propias.map((r) => ({
-      idRegistroSalud: r.id_registro_salud,
-      fecha: r.fecha,
-      peso: r.peso,
-      grasaCorporal: r.grasa_corporal,
-      masaMuscular: r.masa_muscular,
-      observaciones: r.observaciones,
+    mediciones: p.mediciones.map((m) => ({
+      idRegistroSalud: m.id_registro_salud,
+      fecha: m.fecha,
+      peso: m.peso ?? undefined,
+      grasaCorporal: m.grasa_corporal ?? undefined,
+      masaMuscular: m.masa_muscular ?? undefined,
+      observaciones: m.observaciones ?? undefined,
     })),
-    pesoActual: ultima?.peso,
-    // Sólo tiene sentido si hay dos mediciones CON peso: con una sola no hay
-    // contra qué comparar, y mostrar "0 kg" sugeriría que se estancó cuando
-    // en realidad recién empieza.
-    variacionPeso:
-      propias.length > 1 && primera?.peso !== undefined && ultima?.peso !== undefined
-        ? Number((ultima.peso - primera.peso).toFixed(1))
-        : undefined,
-    grasaActual: ultima?.grasa_corporal,
-    // La altura no cambia: se toma la última cargada y sirve de default en
-    // el formulario, para que el socio no la tenga que reescribir siempre.
-    altura: [...propias].reverse().find((r) => r.altura !== undefined)?.altura,
-    yaCargoHoy: propias.some((r) => r.fecha === hoy),
+    pesoActual: p.peso_actual ?? undefined,
+    variacionPeso: p.variacion_peso ?? undefined,
+    grasaActual: p.grasa_actual ?? undefined,
+    altura: p.altura ?? undefined,
+    yaCargoHoy: p.ya_cargo_hoy,
   };
 }
 
@@ -417,194 +393,43 @@ export interface NuevaMedicion {
   observaciones?: string;
 }
 
-// Rangos de sanidad. No son reglas del negocio ni están en el esquema
-// (numeric(5,2) acepta cualquier cosa): son topes para atajar el dedazo
-// evidente —un 8 o un 800 en vez de 80— antes de que ensucie el historial y
-// el gráfico quede ilegible por una sola fila absurda.
-const PESO_MIN = 30;
-const PESO_MAX = 300;
-const ALTURA_MIN = 1.2;
-const ALTURA_MAX = 2.5;
-const PORCENTAJE_MAX = 99;
-
 /**
- * Carga una medición del día de hoy.
+ * Carga la medición de hoy.
  *
- * El unique (id_socio, fecha) del esquema es el que manda: **no** se
- * sobrescribe la fila del día en silencio. Si ya cargó hoy, se rechaza y se
- * explica por qué. Pisar el valor anterior sería exactamente la "anomalía
- * de borrado" contra la que advierte el comentario de la tabla, y además le
- * borraría al socio un dato que él mismo cargó sin avisarle.
- */
-export async function guardarMedicion(
-  idSocio: number,
-  input: NuevaMedicion,
-  idUsuarioActor?: number,
-): Promise<MiProgreso> {
-  await delay();
-  resolver(idSocio);
-
-  const hoy = aFechaISO(new Date());
-  if (registrosSalud.some((r) => r.id_socio === idSocio && r.fecha === hoy)) {
-    throw new ServiceError(
-      409,
-      'Ya cargaste una medición hoy. Podés cargar la próxima mañana.',
-    );
-  }
-
-  if (!Number.isFinite(input.peso) || input.peso < PESO_MIN || input.peso > PESO_MAX) {
-    throw new ServiceError(400, `El peso tiene que estar entre ${PESO_MIN} y ${PESO_MAX} kg`);
-  }
-  if (
-    input.altura !== undefined &&
-    (!Number.isFinite(input.altura) || input.altura < ALTURA_MIN || input.altura > ALTURA_MAX)
-  ) {
-    throw new ServiceError(400, `La altura tiene que estar entre ${ALTURA_MIN} y ${ALTURA_MAX} m`);
-  }
-  for (const [valor, etiqueta] of [
-    [input.grasaCorporal, 'grasa corporal'],
-    [input.masaMuscular, 'masa muscular'],
-  ] as const) {
-    if (valor !== undefined && (!Number.isFinite(valor) || valor <= 0 || valor > PORCENTAJE_MAX)) {
-      throw new ServiceError(400, `El valor de ${etiqueta} no es válido`);
-    }
-  }
-
-  registrosSalud.push({
-    id_registro_salud: siguienteId.registroSalud(),
-    id_socio: idSocio,
-    fecha: hoy,
-    peso: input.peso,
-    altura: input.altura,
-    grasa_corporal: input.grasaCorporal,
-    masa_muscular: input.masaMuscular,
-    observaciones: limpiar(input.observaciones) || undefined,
-    // La cargó el socio desde su portal, no el staff desde el mostrador.
-    id_registrado_por: idUsuarioActor,
-  });
-
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Registro_Salud',
-    id_entidad: idSocio,
-    accion: 'ALTA',
-    detalle: 'Medición cargada por el socio',
-  });
-
-  return armarProgreso(idSocio);
-}
-
-// --- 4. Mi Dieta ---
-
-export interface ComidaDelDia {
-  idComida: number;
-  momento?: string;
-  descripcion: string;
-  calorias?: number;
-}
-
-export interface DiaDeDieta {
-  dia: number;
-  comidas: ComidaDelDia[];
-  /** Suma de las calorías del día, sólo si TODAS las comidas las tienen. */
-  caloriasDelDia?: number;
-}
-
-export interface MiDieta {
-  idDieta: number;
-  nombre: string;
-  objetivo?: ObjetivoDietaValue;
-  caloriasDiarias?: number;
-  descripcion?: string;
-  nutricionista: string;
-  fechaInicio: string;
-  observaciones?: string;
-  dietaDeBaja: boolean;
-  dias: DiaDeDieta[];
-}
-
-/**
- * El plan nutricional vigente del socio, o null si no tiene.
+ * Es UNA por día y la del día NO se pisa en silencio: si ya cargó, el backend
+ * rechaza con 409 y lo explica. Sobrescribir le borraría al socio un dato que
+ * él mismo cargó, sin avisarle.
  *
- * Mismo criterio que getMiRutina: se busca la Asignacion_Dieta ACTIVA, no
- * la dieta más reciente.
+ * Los rangos (peso 30–300, altura 1.2–2.5) los valida el servidor. No son
+ * reglas del negocio: son topes para atajar el dedazo evidente —un 8 o un 800
+ * en vez de 80— antes de que deje el gráfico ilegible por una fila absurda.
  */
-export async function getMiDieta(idSocio: number): Promise<MiDieta | null> {
-  await delay();
-  resolver(idSocio);
-
-  const asignacion = asignacionesDieta
-    .filter((a) => a.id_socio === idSocio && a.estado === 'ACTIVA')
-    .sort((a, b) => b.fecha_inicio.localeCompare(a.fecha_inicio))[0];
-  if (!asignacion) return null;
-
-  const dieta = dietas.find((d) => d.id_dieta === asignacion.id_dieta);
-  if (!dieta) return null;
-
-  // Comida.dia es nullable: las que no lo tienen caen al grupo 0, que la
-  // vista rotula "Sin día asignado" (mismo criterio que PlanDetailModal).
-  // No se descartan: una comida sin día sigue siendo parte del plan.
-  const dias: DiaDeDieta[] = [];
-  for (const comida of comidas.filter((c) => c.id_dieta === dieta.id_dieta)) {
-    const numeroDia = comida.dia ?? 0;
-    let grupo = dias.find((d) => d.dia === numeroDia);
-    if (!grupo) {
-      grupo = { dia: numeroDia, comidas: [] };
-      dias.push(grupo);
-    }
-    grupo.comidas.push({
-      idComida: comida.id_comida,
-      momento: comida.momento,
-      descripcion: comida.descripcion,
-      calorias: comida.calorias,
-    });
-  }
-  dias.sort((a, b) => a.dia - b.dia);
-
-  for (const dia of dias) {
-    const conCalorias = dia.comidas.filter((c) => c.calorias !== undefined);
-    // Sólo se suma si TODAS las comidas del día tienen calorías cargadas.
-    // Sumar un subconjunto daría un total más bajo que el real y el socio lo
-    // leería como "me quedan calorías disponibles" — peor que no mostrarlo.
-    dia.caloriasDelDia =
-      conCalorias.length > 0 && conCalorias.length === dia.comidas.length
-        ? conCalorias.reduce((total, c) => total + (c.calorias ?? 0), 0)
-        : undefined;
-  }
-
-  const nutricionistaDelPlan = nutricionistas.find(
-    (n) => n.id_nutricionista === dieta.id_nutricionista,
-  );
-
-  return {
-    idDieta: dieta.id_dieta,
-    nombre: dieta.nombre,
-    objetivo: dieta.objetivo as ObjetivoDietaValue | undefined,
-    caloriasDiarias: dieta.calorias_diarias,
-    descripcion: dieta.descripcion,
-    nutricionista: nutricionistaDelPlan
-      ? nombrePorEmpleado(nutricionistaDelPlan.id_empleado)
-      : 'Sin asignar',
-    fechaInicio: asignacion.fecha_inicio,
-    // Asignacion_Dieta tiene observaciones propias (Asignacion_Rutina no):
-    // son las indicaciones que el nutricionista le dejó a ESTE socio sobre
-    // este plan, distintas de la descripción general de la dieta.
-    observaciones: asignacion.observaciones,
-    dietaDeBaja: !dieta.activo,
-    dias,
-  };
+export async function guardarMedicion(datos: NuevaMedicion): Promise<void> {
+  await pedir('/portal/mi-progreso/mediciones', {
+    metodo: 'POST',
+    cuerpo: {
+      peso: datos.peso,
+      altura: datos.altura ?? null,
+      grasa_corporal: datos.grasaCorporal ?? null,
+      masa_muscular: datos.masaMuscular ?? null,
+      observaciones: datos.observaciones?.trim() || null,
+    },
+  });
 }
 
-// --- 5. Mi Cuota ---
+// =========================================================================
+// MI CUOTA
+// =========================================================================
 
 export interface DeudaListada {
   idDeuda: number;
   monto: number;
   fechaGeneracion: string;
   fechaVencimiento?: string;
-  observaciones?: string;
   /** Días de atraso respecto de hoy. 0 o negativo = todavía no venció. */
   diasDeAtraso: number;
+  /** Descripción de la deuda ("cuota de marzo"), no una nota interna. */
+  observaciones?: string;
 }
 
 export interface PagoListado {
@@ -612,25 +437,24 @@ export interface PagoListado {
   fecha: string;
   monto: number;
   metodo: string;
-  estado: Pago['estado'];
+  estado: string;
   numeroComprobante?: string;
 }
 
 export interface MiCuota {
   /**
    * False = no tiene ninguna membresía. Hace falta como campo propio porque
-   * `vencimiento` undefined ya no alcanza para distinguir "sin membresía" de
-   * "con membresía que no vence nunca" (extensión de actividades, REGLA 1
-   * de actividadService) — las dos dejan `vencimiento` en undefined.
+   * `vencimiento` undefined no alcanza para distinguir "sin membresía" de
+   * "con membresía que no vence nunca" — las dos lo dejan undefined.
    */
   tieneMembresia: boolean;
+  alDia: boolean;
   plan: string;
   estado: EstadoSocioValue;
   precioPactado?: number;
   fechaInicio?: string;
-  /** undefined = sin membresía O con membresía sin vencimiento — usar tieneMembresia para distinguir. */
   vencimiento?: string;
-  /** Días hasta el vencimiento. Negativo = ya venció. undefined si no tiene membresía o si no vence nunca. */
+  /** Días hasta el vencimiento. Negativo = ya venció. */
   diasParaVencer?: number;
   /** Sólo las PENDIENTE: las PAGADA y CONDONADA ya no se le reclaman. */
   deudas: DeudaListada[];
@@ -638,78 +462,96 @@ export interface MiCuota {
   pagos: PagoListado[];
 }
 
-/**
- * Cómo se muestra cada método de pago. El esquema los guarda en mayúsculas
- * y con guión bajo (BILLETERA_VIRTUAL) porque es un enum de Postgres; eso
- * no se le muestra a nadie.
- */
-const ETIQUETA_METODO: Record<Pago['metodo'], string> = {
-  EFECTIVO: 'Efectivo',
-  DEBITO: 'Débito',
-  CREDITO: 'Crédito',
-  TRANSFERENCIA: 'Transferencia',
-  BILLETERA_VIRTUAL: 'Billetera virtual',
-};
+interface CuotaApi {
+  tiene_membresia: boolean;
+  al_dia: boolean;
+  plan: string | null;
+  estado: string;
+  precio_pactado: number | null;
+  fecha_inicio: string | null;
+  fecha_vencimiento: string | null;
+  dias_restantes: number | null;
+  deuda_total: number;
+  deudas: {
+    id_deuda: number;
+    monto: number;
+    fecha_generacion: string;
+    fecha_vencimiento: string | null;
+    dias_de_atraso: number;
+    observaciones: string | null;
+  }[];
+  ultimos_pagos: {
+    id_pago: number;
+    monto: number;
+    metodo: string;
+    fecha_pago: string;
+    estado: string;
+    numero_comprobante: string | null;
+  }[];
+}
 
 /**
- * Estado de cuenta del socio: su membresía, lo que debe y lo que pagó.
+ * Estado de la cuota del socio.
  *
- * NO expone ninguna acción de cobro. Cobrar es de recepción (DFD 2.3: el
- * socio consulta, el dueño modifica) — por eso acá no hay un
- * `pagarDeuda()`, ni siquiera comentado. Si mañana el gimnasio suma pagos
- * online, eso es una pasarela y una spec propia, no un botón en esta
- * pantalla.
+ * Es el espejo de /cobros/socio/{id} pero SIN el id. Y muestra menos: el
+ * socio ve el TOTAL de lo que debe, no el detalle de cada deuda — las
+ * observaciones de una deuda son notas internas del mostrador.
+ *
+ * Acá no hay ningún pagarDeuda(), ni siquiera comentado: esta pantalla es de
+ * consulta. Cobrar es del otro lado del mostrador y vive en cobrosService.
  */
-export async function getMiCuota(idSocio: number): Promise<MiCuota> {
-  await delay();
-  const { socio } = resolver(idSocio);
-
-  const membresia = membresiaVigente(idSocio);
-  const hoy = new Date();
-
-  const propias = deudas
-    .filter((d) => d.id_socio === idSocio && d.estado === 'PENDIENTE')
-    .sort((a, b) => a.fecha_generacion.localeCompare(b.fecha_generacion))
-    .map((d) => ({
+export async function getMiCuota(): Promise<MiCuota> {
+  const c = await pedir<CuotaApi>('/portal/mi-cuota');
+  return {
+    tieneMembresia: c.tiene_membresia,
+    alDia: c.al_dia,
+    plan: c.plan ?? 'Sin plan',
+    estado: c.estado as EstadoSocioValue,
+    precioPactado: c.precio_pactado ?? undefined,
+    fechaInicio: c.fecha_inicio ?? undefined,
+    vencimiento: c.fecha_vencimiento ?? undefined,
+    diasParaVencer: c.dias_restantes ?? undefined,
+    deudas: c.deudas.map((d) => ({
       idDeuda: d.id_deuda,
       monto: d.monto,
       fechaGeneracion: d.fecha_generacion,
-      fechaVencimiento: d.fecha_vencimiento,
-      observaciones: d.observaciones,
-      diasDeAtraso: d.fecha_vencimiento
-        ? diasEntre(parsearFecha(d.fecha_vencimiento), hoy)
-        : 0,
-    }));
-
-  return {
-    tieneMembresia: membresia !== undefined,
-    plan: nombrePlan(idSocio),
-    estado: estadoDeSocio(socio, hoy),
-    precioPactado: membresia?.precio_pactado,
-    fechaInicio: membresia?.fecha_inicio,
-    vencimiento: membresia?.fecha_vencimiento,
-    // Ojo: es membresia?.fecha_vencimiento, NO sólo membresia — una
-    // membresía activa sin vencimiento (cubre siempre) SÍ existe pero no
-    // tiene "días para vencer" que calcular.
-    diasParaVencer: membresia?.fecha_vencimiento
-      ? diasEntre(hoy, parsearFecha(membresia.fecha_vencimiento))
-      : undefined,
-    deudas: propias,
-    totalAdeudado: propias.reduce((total, d) => total + d.monto, 0),
-    // Todos sus pagos, del más nuevo al más viejo. Se incluyen los
-    // PENDIENTE y CANCELADO además de los CONFIRMADO: si un pago del socio
-    // quedó pendiente o se anuló, esconderlo lo dejaría preguntándose dónde
-    // fue a parar su plata. El estado va en la tabla.
-    pagos: pagos
-      .filter((p) => p.id_socio === idSocio)
-      .sort((a, b) => b.fecha_pago.localeCompare(a.fecha_pago))
-      .map((p) => ({
-        idPago: p.id_pago,
-        fecha: p.fecha_pago,
-        monto: p.monto,
-        metodo: ETIQUETA_METODO[p.metodo] ?? p.metodo,
-        estado: p.estado,
-        numeroComprobante: p.numero_comprobante,
-      })),
+      fechaVencimiento: d.fecha_vencimiento ?? undefined,
+      diasDeAtraso: d.dias_de_atraso,
+      observaciones: d.observaciones ?? undefined,
+    })),
+    totalAdeudado: c.deuda_total,
+    pagos: c.ultimos_pagos.map((p) => ({
+      idPago: p.id_pago,
+      fecha: p.fecha_pago,
+      monto: p.monto,
+      metodo: p.metodo,
+      estado: p.estado,
+      numeroComprobante: p.numero_comprobante ?? undefined,
+    })),
   };
+}
+
+// =========================================================================
+// MIS ASISTENCIAS
+// =========================================================================
+
+export interface AsistenciaListada {
+  idAsistencia: number;
+  fechaHoraIngreso: string;
+  fechaHoraEgreso?: string;
+}
+
+/** Los últimos ingresos al gimnasio. Es la base del gráfico de regularidad. */
+export async function getMisAsistencias(): Promise<AsistenciaListada[]> {
+  const datos = await pedir<{
+    id_asistencia: number;
+    fecha_hora_ingreso: string;
+    fecha_hora_egreso: string | null;
+  }[]>('/portal/mi-progreso/asistencias');
+
+  return datos.map((a) => ({
+    idAsistencia: a.id_asistencia,
+    fechaHoraIngreso: a.fecha_hora_ingreso,
+    fechaHoraEgreso: a.fecha_hora_egreso ?? undefined,
+  }));
 }

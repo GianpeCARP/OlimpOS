@@ -70,7 +70,6 @@ function Skeleton({ className }: { className: string }) {
 
 export function MiPerfilView() {
   const idSocio = useAuthStore((s) => s.idSocio);
-  const idUsuarioActor = useAuthStore((s) => s.usuario?.id_usuario);
   const showSnack = useUiStore((s) => s.showSnack);
 
   const [perfil, setPerfil] = useState<MiPerfil | null>(null);
@@ -108,7 +107,7 @@ export function MiPerfilView() {
     let cancelado = false;
     setPerfil(null);
     setError(null);
-    getMiPerfil(idSocio)
+    getMiPerfil()
       .then((datos) => {
         if (cancelado) return;
         setPerfil(datos);
@@ -129,10 +128,7 @@ export function MiPerfilView() {
     if (idSocio === null) return;
     setGuardando(true);
     try {
-      const actualizado = await actualizarMisDatosDeContacto(
-        idSocio,
-        { email, telefono, emergenciaNombre, emergenciaTelefono, emergenciaParentesco },
-        idUsuarioActor,
+      const actualizado = await actualizarMisDatosDeContacto({ email, telefono, emergenciaNombre, emergenciaTelefono, emergenciaParentesco }
       );
       setPerfil(actualizado);
       volcarEnFormulario(actualizado);

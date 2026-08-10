@@ -67,7 +67,7 @@ export function MiCuotaView() {
     let cancelado = false;
     setCuota(null);
     setError(null);
-    getMiCuota(idSocio)
+    getMiCuota()
       .then((datos) => {
         if (!cancelado) setCuota(datos);
       })

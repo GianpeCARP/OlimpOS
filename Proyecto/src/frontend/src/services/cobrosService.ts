@@ -14,6 +14,7 @@
 // que no existe.
 
 import { pedir } from './api';
+import type { MiCuota } from './socioService';
 
 export type MetodoPago =
   | 'EFECTIVO'
@@ -82,6 +83,8 @@ interface EstadoCuentaApi {
   al_dia: boolean;
   membresia_actual: {
     tipo: string;
+    precio_pactado: number;
+    fecha_inicio: string;
     fecha_vencimiento: string | null;
     dias_restantes: number | null;
   } | null;
@@ -307,4 +310,62 @@ export async function listarTiposMembresia(): Promise<TipoMembresiaOpcion[]> {
       duracionDias: t.duracion_dias,
       precio: t.precio_actual,
     }));
+}
+
+/**
+ * Estado de cuenta de un socio, con la MISMA forma que devuelve el portal.
+ *
+ * La diferencia con getMiCuota() de socioService es de quién puede llamarla:
+ * acá el id viaja como parámetro porque es el mostrador mirando la cuenta de
+ * OTRA persona, y el permiso lo da la sección Cobros. En el portal no hay
+ * parámetro: el socio solo puede ver la suya.
+ *
+ * Devuelve el mismo tipo a propósito — la pantalla de Cobros reusa los
+ * componentes del portal para mostrar la cuenta, y dos formas distintas
+ * obligarían a duplicarlos.
+ */
+export async function obtenerCuotaDeSocio(idSocio: number): Promise<MiCuota> {
+  const d = await pedir<EstadoCuentaApi>(`/cobros/socio/${idSocio}`);
+  const m = d.membresia_actual;
+
+  return {
+    tieneMembresia: m !== null,
+    alDia: d.al_dia,
+    plan: m?.tipo ?? 'Sin plan',
+    estado: (m ? estadoDeMembresia(m.dias_restantes) : 'Sin membresía') as MiCuota['estado'],
+    precioPactado: m?.precio_pactado ?? undefined,
+    fechaInicio: m?.fecha_inicio ?? undefined,
+    vencimiento: m?.fecha_vencimiento ?? undefined,
+    diasParaVencer: m?.dias_restantes ?? undefined,
+    deudas: d.deudas.map((x) => ({
+      idDeuda: x.id_deuda,
+      monto: x.monto,
+      fechaGeneracion: x.fecha_generacion,
+      fechaVencimiento: x.fecha_vencimiento ?? undefined,
+      // El backend de gestión no lo calcula (el mostrador ve la fecha), así
+      // que se deriva acá. Es el único lugar donde el cliente hace esta
+      // cuenta, y no decide nada: solo pinta el "hace N días".
+      diasDeAtraso: x.fecha_vencimiento
+        ? Math.floor((Date.now() - new Date(x.fecha_vencimiento).getTime()) / 86_400_000)
+        : 0,
+      observaciones: x.observaciones ?? undefined,
+    })),
+    totalAdeudado: d.deuda_total,
+    pagos: d.ultimos_pagos.map((p) => ({
+      idPago: p.id_pago,
+      fecha: p.fecha_pago,
+      monto: p.monto,
+      metodo: p.metodo,
+      estado: p.estado,
+      numeroComprobante: p.numero_comprobante ?? undefined,
+    })),
+  };
+}
+
+/** Mismo criterio que la sección Socios: 7 días de aviso antes de vencer. */
+function estadoDeMembresia(dias: number | null): string {
+  if (dias === null) return 'Activo';
+  if (dias < 0) return 'Vencido';
+  if (dias <= 7) return 'Por vencer';
+  return 'Activo';
 }

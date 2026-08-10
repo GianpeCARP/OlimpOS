@@ -103,7 +103,7 @@ export function MiRutinaView() {
     let cancelado = false;
     setCargado(false);
     setError(null);
-    getMiRutina(idSocio)
+    getMiRutina()
       .then((datos) => {
         if (cancelado) return;
         setRutina(datos);

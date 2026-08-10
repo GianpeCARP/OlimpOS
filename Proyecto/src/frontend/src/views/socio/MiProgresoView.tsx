@@ -117,7 +117,6 @@ function Skeleton({ className }: { className: string }) {
 
 export function MiProgresoView() {
   const idSocio = useAuthStore((s) => s.idSocio);
-  const idUsuarioActor = useAuthStore((s) => s.usuario?.id_usuario);
   const showSnack = useUiStore((s) => s.showSnack);
 
   const [progreso, setProgreso] = useState<MiProgreso | null>(null);
@@ -136,7 +135,7 @@ export function MiProgresoView() {
     let cancelado = false;
     setProgreso(null);
     setError(null);
-    getMiProgreso(idSocio)
+    getMiProgreso()
       .then((datos) => {
         if (cancelado) return;
         setProgreso(datos);
@@ -164,18 +163,18 @@ export function MiProgresoView() {
       // opcionales vacíos van como undefined y no como NaN, que pasaría el
       // chequeo de "está definido" y rompería la validación de rango.
       const aNumero = (valor: string) => (valor.trim() === '' ? undefined : Number(valor));
-      const actualizado = await guardarMedicion(
-        idSocio,
-        {
+      await guardarMedicion({
           peso: Number(peso),
           altura: aNumero(altura),
           grasaCorporal: aNumero(grasa),
           masaMuscular: aNumero(masaMuscular),
           observaciones,
-        },
-        idUsuarioActor,
+        }
       );
-      setProgreso(actualizado);
+      // guardarMedicion no devuelve el progreso completo: los resúmenes
+      // (peso actual, variación, altura) los calcula el servidor sobre la
+      // serie entera, así que se vuelve a pedir en vez de recalcularlos acá.
+      setProgreso(await getMiProgreso());
       // Se limpia lo que es de HOY y se conserva la altura, que sirve para
       // la próxima.
       setPeso('');

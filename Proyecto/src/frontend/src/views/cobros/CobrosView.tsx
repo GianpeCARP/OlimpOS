@@ -14,7 +14,8 @@ import {
   type PlanActividadListado,
 } from '../../services/actividadService';
 import { cobrar, pagarDeuda } from '../../services/cobrosService';
-import { getMiCuota, type MiCuota } from '../../services/socioService';
+import { obtenerCuotaDeSocio } from '../../services/cobrosService';
+import type { MiCuota } from '../../services/socioService';
 import { listarSocios, listarTiposMembresia, type SocioListado } from '../../services/sociosService';
 import type { Pago, TipoMembresia } from '../../types';
 import { useAuthStore } from '../../store/authStore';
@@ -97,7 +98,7 @@ export function CobrosView() {
 
   const cargarCuenta = useCallback((idSocio: number) => {
     setCargandoCuenta(true);
-    Promise.all([getMiCuota(idSocio), getMisInscripciones(idSocio)])
+    Promise.all([obtenerCuotaDeSocio(idSocio), getMisInscripciones(idSocio)])
       .then(([miCuota, inscripciones]) => {
         setCuenta(miCuota);
         setInscripcionesActivas(inscripciones.filter((i) => i.estado === 'ACTIVA'));
@@ -465,7 +466,7 @@ export function CobrosView() {
                               {pago.numeroComprobante && ` · Comp. ${pago.numeroComprobante}`}
                             </p>
                           </div>
-                          <StatusBadge status={EstadoPago[pago.estado]} />
+                          <StatusBadge status={EstadoPago[pago.estado as keyof typeof EstadoPago] ?? pago.estado} />
                         </div>
                       ))}
                     </div>

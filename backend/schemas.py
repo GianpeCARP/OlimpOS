@@ -601,14 +601,138 @@ class MiPerfilOut(BaseModel):
     emergencia_nombre: str | None = None
     emergencia_telefono: str | None = None
     emergencia_parentesco: str | None = None
+    # Domicilio ya armado ("Av. Victorica 1450, Moreno"). Se compone en el
+    # servidor porque saltear las partes que faltan sin dejar comas sueltas es
+    # la misma cuenta en cada pantalla que lo muestra.
+    domicilio: str | None = None
+    # Solo lectura, para el encabezado de la pantalla.
+    plan: str = "Sin plan"
+    estado: str = "Sin membresía"
+    vencimiento: date | None = None
+
+
+class MiComidaOut(BaseModel):
+    id_comida: int
+    momento: str | None = None
+    descripcion: str
+    calorias: int | None = None
+
+
+class MiDiaDeDietaOut(BaseModel):
+    dia: int
+    comidas: list[MiComidaOut] = []
+    # Suma de las calorías del día. La calcula el servidor porque es la misma
+    # cuenta para todos y así la vista no suma en cada render.
+    calorias_del_dia: int | None = None
+
+
+class MiDietaOut(BaseModel):
+    """
+    La dieta vista por el socio.
+
+    Distinta de DietaOut (la de gestión) porque incluye datos de la
+    ASIGNACIÓN —desde cuándo la tiene, y las observaciones que le dejó el
+    nutricionista— que no viven en la plantilla sino en el vínculo entre ella
+    y esta persona.
+    """
+    id_dieta: int
+    nombre: str
+    objetivo: str | None = None
+    calorias_diarias: int | None = None
+    descripcion: str | None = None
+    nutricionista: str
+    dieta_de_baja: bool = False
+    fecha_inicio: date
+    observaciones: str | None = None
+    dias: list[MiDiaDeDietaOut] = []
+
+
+class MiPerfilEditarRequest(BaseModel):
+    """
+    Lo ÚNICO que un socio puede cambiar de su propia ficha: su contacto.
+
+    No están el DNI, el nombre ni la sede — eso lo administra el gimnasio. Y
+    tampoco el objetivo ni las observaciones: el objetivo lo acuerda con su
+    entrenador y las observaciones son notas internas del personal.
+    """
+    email: EmailStr | None = None
+    telefono: str | None = None
+    emergencia_nombre: str | None = None
+    emergencia_telefono: str | None = None
+    emergencia_parentesco: str | None = None
+
+
+class MedicionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id_registro_salud: int
+    fecha: date
+    peso: float | None = None
+    altura: float | None = None
+    grasa_corporal: float | None = None
+    masa_muscular: float | None = None
+    observaciones: str | None = None
+
+
+class MedicionCrear(BaseModel):
+    # Los rangos NO son reglas del negocio ni están en el esquema (numeric
+    # acepta cualquier cosa): son topes para atajar el dedazo evidente —un 8 o
+    # un 800 en vez de 80— antes de que ensucie el historial y deje el gráfico
+    # ilegible por una sola fila absurda.
+    peso: float = Field(ge=30, le=300)
+    altura: float | None = Field(default=None, ge=1.2, le=2.5)
+    grasa_corporal: float | None = Field(default=None, ge=0, le=99)
+    masa_muscular: float | None = Field(default=None, ge=0, le=99)
+    observaciones: str | None = None
+
+
+class MiProgresoOut(BaseModel):
+    """Serie de mediciones más los números que el encabezado ya muestra."""
+    # De la más vieja a la más nueva: así se lee el gráfico de izquierda a
+    # derecha sin que el cliente tenga que reordenar.
+    mediciones: list[MedicionOut] = []
+    peso_actual: float | None = None
+    # Diferencia contra la PRIMERA medición. Negativo = bajó.
+    variacion_peso: float | None = None
+    grasa_actual: float | None = None
+    altura: float | None = None
+    # True si ya cargó una medición hoy. Es una fila por fecha: la del día no
+    # se pisa en silencio, se rechaza y se explica.
+    ya_cargo_hoy: bool = False
+
+
+class MiDeudaOut(BaseModel):
+    """
+    Una deuda vista por el propio socio.
+
+    `observaciones` SÍ viaja: en esta tabla no es una nota interna sino la
+    DESCRIPCIÓN de la deuda ("cuota de marzo", "clase suelta del 12"), y es
+    justo lo que el socio necesita para entender qué se le está reclamando.
+    La vista la muestra con "Cuota impaga" como texto por defecto.
+    """
+    id_deuda: int
+    monto: float
+    fecha_generacion: date
+    fecha_vencimiento: date | None = None
+    observaciones: str | None = None
+    # Días de atraso respecto de hoy. 0 o negativo = todavía no venció.
+    dias_de_atraso: int = 0
 
 
 class MiCuotaOut(BaseModel):
+    # False = no tiene NINGUNA membresía. Hace falta como campo propio porque
+    # fecha_vencimiento en null ya no alcanza para distinguir "sin membresía"
+    # de "con membresía que no vence nunca": las dos dan null.
+    tiene_membresia: bool = False
     al_dia: bool
     plan: str | None = None
+    estado: str = "Sin membresía"
+    precio_pactado: float | None = None
+    fecha_inicio: date | None = None
     fecha_vencimiento: date | None = None
     dias_restantes: int | None = None
     deuda_total: float = 0
+    deudas: list[MiDeudaOut] = []
     ultimos_pagos: list[PagoOut] = []
 
 
@@ -997,3 +1121,28 @@ class CredencialesResponse(BaseModel):
     email_enviado: bool = False
     detalle_envio: str | None = None
     texto_credenciales: str | None = None
+
+
+# =============================================================================
+# PORTAL — la rutina del socio
+# =============================================================================
+# Va al FINAL del archivo y no junto al resto del portal porque usa
+# RutinaEjercicioOut, que se define en la sección de Rutinas más arriba.
+# Python ejecuta el cuerpo de cada clase al importar, así que un tipo usado
+# antes de existir rompe el import — no es un detalle de estilo.
+
+class MiRutinaOut(BaseModel):
+    """
+    La rutina vista por el socio. Espejo de MiDietaOut: incluye `fecha_inicio`,
+    que viene de la ASIGNACIÓN y no de la plantilla — es propio del vínculo
+    entre esa rutina y esta persona.
+    """
+    id_rutina: int
+    nombre: str
+    nivel: str | None = None
+    objetivo: str | None = None
+    dias_por_semana: int | None = None
+    entrenador: str
+    rutina_de_baja: bool = False
+    fecha_inicio: date
+    ejercicios: list[RutinaEjercicioOut] = []

@@ -286,6 +286,34 @@ class Socio(Base):
     entrenador_a_cargo = relationship("Entrenador")
 
 
+class RegistroSalud(Base):
+    """
+    Una medición del socio: peso, grasa, masa muscular.
+
+    Es una fila POR FECHA, y ese es todo el punto: el valor de hoy no
+    reemplaza al de la semana pasada. La serie completa es lo que permite
+    dibujar la evolución, que es el único motivo por el que alguien carga su
+    peso en una app de gimnasio.
+
+    `altura` se repite en cada fila aunque casi nunca cambie. Es redundante a
+    propósito: separarla en otra tabla por una columna que se escribe una vez
+    complicaría más de lo que ahorra, y así cada medición queda autocontenida
+    para calcular el IMC de ese día.
+    """
+    __tablename__ = "Registro_Salud"
+
+    id_registro_salud = Column(Integer, primary_key=True)
+    id_socio = Column(Integer, ForeignKey("Socio.id_socio"), nullable=False)
+    fecha = Column(Date, nullable=False)
+    peso = Column(Numeric(5, 2))
+    altura = Column(Numeric(3, 2))
+    grasa_corporal = Column(Numeric(4, 2))
+    masa_muscular = Column(Numeric(5, 2))
+    observaciones = Column(Text)
+
+    socio = relationship("Socio")
+
+
 class Baja(Base):
     """
     El registro de por qué y cuándo se dio de baja a un socio.

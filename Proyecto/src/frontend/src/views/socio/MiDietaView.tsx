@@ -60,7 +60,7 @@ export function MiDietaView() {
     let cancelado = false;
     setCargado(false);
     setError(null);
-    getMiDieta(idSocio)
+    getMiDieta()
       .then((datos) => {
         if (cancelado) return;
         setDieta(datos);
@@ -84,7 +84,8 @@ export function MiDietaView() {
   // varchar libre en el esquema, un valor fuera del mapa no puede tumbar la
   // vista con un TypeError.
   const { icono: IconoObjetivo, color: colorObjetivo } =
-    (dieta?.objetivo && CONFIG_OBJETIVO[dieta.objetivo]) || CONFIG_POR_DEFECTO;
+    (dieta?.objetivo && CONFIG_OBJETIVO[dieta.objetivo as keyof typeof CONFIG_OBJETIVO]) ||
+    CONFIG_POR_DEFECTO;
 
   return (
     <div>

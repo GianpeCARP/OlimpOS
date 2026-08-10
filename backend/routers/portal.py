@@ -47,12 +47,15 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import (
     AsignacionDieta, AsignacionRutina, Asistencia, Deuda, Membresia, Pago,
-    Reserva, Socio, Telefono, Turno,
+    Persona, RegistroSalud, Reserva, Socio, Telefono, Turno,
 )
 from permisos import Seccion
 from schemas import (
     AsignacionDietaOut, AsignacionRutinaOut, AsistenciaOut, DietaOut,
-    MiCuotaOut, MiPerfilOut, PagoOut, ReservaOut, RutinaOut,
+    MedicionCrear, MedicionOut, MiComidaOut, MiCuotaOut, MiDeudaOut,
+    MiDiaDeDietaOut, MiDietaOut, MiRutinaOut,
+    MiPerfilEditarRequest, MiPerfilOut,
+    MiProgresoOut, PagoOut, ReservaOut, RutinaOut,
 )
 from security import Sesion, requiere_seccion
 
@@ -88,6 +91,46 @@ def _mi_socio(db: Session, sesion: Sesion) -> Socio:
     return socio
 
 
+def _armar_domicilio(persona) -> str | None:
+    """
+    "Av. Victorica 1450, Moreno". Saltea lo que falte sin dejar comas sueltas.
+
+    Se arma en el servidor porque las tres pantallas que muestran un domicilio
+    harían la misma cuenta, y una de ellas terminaría con ", Moreno" o
+    "Av. Victorica," el día que falte un dato.
+    """
+    linea = " ".join(p for p in (persona.calle, persona.numero_calle) if p).strip()
+    partes = [p for p in (linea, persona.localidad) if p]
+    return ", ".join(partes) if partes else None
+
+
+def _resumen_membresia(membresia) -> tuple[str, str, date | None]:
+    """
+    (plan, estado, vencimiento) de la membresía vigente.
+
+    El estado sale con el mismo criterio que la sección Socios: 7 días de
+    aviso antes de vencer. Se manda el texto ya resuelto para que la píldora
+    no tenga que derivar la regla por su cuenta.
+    """
+    if membresia is None:
+        return "Sin plan", "Sin membresía", None
+
+    plan = membresia.tipo.nombre if membresia.tipo else "Sin plan"
+    vence = membresia.fecha_vencimiento
+
+    if vence is None:
+        return plan, "Activo", None
+
+    dias = (vence - date.today()).days
+    if dias < 0:
+        estado = "Vencido"
+    elif dias <= 7:
+        estado = "Por vencer"
+    else:
+        estado = "Activo"
+    return plan, estado, vence
+
+
 # =============================================================================
 # MI PERFIL
 # =============================================================================
@@ -108,6 +151,14 @@ def mi_perfil(
         .first()
     )
 
+    membresia = (
+        db.query(Membresia)
+        .filter(Membresia.id_socio == socio.id_socio, Membresia.estado == "ACTIVA")
+        .order_by(Membresia.fecha_vencimiento.desc())
+        .first()
+    )
+    plan, estado, vence = _resumen_membresia(membresia)
+
     return MiPerfilOut(
         id_socio=socio.id_socio,
         numero_socio=socio.numero_socio,
@@ -123,6 +174,10 @@ def mi_perfil(
         emergencia_nombre=persona.emergencia_nombre,
         emergencia_telefono=persona.emergencia_telefono,
         emergencia_parentesco=persona.emergencia_parentesco,
+        domicilio=_armar_domicilio(persona),
+        plan=plan,
+        estado=estado,
+        vencimiento=vence,
         # `observaciones` del Socio NO se expone: son notas internas del
         # personal sobre el socio, no información para él.
     )
@@ -132,7 +187,7 @@ def mi_perfil(
 # MI RUTINA
 # =============================================================================
 
-@router.get("/mi-rutina", response_model=RutinaOut | None)
+@router.get("/mi-rutina", response_model=MiRutinaOut | None)
 def mi_rutina(
     db: Session = Depends(get_db),
     sesion: Sesion = Depends(requiere_seccion(Seccion.MI_RUTINA)),
@@ -156,10 +211,24 @@ def mi_rutina(
     if asignacion is None or asignacion.rutina is None:
         return None
 
-    # Se reusa el armador del router de gestión: la rutina es la misma, lo que
-    # cambia es cómo se llega a ella.
+    # Se reusa el armador del router de gestión para los ejercicios —la rutina
+    # es la misma— y se le suma lo que solo existe en la asignación.
     from routers.rutinas import _a_rutina_out
-    return _a_rutina_out(asignacion.rutina)
+    base = _a_rutina_out(asignacion.rutina)
+
+    return MiRutinaOut(
+        id_rutina=base.id_rutina,
+        nombre=base.nombre,
+        nivel=base.nivel,
+        objetivo=base.objetivo,
+        dias_por_semana=base.dias_por_semana,
+        entrenador=base.entrenador,
+        # La rutina se dio de baja del catálogo pero la asignación sigue
+        # activa: el socio la termina. La vista lo avisa.
+        rutina_de_baja=not base.activo,
+        fecha_inicio=asignacion.fecha_inicio,
+        ejercicios=base.ejercicios,
+    )
 
 
 @router.get("/mi-rutina/historial", response_model=list[AsignacionRutinaOut])
@@ -194,7 +263,7 @@ def mi_historial_rutinas(
 # MI DIETA
 # =============================================================================
 
-@router.get("/mi-dieta", response_model=DietaOut | None)
+@router.get("/mi-dieta", response_model=MiDietaOut | None)
 def mi_dieta(
     db: Session = Depends(get_db),
     sesion: Sesion = Depends(requiere_seccion(Seccion.MI_DIETA)),
@@ -212,8 +281,43 @@ def mi_dieta(
     if asignacion is None or asignacion.dieta is None:
         return None
 
-    from routers.nutricion import _a_dieta_out
-    return _a_dieta_out(asignacion.dieta)
+    dieta = asignacion.dieta
+
+    from routers.nutricion import _clave_orden_comida, _nombre_nutricionista
+
+    # Agrupadas por día, en el orden del día (Desayuno -> Almuerzo -> Cena).
+    dias: list[MiDiaDeDietaOut] = []
+    for c in sorted(dieta.comidas, key=_clave_orden_comida):
+        numero = c.dia or 0
+        grupo = next((g for g in dias if g.dia == numero), None)
+        if grupo is None:
+            grupo = MiDiaDeDietaOut(dia=numero, comidas=[], calorias_del_dia=None)
+            dias.append(grupo)
+        grupo.comidas.append(MiComidaOut(
+            id_comida=c.id_comida, momento=c.momento,
+            descripcion=c.descripcion, calorias=c.calorias,
+        ))
+
+    for grupo in dias:
+        con_calorias = [c.calorias for c in grupo.comidas if c.calorias is not None]
+        # None y no 0 cuando ninguna comida tiene calorías cargadas: un cero
+        # diría "este día no se come nada", que es distinto de "no se sabe".
+        grupo.calorias_del_dia = sum(con_calorias) if con_calorias else None
+
+    return MiDietaOut(
+        id_dieta=dieta.id_dieta,
+        nombre=dieta.nombre,
+        objetivo=dieta.objetivo,
+        calorias_diarias=dieta.calorias_diarias,
+        descripcion=dieta.descripcion,
+        nutricionista=_nombre_nutricionista(dieta.nutricionista),
+        dieta_de_baja=not bool(dieta.activo),
+        # Estos dos vienen de la ASIGNACIÓN, no de la plantilla: son propios
+        # del vínculo entre esta dieta y esta persona.
+        fecha_inicio=asignacion.fecha_inicio,
+        observaciones=asignacion.observaciones,
+        dias=dias,
+    )
 
 
 @router.get("/mi-dieta/historial", response_model=list[AsignacionDietaOut])
@@ -287,18 +391,54 @@ def mi_cuota(
     dias = None
     vence = None
     plan = None
+    precio = None
+    inicio = None
     if membresia:
         plan = membresia.tipo.nombre if membresia.tipo else None
         vence = membresia.fecha_vencimiento
+        precio = float(membresia.precio_pactado)
+        inicio = membresia.fecha_inicio
         if vence:
             dias = (vence - hoy).days
 
+    # Mismo criterio que la sección Socios: se manda el texto ya resuelto para
+    # que la píldora no derive la regla por su cuenta.
+    if membresia is None:
+        estado = "Sin membresía"
+    elif dias is None:
+        estado = "Activo"
+    elif dias < 0:
+        estado = "Vencido"
+    elif dias <= 7:
+        estado = "Por vencer"
+    else:
+        estado = "Activo"
+
     return MiCuotaOut(
+        tiene_membresia=membresia is not None,
         al_dia=bool(membresia) and not deudas and (dias is None or dias >= 0),
         plan=plan,
+        estado=estado,
+        precio_pactado=precio,
+        fecha_inicio=inicio,
         fecha_vencimiento=vence,
         dias_restantes=dias,
         deuda_total=float(sum(d.monto for d in deudas)),
+        deudas=[
+            MiDeudaOut(
+                id_deuda=d.id_deuda,
+                monto=float(d.monto),
+                fecha_generacion=d.fecha_generacion,
+                fecha_vencimiento=d.fecha_vencimiento,
+                # Positivo = días que lleva vencida. Se calcula contra la fecha
+                # del servidor, igual que los días restantes de la membresía.
+                dias_de_atraso=(
+                    (hoy - d.fecha_vencimiento).days if d.fecha_vencimiento else 0
+                ),
+                observaciones=d.observaciones,
+            )
+            for d in deudas
+        ],
         ultimos_pagos=[
             PagoOut(
                 id_pago=p.id_pago, id_socio=p.id_socio,
@@ -390,3 +530,163 @@ def mis_asistencias(
         )
         for a in asistencias
     ]
+
+
+@router.put("/mi-perfil", response_model=MiPerfilOut)
+def editar_mi_perfil(
+    datos: MiPerfilEditarRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_PERFIL)),
+):
+    """
+    El socio edita su propio contacto.
+
+    Solo email, teléfono y contacto de emergencia. NO el DNI, ni el nombre, ni
+    la sede: eso lo administra el gimnasio y dejar que el socio lo cambie
+    permitiría, por ejemplo, editarse el DNI para figurar como otra persona.
+
+    Tampoco el objetivo ni las observaciones: el objetivo lo acuerda con su
+    entrenador, y las observaciones son notas internas del personal sobre él.
+    """
+    socio = _mi_socio(db, sesion)
+    persona = socio.persona
+
+    if datos.email and datos.email != persona.email:
+        choca = (db.query(Persona)
+                 .filter(Persona.email == datos.email,
+                         Persona.id_persona != persona.id_persona)
+                 .first())
+        if choca:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                detail="Ese email ya está registrado para otra persona.")
+        persona.email = datos.email
+    elif datos.email is None:
+        persona.email = None
+
+    persona.emergencia_nombre = datos.emergencia_nombre
+    persona.emergencia_telefono = datos.emergencia_telefono
+    persona.emergencia_parentesco = datos.emergencia_parentesco
+
+    if datos.telefono is not None:
+        numero = datos.telefono.strip()
+        principal = (db.query(Telefono)
+                     .filter(Telefono.id_persona == persona.id_persona)
+                     .order_by(Telefono.principal.desc(), Telefono.id_telefono)
+                     .first())
+        if numero:
+            if principal:
+                principal.numero = numero
+            else:
+                db.add(Telefono(id_persona=persona.id_persona, numero=numero,
+                                tipo="CELULAR", principal=True))
+        elif principal:
+            db.delete(principal)
+
+    db.commit()
+    db.refresh(socio)
+    return mi_perfil(db=db, sesion=sesion)
+
+
+# =============================================================================
+# MI PROGRESO — mediciones
+# =============================================================================
+
+@router.get("/mi-progreso", response_model=MiProgresoOut)
+def mi_progreso(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_PROGRESO)),
+):
+    """
+    La serie de mediciones más los números del encabezado.
+
+    Los resúmenes (peso actual, variación, altura) los calcula el servidor
+    aunque el cliente tenga la serie completa: son la misma cuenta hecha en un
+    solo lugar. Si cada pantalla la hiciera por su cuenta —el gráfico, la
+    tarjeta de resumen, un futuro informe— tres implementaciones podrían
+    discrepar en el redondeo.
+    """
+    socio = _mi_socio(db, sesion)
+
+    mediciones = (
+        db.query(RegistroSalud)
+        .filter(RegistroSalud.id_socio == socio.id_socio)
+        .order_by(RegistroSalud.fecha)
+        .all()
+    )
+
+    salida = [MedicionOut.model_validate(m) for m in mediciones]
+
+    peso_actual = None
+    variacion = None
+    grasa_actual = None
+    altura = None
+
+    if mediciones:
+        ultima = mediciones[-1]
+        peso_actual = float(ultima.peso) if ultima.peso is not None else None
+        grasa_actual = float(ultima.grasa_corporal) if ultima.grasa_corporal is not None else None
+
+        # La altura puede no venir en la última medición: se busca la más
+        # reciente que la tenga. Es un dato que casi no cambia y que el socio
+        # suele cargar una sola vez.
+        for m in reversed(mediciones):
+            if m.altura is not None:
+                altura = float(m.altura)
+                break
+
+        primera = mediciones[0]
+        if peso_actual is not None and primera.peso is not None:
+            variacion = round(peso_actual - float(primera.peso), 2)
+
+    ya_cargo_hoy = any(m.fecha == date.today() for m in mediciones)
+
+    return MiProgresoOut(
+        mediciones=salida,
+        peso_actual=peso_actual,
+        variacion_peso=variacion,
+        grasa_actual=grasa_actual,
+        altura=altura,
+        ya_cargo_hoy=ya_cargo_hoy,
+    )
+
+
+@router.post("/mi-progreso/mediciones", response_model=MedicionOut,
+             status_code=status.HTTP_201_CREATED)
+def cargar_medicion(
+    datos: MedicionCrear,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_PROGRESO)),
+):
+    """
+    Carga la medición de hoy.
+
+    Es UNA por día y la del día NO se pisa en silencio: si ya cargó, se
+    rechaza y se explica. Sobrescribir le borraría al socio un dato que él
+    mismo cargó, sin avisarle — y la serie perdería el registro de que ese día
+    midió otra cosa.
+    """
+    socio = _mi_socio(db, sesion)
+    hoy = date.today()
+
+    ya = (db.query(RegistroSalud)
+          .filter(RegistroSalud.id_socio == socio.id_socio, RegistroSalud.fecha == hoy)
+          .first())
+    if ya:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ya cargaste una medición hoy. La próxima la podés cargar mañana.",
+        )
+
+    medicion = RegistroSalud(
+        id_socio=socio.id_socio,
+        fecha=hoy,
+        peso=datos.peso,
+        altura=datos.altura,
+        grasa_corporal=datos.grasa_corporal,
+        masa_muscular=datos.masa_muscular,
+        observaciones=datos.observaciones,
+    )
+    db.add(medicion)
+    db.commit()
+    db.refresh(medicion)
+    return MedicionOut.model_validate(medicion)

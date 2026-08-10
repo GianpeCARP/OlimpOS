@@ -50,7 +50,6 @@ function EtiquetaConsumo(insc: InscripcionListada): string {
 
 export function MisActividadesView() {
   const idSocio = useAuthStore((s) => s.idSocio);
-  const idUsuarioActor = useAuthStore((s) => s.usuario?.id_usuario);
   const showSnack = useUiStore((s) => s.showSnack);
   const confirmDialog = useUiStore((s) => s.confirmDialog);
 
@@ -107,7 +106,7 @@ export function MisActividadesView() {
           ? `Se cobran ${formatearMoneda(plan.precio)}. Tu plan actual (${planViejo.nombrePlan}) se cancela sin devolución al confirmar.`
           : `Se cobran ${formatearMoneda(plan.precio)} por este plan.`,
         () => {
-          comprarPlan(idSocio, plan.idPlanActividad, idUsuarioActor)
+          comprarPlan(idSocio, plan.idPlanActividad)
             .then(() => {
               showSnack(`Listo, ya tenés "${plan.nombre}" activo`, colors.statusOk);
               recargar();
@@ -116,7 +115,7 @@ export function MisActividadesView() {
         },
       );
     },
-    [idSocio, idUsuarioActor, activas, confirmDialog, showSnack, recargar],
+    [idSocio, activas, confirmDialog, showSnack, recargar],
   );
 
   const pedirCancelacion = useCallback(
@@ -126,7 +125,7 @@ export function MisActividadesView() {
         `¿Cancelar tu plan de ${insc.nombreActividad}?`,
         `Dejás de poder reservar turnos de ${insc.nombreActividad} con "${insc.nombrePlan}". Esta acción no se puede deshacer.`,
         () => {
-          cancelarInscripcion(idSocio, insc.idInscripcion, idUsuarioActor)
+          cancelarInscripcion(idSocio, insc.idInscripcion)
             .then(() => {
               showSnack(`Cancelaste tu plan de ${insc.nombreActividad}`, colors.statusOk);
               recargar();
@@ -135,7 +134,7 @@ export function MisActividadesView() {
         },
       );
     },
-    [idSocio, idUsuarioActor, confirmDialog, showSnack, recargar],
+    [idSocio, confirmDialog, showSnack, recargar],
   );
 
   if (idSocio === null) {
