@@ -11,8 +11,7 @@ import {
 } from '../../services/sociosService';
 import type { TipoMembresia } from '../../types';
 import { formatearMoneda } from '../../utils/format';
-import { useAuthStore } from '../../store/authStore';
-import { useUiStore } from '../../store/uiStore';
+import { useUiStore, SNACK_PERSISTENTE } from '../../store/uiStore';
 
 // Equivalente de _open_form/_save_socio (estructura_socios.md), adaptado al
 // esquema real: el doc pide un solo campo "nombre" y un plan de 3 opciones
@@ -46,7 +45,6 @@ export function SocioFormModal({ socio, onClose, onGuardado }: SocioFormModalPro
   const [planes, setPlanes] = useState<TipoMembresia[] | null>(null);
   const [guardando, setGuardando] = useState(false);
 
-  const idUsuarioActor = useAuthStore((s) => s.usuario?.id_usuario);
   const showSnack = useUiStore((s) => s.showSnack);
 
   useEffect(() => {
@@ -70,21 +68,46 @@ export function SocioFormModal({ socio, onClose, onGuardado }: SocioFormModalPro
     setGuardando(true);
     try {
       const idTipoMembresiaNum = idTipoMembresia === '' ? undefined : Number(idTipoMembresia);
-      const resultado = socio
-        ? await actualizarSocio(
-            socio.idSocio,
-            { nombre, apellido, email, telefono, idTipoMembresia: idTipoMembresiaNum },
-            idUsuarioActor,
-          )
-        : await crearSocio(
-            { dni, nombre, apellido, email, telefono, idTipoMembresia: idTipoMembresiaNum },
-            idUsuarioActor,
+
+      if (socio) {
+        // Editar NO toca la membresía: cambiar de plan es una acción con
+        // cobro asociado y va por la sección Cobros. Ver el comentario en
+        // sociosService.actualizarSocio — hacerlo acá regalaba renovaciones
+        // de 30 días cada vez que alguien corregía un teléfono.
+        const actualizado = await actualizarSocio(socio.idSocio, {
+          nombre,
+          apellido,
+          email,
+          telefono,
+        });
+        showSnack('Socio actualizado correctamente', colors.statusOk);
+        onGuardado(actualizado);
+      } else {
+        const alta = await crearSocio({
+          dni,
+          nombre,
+          apellido,
+          email,
+          telefono,
+          idTipoMembresia: idTipoMembresiaNum,
+        });
+
+        // Las credenciales se muestran UNA sola vez: el backend guarda solo
+        // el hash, así que si el operador no las copia ahora hay que
+        // resetearlas. Por eso el mensaje no se cierra solo.
+        if (alta.passwordTemporal) {
+          showSnack(
+            `Socio creado. Usuario: ${alta.username} — Contraseña temporal: ` +
+              `${alta.passwordTemporal} (anotala, no se vuelve a mostrar)`,
+            colors.statusOk,
+            SNACK_PERSISTENTE,
           );
-      showSnack(
-        esEdicion ? 'Socio actualizado correctamente' : 'Socio creado correctamente',
-        colors.statusOk,
-      );
-      onGuardado(resultado);
+        } else {
+          showSnack(alta.mensaje, colors.statusOk);
+        }
+        onGuardado(alta.socio);
+      }
+
       onClose();
     } catch (err) {
       showSnack(mensajeDeError(err), colors.statusDanger);
@@ -122,14 +145,19 @@ export function SocioFormModal({ socio, onClose, onGuardado }: SocioFormModalPro
           <InputField label="Email" value={email} onChange={setEmail} icon={Mail} type="email" name="email" />
           <InputField label="Teléfono" value={telefono} onChange={setTelefono} icon={Phone} type="tel" name="telefono" />
 
-          <SelectField
-            label="Plan"
-            value={idTipoMembresia}
-            onChange={setIdTipoMembresia}
-            options={opcionesPlan}
-            placeholder="Sin plan asignado"
-            name="plan"
-          />
+          {/* El plan solo se elige en el ALTA. Al editar no aparece porque
+              cambiar de plan implica un cobro y va por la sección Cobros:
+              dejarlo acá prometía algo que este formulario ya no hace. */}
+          {!esEdicion && (
+            <SelectField
+              label="Plan"
+              value={idTipoMembresia}
+              onChange={setIdTipoMembresia}
+              options={opcionesPlan}
+              placeholder="Sin plan asignado"
+              name="plan"
+            />
+          )}
         </div>
 
         <div className="mt-6 flex justify-end gap-3">

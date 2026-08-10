@@ -9,7 +9,6 @@ import {
   reactivarSocio,
   type SocioListado,
 } from '../../services/sociosService';
-import { useAuthStore } from '../../store/authStore';
 import { useUiStore } from '../../store/uiStore';
 import { useAccesoSeccion, usePuedeAccion } from '../../hooks/usePermisos';
 import { SocioFormModal } from './SocioFormModal';
@@ -55,7 +54,6 @@ function Skeleton({ className }: { className: string }) {
 }
 
 export function SociosView() {
-  const idUsuarioActor = useAuthStore((s) => s.usuario?.id_usuario);
   const showSnack = useUiStore((s) => s.showSnack);
   const confirmDialog = useUiStore((s) => s.confirmDialog);
 
@@ -151,7 +149,7 @@ export function SociosView() {
         `¿Dar de baja a ${socio.nombreCompleto}?`,
         'El socio deja de figurar como activo y pierde el acceso a la app. Esta acción queda registrada en Auditoría.',
         () => {
-          darDeBajaSocio(socio.idSocio, undefined, idUsuarioActor)
+          darDeBajaSocio(socio.idSocio)
             .then(() => {
               // Forma impersonal: el participio en masculino fijo le erraba
               // al género de la mitad de los socios (mismo criterio que
@@ -163,7 +161,7 @@ export function SociosView() {
         },
       );
     },
-    [confirmDialog, idUsuarioActor, showSnack, recargar],
+    [confirmDialog, showSnack, recargar],
   );
 
   // Sin diálogo de confirmación: reactivar es una acción de bajo riesgo y
@@ -171,14 +169,14 @@ export function SociosView() {
   // pedirBaja.
   const activar = useCallback(
     (socio: SocioListado) => {
-      reactivarSocio(socio.idSocio, idUsuarioActor)
+      reactivarSocio(socio.idSocio)
         .then(() => {
           showSnack(`Se reactivó a ${socio.nombreCompleto}`, colors.statusOk);
           recargar();
         })
         .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger));
     },
-    [idUsuarioActor, showSnack, recargar],
+    [showSnack, recargar],
   );
 
   return (

@@ -286,6 +286,31 @@ class Socio(Base):
     entrenador_a_cargo = relationship("Entrenador")
 
 
+class Baja(Base):
+    """
+    El registro de por qué y cuándo se dio de baja a un socio.
+
+    Es una tabla aparte y no un par de columnas en Socio por dos razones: un
+    socio puede darse de baja y volver más de una vez (y cada baja tiene su
+    motivo), y así el historial queda completo aunque hoy esté activo.
+
+    `tipo` distingue la baja voluntaria de la por mora y de la
+    administrativa. Importa al analizar: un gimnasio que pierde socios por
+    mora tiene un problema distinto al que los pierde porque se mudan.
+    """
+    __tablename__ = "Baja"
+
+    id_baja = Column(Integer, primary_key=True)
+    id_socio = Column(Integer, ForeignKey("Socio.id_socio"), nullable=False)
+    fecha_baja = Column(Date, nullable=False)
+    tipo = Column(ENUM("VOLUNTARIA", "MORA", "ADMINISTRATIVA",
+                        name="tipo_baja", create_type=False))
+    motivo = Column(Text)
+    id_registrado_por = Column(Integer, ForeignKey("Usuario.id_usuario"))
+
+    socio = relationship("Socio")
+
+
 # =============================================================================
 # COBROS — membresías, pagos y deudas
 # =============================================================================

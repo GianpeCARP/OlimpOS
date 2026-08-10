@@ -180,7 +180,40 @@ class SocioAltaResponse(BaseModel):
     texto_credenciales: str | None = None
 
 
+class SocioEditarRequest(BaseModel):
+    """
+    Edición desde el panel. NO incluye el DNI: cambiarlo sería, en la
+    práctica, decir que es otra persona. Para eso está el alta.
+    """
+    nombre: str = Field(min_length=1, max_length=100)
+    apellido: str = Field(min_length=1, max_length=100)
+    email: EmailStr | None = None
+    telefono: str | None = None
+    objetivo: str | None = None
+    observaciones: str | None = None
+
+
+class TipoBaja(str, Enum):
+    VOLUNTARIA = "VOLUNTARIA"
+    MORA = "MORA"
+    ADMINISTRATIVA = "ADMINISTRATIVA"
+
+
+class BajaRequest(BaseModel):
+    tipo: TipoBaja = TipoBaja.VOLUNTARIA
+    motivo: str | None = None
+
+
 class SocioOut(BaseModel):
+    """
+    Una fila de la tabla de socios.
+
+    Trae TODO lo que la grilla muestra, ya resuelto: el plan, el estado y el
+    vencimiento salen de la membresía vigente, que vive en otra tabla. La
+    alternativa —devolver solo el socio y que el cliente pida las membresías
+    aparte— haría una consulta por fila: con cien socios, cien pedidos para
+    dibujar una tabla.
+    """
     model_config = ConfigDict(from_attributes=True)
 
     id_socio: int
@@ -196,7 +229,17 @@ class SocioOut(BaseModel):
     nombre: str
     apellido: str
     email: str | None = None
+    telefono: str | None = None
     tiene_cuenta: bool = False
+    # --- Derivados de la membresía vigente ---
+    id_tipo_membresia: int | None = None
+    plan: str = "Sin plan"
+    # Uno de los seis valores de EstadoSocio en config.ts. Se manda ya
+    # traducido al castellano porque es exactamente lo que la píldora de la
+    # tabla pinta; que el cliente lo derive obligaría a mantener la misma
+    # regla en tres lugares (PWA, Flet y acá).
+    estado: str = "Sin membresía"
+    vencimiento: date | None = None
 
 
 # =============================================================================
