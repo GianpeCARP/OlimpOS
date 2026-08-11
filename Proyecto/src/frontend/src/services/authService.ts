@@ -1,221 +1,21 @@
-// Mock de auth.spec.md (3.1 registro, 3.2 login, 3.3 baja).
+// Sesión y baja de socios, contra la API real.
 //
-// Los datos no viven acá: están en mockDb.ts, compartidos con el resto de
-// los services. El día que exista la API de FastAPI, estas funciones cambian
-// de cuerpo (fetch en vez de arrays) y nada del lado de las vistas o el
-// store se toca, porque las firmas ya son las definitivas.
-
-import type { Persona, Usuario, Telefono, Socio, Sede, Baja } from '../types';
-import { Roles } from '../config';
-import { aFechaISO, aTimestampISO } from '../utils/fechas';
-import { ServiceError, delay, pedir } from './api';
-import { registrarAuditoria } from './auditoriaService';
-import { esEmailValido, limpiar } from './validacion';
-import {
-  personas,
-  usuarios,
-  telefonos,
-  socios,
-  sedes,
-  bajas,
-  siguienteId,
-  proximoNumeroSocio,
-  type UsuarioMock,
-} from './mockDb';
-
-/** Quita del usuario todo lo que no debe salir del backend. */
-function sinHash(usuario: UsuarioMock): Omit<Usuario, 'password_hash'> {
-  const { password_hash: _password_hash, rol: _rol, ...resto } = usuario;
-  return resto;
-}
-
-// --- Validación de entrada ---
+// De las tres partes de auth.spec.md quedan dos:
 //
-// Vive acá y no en las vistas a propósito: esta capa es la que el día de
-// mañana reemplaza la API real, así que es la que tiene que hacer valer las
-// reglas. El `required` de los inputs es solo comodidad de UX, no la regla.
-
-// Solo las claves de texto de RegistroSocioInput. Evita que alguien liste
-// como "obligatorio" un campo numérico (id_sede), que se valida distinto.
-type CampoTextoRegistro = {
-  // El -? saca la opcionalidad para que `undefined` no se cuele como clave.
-  [K in keyof RegistroSocioInput]-?: RegistroSocioInput[K] extends string | undefined ? K : never;
-}[keyof RegistroSocioInput];
-
-// Campos que no pueden llegar vacíos al alta. dni/apellido/nombre son NOT
-// NULL en db/schema.sql; email y telefono los exige auth.spec.md 3.1 (paso 4
-// y paso 6) aunque la tabla los tolere nulos; username/password son la
-// cuenta en sí. La etiqueta es la que ve el usuario en el formulario.
-const CAMPOS_OBLIGATORIOS: { campo: CampoTextoRegistro; etiqueta: string }[] = [
-  { campo: 'dni', etiqueta: 'DNI' },
-  { campo: 'nombre', etiqueta: 'Nombre' },
-  { campo: 'apellido', etiqueta: 'Apellido' },
-  { campo: 'email', etiqueta: 'Email' },
-  { campo: 'telefono', etiqueta: 'Teléfono' },
-  { campo: 'username', etiqueta: 'Usuario' },
-  { campo: 'password', etiqueta: 'Contraseña' },
-];
-
-const LARGO_MINIMO_PASSWORD = 8;
-
-// --- Sedes ---
-
-/**
- * El alta de socio necesita una id_sede y todavía no existe la spec de
- * sedes (no hay pantalla de selección ni endpoint de listado). Hasta que la
- * haya, el registro usa la única sede activa. Es dato, no constante de UI:
- * por eso lo resuelve el service y la vista solo lo muestra.
- */
-export async function obtenerSedePorDefecto(): Promise<Sede> {
-  await delay();
-  const sede = sedes.find((s) => s.activo);
-  if (!sede) {
-    throw new ServiceError(500, 'No hay ninguna sede activa configurada');
-  }
-  return sede;
-}
-
-// --- 3.1 Registro de socio ---
+//   3.1 registro  — ELIMINADO. La consigna prohíbe el auto-registro en un
+//                   sistema interno; el alta la hace el personal desde
+//                   sociosService y el backend genera una clave temporal.
+//   3.2 login     — POST /login, con el flujo de contraseña obligatoria.
+//   3.3 baja      — POST /socios/{id}/baja y /reactivar.
 //
-// DESCONECTADO — no lo llama nadie, y no hay que volver a conectarlo.
-// La pantalla, la ruta y la acción del store se eliminaron porque la consigna
-// prohíbe el auto-registro en un sistema interno (ver config.ts y
-// backend/README.md). Se conserva el cuerpo de la función solo como
-// referencia de las validaciones y del orden de inserción
-// (Persona -> Usuario -> Telefono -> Socio), que es lo que va a tener que
-// replicar el endpoint de alta por parte del personal.
-//
-// Ojo con la diferencia al portarlo: en el alta por invitación el socio NO
-// elige su username ni su password — el backend genera una contraseña
-// temporal y marca debe_cambiar_password.
+// Las reglas que antes vivían acá —mensaje único para credenciales
+// inválidas, bloqueo a los cinco intentos— se mudaron a
+// routers/auth_router.py. Duplicarlas sería peor que no tenerlas: el cliente
+// podría decir una cosa y el servidor otra.
 
-export interface RegistroSocioInput {
-  dni: string;
-  apellido: string;
-  nombre: string;
-  email: string;
-  fecha_nacimiento?: string;
-  telefono: string;
-  id_sede: number;
-  username: string;
-  password: string;
-}
-
-export interface RegistroSocioResultado {
-  persona: Persona;
-  usuario: Omit<Usuario, 'password_hash'>;
-  telefono: Telefono;
-  socio: Socio;
-}
-
-export async function registrarSocio(
-  input: RegistroSocioInput,
-): Promise<RegistroSocioResultado> {
-  await delay();
-
-  // Paso 4 de la spec — validaciones, en orden: obligatorios, formato,
-  // largo de contraseña, duplicados. Primero lo que no depende de los datos
-  // ya cargados, para no responder "DNI duplicado" cuando en realidad el
-  // problema es que el campo vino vacío.
-  for (const { campo, etiqueta } of CAMPOS_OBLIGATORIOS) {
-    if (limpiar(input[campo]) === '') {
-      throw new ServiceError(400, `El campo ${etiqueta} es obligatorio`);
-    }
-  }
-
-  // Se normaliza una sola vez y se usa esto de acá en adelante: lo que se
-  // compara contra los duplicados tiene que ser lo mismo que se guarda, o
-  // " 30111222" entraría como un DNI distinto de "30111222".
-  const dni = limpiar(input.dni);
-  const apellido = limpiar(input.apellido);
-  const nombre = limpiar(input.nombre);
-  const email = limpiar(input.email).toLowerCase();
-  const telefono = limpiar(input.telefono);
-  const username = limpiar(input.username);
-  const fechaNacimiento = limpiar(input.fecha_nacimiento) || undefined;
-  // La contraseña NO se limpia: los espacios son parte de la contraseña.
-  const password = input.password;
-
-  if (!esEmailValido(email)) {
-    throw new ServiceError(400, 'El email no tiene un formato válido');
-  }
-  if (password.length < LARGO_MINIMO_PASSWORD) {
-    throw new ServiceError(
-      400,
-      `La contraseña debe tener al menos ${LARGO_MINIMO_PASSWORD} caracteres`,
-    );
-  }
-
-  if (personas.some((p) => p.dni === dni)) {
-    throw new ServiceError(409, 'Ya existe una persona con ese DNI');
-  }
-  if (personas.some((p) => p.email?.toLowerCase() === email)) {
-    throw new ServiceError(409, 'Ese email ya está en uso');
-  }
-  if (usuarios.some((u) => u.username === username)) {
-    throw new ServiceError(409, 'Ese nombre de usuario no está disponible');
-  }
-  const sede = sedes.find((s) => s.id_sede === input.id_sede);
-  if (!sede) {
-    throw new ServiceError(400, 'La sede indicada no existe');
-  }
-
-  // Paso 6: el orden de los INSERT es el de la spec —
-  // Persona -> Usuario -> Telefono -> Socio (cada uno depende del anterior).
-  const id_persona = siguienteId.persona();
-  const persona: Persona = {
-    id_persona,
-    dni,
-    apellido,
-    nombre,
-    email,
-    fecha_nacimiento: fechaNacimiento,
-    fecha_alta: aTimestampISO(new Date()),
-    activo: true,
-  };
-  personas.push(persona);
-
-  const usuario: UsuarioMock = {
-    id_usuario: siguienteId.usuario(),
-    id_persona,
-    username,
-    password_hash: password,
-    intentos_fallidos: 0,
-    bloqueado: false,
-    activo: true,
-    rol: Roles.SOCIO,
-  };
-  usuarios.push(usuario);
-
-  // El formulario pide un solo teléfono, así que es el principal. tipo
-  // CELULAR es el default del esquema; cuando haya ABM de teléfonos se
-  // podrán cargar varios y elegir cuál es el principal.
-  const telefonoFila: Telefono = {
-    id_telefono: siguienteId.telefono(),
-    id_persona,
-    numero: telefono,
-    tipo: 'CELULAR',
-    principal: true,
-  };
-  telefonos.push(telefonoFila);
-
-  const id_socio = siguienteId.socio();
-  const socio: Socio = {
-    id_socio,
-    id_persona,
-    id_sede: input.id_sede,
-    numero_socio: proximoNumeroSocio(id_socio),
-    fecha_alta: aFechaISO(new Date()),
-    activo: true,
-  };
-  socios.push(socio);
-
-  // Spec 3.1 paso 7: sin id_usuario porque todavía no hay sesión — la
-  // persona/usuario recién se están creando en esta misma llamada.
-  registrarAuditoria({ entidad: 'Socio', id_entidad: socio.id_socio, accion: 'ALTA' });
-
-  return { persona, usuario: sinHash(usuario), telefono: telefonoFila, socio };
-}
+import type { Persona, Usuario, Baja } from '../types';
+import { ServiceError, pedir } from './api';
+import { limpiar } from './validacion';
 
 // --- 3.2 Inicio de sesión ---
 
@@ -231,15 +31,10 @@ export interface SesionAbierta {
   // httponly que este código no puede leer. Declararlo sería mentir sobre
   // algo que nunca va a tener valor.
   /**
-   * Id de la fila Socio de esta persona, si la tiene. Es lo único con lo
-   * que trabaja el portal del socio: cada función de socioService lo recibe
-   * y devuelve SÓLO datos de ese id.
-   *
-   * Se resuelve acá, una vez, en el login, y no en cada vista: si cada
-   * pantalla hiciera la traversal persona -> socio por su cuenta, alcanzaría
-   * con que una sola se olvidara de filtrar para que empiece a mostrar
-   * datos de otro. Con el backend real esto sale del token, no de una
-   * búsqueda en el cliente.
+   * Id de Socio de esta persona, si la tiene. Es lo único con lo que trabaja
+   * el portal del socio: cada endpoint de /portal filtra por el id_socio
+   * FIRMADO en el token, así que ningún socio puede pedir los datos de otro
+   * cambiando un número.
    *
    * undefined para el staff que no es socio del gimnasio.
    */
@@ -252,9 +47,8 @@ export interface SesionAbierta {
  * negó a emitir un token hasta que la persona defina una propia.
  *
  * Se llega acá en tres casos, todos el mismo mecanismo: el primer ingreso de
- * una cuenta recién creada por el personal, el primer ingreso del dueño
- * (cuenta del seeder), y el reingreso después de que un admin resetee la
- * clave.
+ * una cuenta creada por el personal, el primer ingreso del dueño (cuenta del
+ * seeder), y el reingreso después de que un admin resetee la clave.
  */
 export interface CambioRequerido {
   debeCambiarPassword: true;
@@ -262,9 +56,9 @@ export interface CambioRequerido {
 
 /**
  * Unión discriminada, no un objeto con campos opcionales: así TypeScript
- * OBLIGA a chequear `debeCambiarPassword` antes de tocar `token` o `roles`.
- * Con campos opcionales, olvidarse del caso compilaría igual y el bug
- * aparecería recién en runtime, con la sesión a medio abrir.
+ * OBLIGA a chequear `debeCambiarPassword` antes de tocar `roles`. Con campos
+ * opcionales, olvidarse del caso compilaría igual y el bug aparecería recién
+ * en runtime, con la sesión a medio abrir.
  */
 export type LoginResultado = SesionAbierta | CambioRequerido;
 
@@ -287,11 +81,6 @@ export async function login(username: string, password: string): Promise<LoginRe
     throw new ServiceError(400, 'Completá usuario y contraseña');
   }
 
-  // Todo lo demás lo decide el backend: el mensaje único para credenciales
-  // inválidas (que no revela si el usuario existe) y el bloqueo a los cinco
-  // intentos ahora viven en routers/auth_router.py. Estaban acá cuando esta
-  // capa hacía de API; ahora duplicarlos sería peor que no tenerlos, porque
-  // el mock podría decir una cosa y el servidor otra.
   const datos = await pedir<LoginResponseApi>('/login', {
     metodo: 'POST',
     cuerpo: { username: limpiar(username), password },
@@ -327,13 +116,12 @@ export async function logout(): Promise<void> {
 }
 
 /**
- * Reconstruye la sesión a partir del token guardado. Es lo que hace que un F5
- * no cierre la sesión.
+ * Reconstruye la sesión a partir de la cookie. Es lo que hace que un F5 no
+ * cierre la sesión.
  *
- * Devuelve los mismos datos que el login pero SIN token, porque el cliente ya
- * lo tiene. Lanza ServiceError 401 si el token venció, fue alterado, o la
- * cuenta se desactivó desde que se emitió — en cualquiera de esos casos hay
- * que volver al login.
+ * Lanza ServiceError 401 si el token venció, fue alterado, o la cuenta se
+ * desactivó desde que se emitió — en cualquiera de esos casos hay que volver
+ * al login.
  */
 export async function sesionActual(): Promise<SesionAbierta> {
   const datos = await pedir<LoginResponseApi>('/me');
@@ -369,73 +157,43 @@ export async function cambiarPassword(
   return datos.mensaje;
 }
 
-// --- 3.3 Baja de socio ---
+// --- 3.3 Baja y reactivación de socio ---
 
+/**
+ * Da de baja a un socio.
+ *
+ * El backend registra la fila en Baja con su tipo y motivo, desactiva al
+ * socio y —si tiene— también a su cuenta de acceso. Esa última parte importa:
+ * dejarle la cuenta viva a alguien dado de baja es exactamente el agujero que
+ * documentó la auditoría del 2026-08-03, donde un socio de baja entraba y
+ * veía los datos de todos los demás.
+ *
+ * `idUsuarioActor` se ignora: el backend saca quién ejecuta la baja de la
+ * sesión del token. Si viniera del cliente, cualquiera podría registrar una
+ * baja a nombre de otro.
+ */
 export async function darDeBaja(
   idSocio: number,
   tipo: NonNullable<Baja['tipo']>,
   motivo?: string,
-  // Quién ejecuta la baja (el usuario logueado que la dispara). Optativo:
-  // Baja.id_registrado_por y Auditoria.id_usuario son ambos nullable.
-  idUsuarioActor?: number,
+  _idUsuarioActor?: number,
 ): Promise<void> {
-  await delay();
-
-  const socio = socios.find((s) => s.id_socio === idSocio);
-  if (!socio || !socio.activo) {
-    throw new ServiceError(400, 'El socio no está activo');
-  }
-
-  bajas.push({
-    id_baja: siguienteId.baja(),
-    id_socio: idSocio,
-    fecha_baja: aFechaISO(new Date()),
-    tipo,
-    motivo,
-    id_registrado_por: idUsuarioActor,
-  });
-
-  socio.activo = false;
-  const usuario = usuarios.find((u) => u.id_persona === socio.id_persona);
-  if (usuario) {
-    usuario.activo = false;
-  }
-
-  // Spec 3.3 paso 5.
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Socio',
-    id_entidad: idSocio,
-    accion: 'BAJA',
+  await pedir<unknown>(`/socios/${idSocio}/baja`, {
+    metodo: 'POST',
+    cuerpo: { tipo, motivo: motivo || null },
   });
 }
 
 /**
- * Camino de vuelta de darDeBaja: reactiva al socio y, si tiene, a su
- * Usuario. El historial de Baja no se toca (queda como registro, no se
- * borra). No hay 'REACTIVACION' en Auditoria.accion (el enum del esquema es
- * ALTA/MODIFICACION/BAJA/CONSULTA/LOGIN) — se audita como MODIFICACION con
- * el detalle aclarando qué cambió.
+ * Camino de vuelta de darDeBaja: reactiva al socio y, si tiene, a su cuenta.
+ *
+ * El historial de Baja NO se toca — queda como registro de que esa baja
+ * existió. Un socio puede irse y volver más de una vez, y cada baja tuvo su
+ * motivo.
  */
-export async function reactivarSocio(idSocio: number, idUsuarioActor?: number): Promise<void> {
-  await delay();
-
-  const socio = socios.find((s) => s.id_socio === idSocio);
-  if (!socio || socio.activo) {
-    throw new ServiceError(400, 'El socio ya está activo');
-  }
-
-  socio.activo = true;
-  const usuario = usuarios.find((u) => u.id_persona === socio.id_persona);
-  if (usuario) {
-    usuario.activo = true;
-  }
-
-  registrarAuditoria({
-    id_usuario: idUsuarioActor,
-    entidad: 'Socio',
-    id_entidad: idSocio,
-    accion: 'MODIFICACION',
-    detalle: 'Reactivación',
-  });
+export async function reactivarSocio(
+  idSocio: number,
+  _idUsuarioActor?: number,
+): Promise<void> {
+  await pedir<unknown>(`/socios/${idSocio}/reactivar`, { metodo: 'POST' });
 }

@@ -523,12 +523,12 @@ export interface TurnoDisponible {
 /**
  * Turnos habilitados de la grilla.
  *
- * `idSede` se acepta por compatibilidad con las vistas pero no se manda: hoy
- * el sistema opera una sola sede y el backend devuelve todos los turnos. El
- * día que haya varias, el filtro se agrega acá y ninguna vista se entera.
+ * Ya no recibe `idSede`: el sistema opera una sola sede y el backend devuelve
+ * todos los turnos. Se sacó el parámetro en vez de dejarlo ignorado porque
+ * obligaba a las vistas a pedir la sede a la API solo para pasar un número
+ * que se descartaba — un viaje de red entero para nada.
  */
 export async function getTurnosDisponibles(
-  _idSede: number,
   idActividad?: number,
   fecha?: string,
 ): Promise<TurnoDisponible[]> {

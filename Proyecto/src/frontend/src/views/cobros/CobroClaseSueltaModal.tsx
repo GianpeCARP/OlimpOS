@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { CalendarX2, Users } from 'lucide-react';
 import { PrimaryButton } from '../../components/ui';
 import { mensajeDeError } from '../../services/api';
-import { obtenerSedePorDefecto } from '../../services/authService';
 import {
   comprarClaseSuelta,
   getTurnosDisponibles,
@@ -47,8 +46,7 @@ export function CobroClaseSueltaModal({
 
   useEffect(() => {
     let cancelado = false;
-    obtenerSedePorDefecto()
-      .then((sede) => getTurnosDisponibles(sede.id_sede, actividad.idActividad))
+    getTurnosDisponibles(actividad.idActividad)
       .then((lista) => {
         if (!cancelado) setTurnos(lista);
       })

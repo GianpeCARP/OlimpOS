@@ -1,6 +1,8 @@
-// Piezas comunes a todos los services mock: el error tipado y la latencia
-// artificial. Están separadas para que cada service nuevo no invente su
-// propia clase de error ni su propio setTimeout.
+// Piezas comunes a todos los services: el error tipado y el cliente HTTP.
+//
+// Acá vivía también `delay()`, una latencia artificial que hacía visibles
+// los estados de carga mientras los datos salían de arrays en memoria. Se
+// fue con el último mock: ahora la latencia es real.
 
 /**
  * Error de servicio con código HTTP. El `status` es el que va a devolver el
@@ -30,24 +32,12 @@ export function mensajeDeError(err: unknown): string {
   return err instanceof ServiceError ? err.message : MENSAJE_ERROR_DESCONOCIDO;
 }
 
-// Latencia simulada. Sirve para que los estados de carga de las vistas se
-// vean de verdad durante el desarrollo: sin esto, todo resuelve en el mismo
-// tick y un spinner roto pasaría desapercibido hasta conectar la API real.
-const DEMORA_MINIMA_MS = 400;
-const DEMORA_VARIABLE_MS = 200;
-
-export function delay(): Promise<void> {
-  const ms = DEMORA_MINIMA_MS + Math.random() * DEMORA_VARIABLE_MS;
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 // =========================================================================
 // CLIENTE HTTP
 // =========================================================================
 //
-// Todo lo de acá abajo habla con la API real de FastAPI. Los services se van
-// migrando de mockDb a `pedir()` de a uno, a medida que existe su router; por
-// eso `delay()` sigue arriba, para los que todavía no migraron.
+// Todos los services de la PWA pasan por acá. Ninguno guarda datos propios
+// ni conoce la URL del backend — eso vive en una sola línea de este archivo.
 //
 // Gemelo de `app/api_client.py` en la app Flet: mismo rol, mismo contrato de
 // errores. Si cambia el manejo de un status acá, mirá el otro.
