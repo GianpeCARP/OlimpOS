@@ -43,13 +43,14 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import (
-    Actividad, InscripcionActividad, PlanActividad, Profesor, Reserva, Sede,
-    Socio, Turno,
+    Actividad, Empleado, InscripcionActividad, Membresia, Pago, PlanActividad,
+    Profesor, ProfesorActividad, Reserva, Sede, Socio, Turno,
 )
 from permisos import Acceso, Accion, Seccion
 from schemas import (
-    ActividadCrear, ActividadOut, PlanActividadOut, ReservaOut, ReservarRequest,
-    TurnoCrear, TurnoOut,
+    ActividadCrear, ActividadOut, ComprarPlanRequest, ComprarPlanResponse,
+    InscripcionOut, PagoOut, PlanActividadCrear, PlanActividadOut,
+    ProfesorActividadOut, ReservaOut, ReservarRequest, TurnoCrear, TurnoOut,
 )
 from security import Sesion, requiere_accion, requiere_seccion
 
@@ -452,3 +453,487 @@ def listar_reservas(
         )
         for r in turno.reservas if r.estado == "RESERVADA"
     ]
+
+
+# =============================================================================
+# ABM DE ACTIVIDADES Y PLANES
+# =============================================================================
+# Todo esto es configuración de negocio: qué clases ofrece el gimnasio, con
+# qué abonos y a qué precio. Por eso va con Acceso.TOTAL sobre la sección,
+# que en la matriz solo tiene el Dueño — el Recepcionista opera el día a día
+# (reservar, cancelar) pero no define el catálogo.
+
+
+def _buscar_actividad(db: Session, id_actividad: int) -> Actividad:
+    actividad = db.get(Actividad, id_actividad)
+    if actividad is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="La actividad no existe.")
+    return actividad
+
+
+def _buscar_plan(db: Session, id_plan: int) -> PlanActividad:
+    plan = db.get(PlanActividad, id_plan)
+    if plan is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="El plan no existe.")
+    return plan
+
+
+def _a_plan_out(p: PlanActividad) -> PlanActividadOut:
+    return PlanActividadOut(
+        id_plan_actividad=p.id_plan_actividad, id_actividad=p.id_actividad,
+        nombre=p.nombre, tipo_limite=p.tipo_limite, cantidad=p.cantidad,
+        precio=float(p.precio), activo=bool(p.activo),
+    )
+
+
+@router.put("/{id_actividad}", response_model=ActividadOut)
+def actualizar_actividad(
+    id_actividad: int,
+    datos: ActividadCrear,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES, Acceso.TOTAL)),
+):
+    """
+    Edita una actividad.
+
+    Ojo con `cupo_default`: cambiarlo NO toca los turnos ya programados. Cada
+    Turno guardó su propio `cupo_maximo` al crearse justamente para esto — si
+    el cupo se leyera de la actividad, bajarlo dejaría turnos con más gente
+    anotada que lugares.
+    """
+    actividad = _buscar_actividad(db, id_actividad)
+    nombre = datos.nombre.strip()
+
+    choca = (db.query(Actividad)
+             .filter(Actividad.nombre.ilike(nombre),
+                     Actividad.id_actividad != id_actividad)
+             .first())
+    if choca:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=f"Ya existe una actividad llamada '{nombre}'.")
+
+    actividad.nombre = nombre
+    actividad.descripcion = datos.descripcion
+    actividad.cupo_default = datos.cupo_default
+    actividad.precio_clase_suelta = datos.precio_clase_suelta
+    actividad.horas_anticipacion_cancelacion = datos.horas_anticipacion_cancelacion
+    db.commit()
+    db.refresh(actividad)
+    return _a_actividad_out(actividad)
+
+
+@router.post("/{id_actividad}/toggle-estado", response_model=ActividadOut)
+def alternar_estado_actividad(
+    id_actividad: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES, Acceso.TOTAL)),
+):
+    """
+    Da de baja o reactiva una actividad. NO la borra.
+
+    Borrarla dejaría huérfanos los turnos, las inscripciones y los pagos que
+    la referencian — y esos pagos son historial contable. Con la baja lógica,
+    la actividad deja de ofrecerse pero todo lo que ya pasó sigue teniendo
+    sentido.
+
+    Al darla de baja se cancelan sus turnos FUTUROS: seguir aceptando reservas
+    de una actividad discontinuada sería vender algo que no se va a dictar.
+    Los turnos pasados no se tocan, son historial.
+    """
+    actividad = _buscar_actividad(db, id_actividad)
+    actividad.activo = not bool(actividad.activo)
+
+    if not actividad.activo:
+        hoy = date.today()
+        futuros = (db.query(Turno)
+                   .filter(Turno.id_actividad == id_actividad,
+                           Turno.fecha >= hoy,
+                           Turno.estado == "HABILITADO")
+                   .all())
+        ahora = datetime.now()
+        for turno in futuros:
+            turno.estado = "CANCELADO"
+            turno.motivo_cancelacion = f"Se dio de baja la actividad {actividad.nombre}"
+            for reserva in turno.reservas:
+                if reserva.estado != "RESERVADA":
+                    continue
+                reserva.estado = "CANCELADA_GIMNASIO"
+                reserva.fecha_cancelacion = ahora
+                # Se devuelve la clase: la baja la decidió el gimnasio.
+                if reserva.inscripcion and reserva.inscripcion.clases_restantes is not None:
+                    reserva.inscripcion.clases_restantes += 1
+
+    db.commit()
+    db.refresh(actividad)
+    return _a_actividad_out(actividad)
+
+
+@router.get("/{id_actividad}/planes", response_model=list[PlanActividadOut])
+def listar_planes(
+    id_actividad: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES)),
+):
+    _buscar_actividad(db, id_actividad)
+    planes = (db.query(PlanActividad)
+              .filter(PlanActividad.id_actividad == id_actividad)
+              .order_by(PlanActividad.precio)
+              .all())
+    return [_a_plan_out(p) for p in planes]
+
+
+@router.post("/{id_actividad}/planes", response_model=PlanActividadOut,
+             status_code=status.HTTP_201_CREATED)
+def crear_plan(
+    id_actividad: int,
+    datos: PlanActividadCrear,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES, Acceso.TOTAL)),
+):
+    actividad = _buscar_actividad(db, id_actividad)
+
+    plan = PlanActividad(
+        id_actividad=actividad.id_actividad,
+        nombre=datos.nombre.strip(),
+        tipo_limite=datos.tipo_limite.value,
+        cantidad=datos.cantidad,
+        precio=datos.precio,
+        activo=True,
+    )
+    db.add(plan)
+    db.commit()
+    db.refresh(plan)
+    return _a_plan_out(plan)
+
+
+@router.put("/planes/{id_plan}", response_model=PlanActividadOut)
+def actualizar_plan(
+    id_plan: int,
+    datos: PlanActividadCrear,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES, Acceso.TOTAL)),
+):
+    """
+    Edita un plan.
+
+    Cambiar el precio NO afecta a quien ya lo compró: la inscripción guardó su
+    `precio_pactado`. Es la misma razón por la que Membresia tiene su copia
+    del precio — un aumento no puede reescribir lo que alguien ya pagó.
+    """
+    plan = _buscar_plan(db, id_plan)
+    plan.nombre = datos.nombre.strip()
+    plan.tipo_limite = datos.tipo_limite.value
+    plan.cantidad = datos.cantidad
+    plan.precio = datos.precio
+    db.commit()
+    db.refresh(plan)
+    return _a_plan_out(plan)
+
+
+@router.post("/planes/{id_plan}/toggle-estado", response_model=PlanActividadOut)
+def alternar_estado_plan(
+    id_plan: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES, Acceso.TOTAL)),
+):
+    """
+    Da de baja o reactiva un plan.
+
+    Las inscripciones YA compradas siguen valiendo hasta su vencimiento: quien
+    pagó tres meses de "Yoga 2 por semana" no pierde lo que pagó porque el
+    gimnasio deje de ofrecer ese abono. Solo deja de poder comprarse.
+    """
+    plan = _buscar_plan(db, id_plan)
+    plan.activo = not bool(plan.activo)
+    db.commit()
+    db.refresh(plan)
+    return _a_plan_out(plan)
+
+
+# =============================================================================
+# PROFESORES POR ACTIVIDAD
+# =============================================================================
+
+@router.get("/{id_actividad}/profesores", response_model=list[ProfesorActividadOut])
+def listar_profesores(
+    id_actividad: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES)),
+):
+    """Quiénes pueden dictar esta actividad."""
+    _buscar_actividad(db, id_actividad)
+    filas = (db.query(ProfesorActividad)
+             .filter(ProfesorActividad.id_actividad == id_actividad)
+             .all())
+
+    salida = []
+    for f in filas:
+        prof = f.profesor
+        persona = prof.empleado.persona if prof and prof.empleado else None
+        salida.append(ProfesorActividadOut(
+            id_profesor=f.id_profesor,
+            nombre=persona.nombre_completo if persona else "?",
+            titulo=prof.titulo if prof else None,
+            especialidad=prof.especialidad if prof else None,
+        ))
+    return salida
+
+
+@router.post("/{id_actividad}/profesores/{id_profesor}",
+             status_code=status.HTTP_201_CREATED, response_model=ProfesorActividadOut)
+def asignar_profesor(
+    id_actividad: int,
+    id_profesor: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES, Acceso.TOTAL)),
+):
+    actividad = _buscar_actividad(db, id_actividad)
+    profesor = db.get(Profesor, id_profesor)
+    if profesor is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="El profesor no existe.")
+
+    ya = db.get(ProfesorActividad, (id_profesor, id_actividad))
+    if ya:
+        persona = profesor.empleado.persona if profesor.empleado else None
+        nombre = persona.nombre_completo if persona else "Ese profesor"
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{nombre} ya está asignado a {actividad.nombre}.",
+        )
+
+    db.add(ProfesorActividad(id_profesor=id_profesor, id_actividad=id_actividad))
+    db.commit()
+
+    persona = profesor.empleado.persona if profesor.empleado else None
+    return ProfesorActividadOut(
+        id_profesor=id_profesor,
+        nombre=persona.nombre_completo if persona else "?",
+        titulo=profesor.titulo,
+        especialidad=profesor.especialidad,
+    )
+
+
+@router.delete("/{id_actividad}/profesores/{id_profesor}",
+               status_code=status.HTTP_204_NO_CONTENT)
+def desasignar_profesor(
+    id_actividad: int,
+    id_profesor: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES, Acceso.TOTAL)),
+):
+    """
+    Saca a un profesor de una actividad.
+
+    Los turnos ya programados con él NO se tocan: el vínculo se guarda en
+    Turno.id_profesor, y borrarlo dejaría clases sin responsable. Lo que se
+    quita es la habilitación para asignarlo a turnos FUTUROS.
+    """
+    fila = db.get(ProfesorActividad, (id_profesor, id_actividad))
+    if fila is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Ese profesor no está asignado a esta actividad.")
+    db.delete(fila)
+    db.commit()
+
+
+# =============================================================================
+# INSCRIPCIONES — comprar un abono
+# =============================================================================
+
+def _a_inscripcion_out(i: InscripcionActividad) -> InscripcionOut:
+    plan = i.plan
+    actividad = plan.actividad if plan else None
+    persona = i.socio.persona if i.socio else None
+    return InscripcionOut(
+        id_inscripcion=i.id_inscripcion,
+        id_socio=i.id_socio,
+        socio=persona.nombre_completo if persona else "?",
+        id_plan_actividad=i.id_plan_actividad,
+        plan=plan.nombre if plan else "?",
+        actividad=actividad.nombre if actividad else "?",
+        id_actividad=actividad.id_actividad if actividad else 0,
+        tipo_limite=plan.tipo_limite if plan else "POR_MES",
+        cantidad=plan.cantidad if plan else 0,
+        precio_pactado=float(i.precio_pactado),
+        fecha_inicio=i.fecha_inicio,
+        fecha_vencimiento=i.fecha_vencimiento,
+        clases_restantes=i.clases_restantes,
+        estado=i.estado,
+    )
+
+
+@router.get("/inscripciones/socio/{id_socio}", response_model=list[InscripcionOut])
+def inscripciones_de_socio(
+    id_socio: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES)),
+):
+    """Abonos de un socio. Endpoint de GESTIÓN — el socio ve los suyos en /portal."""
+    inscripciones = (db.query(InscripcionActividad)
+                     .filter(InscripcionActividad.id_socio == id_socio)
+                     .order_by(InscripcionActividad.fecha_inicio.desc())
+                     .all())
+    return [_a_inscripcion_out(i) for i in inscripciones]
+
+
+@router.post("/planes/{id_plan}/comprar", response_model=ComprarPlanResponse,
+             status_code=status.HTTP_201_CREATED)
+def comprar_plan(
+    id_plan: int,
+    datos: ComprarPlanRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.COBRAR_PAGOS)),
+):
+    """
+    Un socio compra un abono de actividad. Crea la Inscripción y el Pago.
+
+    EXIGE MEMBRESÍA VIGENTE. `Inscripcion_Actividad.id_membresia` es NOT NULL
+    en el esquema, y eso codifica una regla de negocio: los abonos de
+    actividad son un adicional sobre la cuota, no un reemplazo. Sin cuota al
+    día no se puede comprar yoga.
+
+    El precio sale del plan, no del pedido — misma razón que en el cobro de
+    membresía: si viniera del cliente, cualquiera compraría un abono por $1.
+
+    `clases_restantes` arranca en `cantidad` para los planes POR_MES. Para los
+    POR_SEMANA queda en None: el límite es semanal y se recalcula, no se
+    descuenta de un saldo total.
+    """
+    plan = _buscar_plan(db, id_plan)
+    if not plan.activo:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"El plan '{plan.nombre}' está dado de baja y no se puede comprar.",
+        )
+
+    actividad = plan.actividad
+    if actividad is not None and not actividad.activo:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"La actividad {actividad.nombre} está discontinuada.",
+        )
+
+    socio = db.get(Socio, datos.id_socio)
+    if socio is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="El socio no existe.")
+
+    hoy = date.today()
+
+    membresia = (db.query(Membresia)
+                 .filter(Membresia.id_socio == socio.id_socio,
+                         Membresia.estado == "ACTIVA")
+                 .order_by(Membresia.fecha_vencimiento.desc())
+                 .first())
+    if membresia is None or (membresia.fecha_vencimiento and membresia.fecha_vencimiento < hoy):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(f"{socio.persona.nombre_completo} no tiene la cuota al día. "
+                    "Los abonos de actividad son un adicional sobre la membresía: "
+                    "cobrale la cuota primero."),
+        )
+
+    # Un abono activo del mismo plan sería cobrarle dos veces lo mismo.
+    ya = _inscripcion_vigente(db, socio.id_socio, plan.id_actividad)
+    if ya is not None and ya.id_plan_actividad == plan.id_plan_actividad:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(f"{socio.persona.nombre_completo} ya tiene un abono activo de "
+                    f"{plan.nombre}, vigente hasta el {ya.fecha_vencimiento}."),
+        )
+
+    precio = float(plan.precio)
+
+    # El abono acompaña a la membresía: vence cuando vence la cuota. Darle una
+    # duración propia haría que un abono sobreviva a la membresía que lo
+    # habilita, que es justo lo que la FK NOT NULL quiere evitar.
+    vencimiento = membresia.fecha_vencimiento or (hoy + timedelta(days=30))
+
+    inscripcion = InscripcionActividad(
+        id_socio=socio.id_socio,
+        id_plan_actividad=plan.id_plan_actividad,
+        id_membresia=membresia.id_membresia,
+        precio_pactado=precio,
+        fecha_inicio=hoy,
+        fecha_vencimiento=vencimiento,
+        clases_restantes=(plan.cantidad if plan.tipo_limite == "POR_MES" else None),
+        estado="ACTIVA",
+    )
+    db.add(inscripcion)
+    db.flush()
+
+    pago = Pago(
+        id_socio=socio.id_socio,
+        id_inscripcion=inscripcion.id_inscripcion,
+        id_sede=socio.id_sede,
+        metodo=datos.metodo.value,
+        monto=precio,
+        fecha_pago=datetime.now(),
+        periodo_desde=hoy,
+        periodo_hasta=vencimiento,
+        estado="CONFIRMADO",
+    )
+    db.add(pago)
+    db.commit()
+    db.refresh(inscripcion)
+    db.refresh(pago)
+
+    return ComprarPlanResponse(
+        inscripcion=_a_inscripcion_out(inscripcion),
+        pago=PagoOut(
+            id_pago=pago.id_pago, id_socio=pago.id_socio,
+            socio=socio.persona.nombre_completo, monto=float(pago.monto),
+            metodo=pago.metodo, fecha_pago=pago.fecha_pago,
+            periodo_desde=pago.periodo_desde, periodo_hasta=pago.periodo_hasta,
+            estado=pago.estado, numero_comprobante=pago.numero_comprobante,
+        ),
+        mensaje=(f"{socio.persona.nombre_completo} compró {plan.nombre} por "
+                 f"${precio:,.2f}. Vigente hasta el {vencimiento}."),
+    )
+
+
+@router.post("/inscripciones/{id_inscripcion}/cancelar", response_model=InscripcionOut)
+def cancelar_inscripcion(
+    id_inscripcion: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.COBRAR_PAGOS)),
+):
+    """
+    Cancela un abono.
+
+    Cancela también las reservas FUTURAS que se hicieron con él: si el abono
+    ya no vale, las clases que habilitaba tampoco. Las pasadas no se tocan —
+    el socio efectivamente fue a esas clases.
+
+    El pago NO se anula automáticamente: devolver plata es una decisión aparte
+    que se toma en la sección Cobros, y hacerla implícita acá sería reembolsar
+    sin que nadie lo haya decidido.
+    """
+    inscripcion = db.get(InscripcionActividad, id_inscripcion)
+    if inscripcion is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="La inscripción no existe.")
+    if inscripcion.estado == "CANCELADA":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Ese abono ya estaba cancelado.")
+
+    inscripcion.estado = "CANCELADA"
+
+    hoy = date.today()
+    ahora = datetime.now()
+    reservas = (db.query(Reserva)
+                .join(Turno, Reserva.id_turno == Turno.id_turno)
+                .filter(Reserva.id_inscripcion == id_inscripcion,
+                        Reserva.estado == "RESERVADA",
+                        Turno.fecha >= hoy)
+                .all())
+    for r in reservas:
+        r.estado = "CANCELADA_GIMNASIO"
+        r.fecha_cancelacion = ahora
+
+    db.commit()
+    db.refresh(inscripcion)
+    return _a_inscripcion_out(inscripcion)

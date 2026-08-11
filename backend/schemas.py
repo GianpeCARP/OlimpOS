@@ -339,102 +339,6 @@ class FicharResponse(BaseModel):
 
 
 # =============================================================================
-# ACTIVIDADES
-# =============================================================================
-
-class TipoLimite(str, Enum):
-    POR_SEMANA = "POR_SEMANA"
-    POR_MES = "POR_MES"
-
-
-class EstadoTurno(str, Enum):
-    HABILITADO = "HABILITADO"
-    CANCELADO = "CANCELADO"
-
-
-class EstadoReserva(str, Enum):
-    RESERVADA = "RESERVADA"
-    CANCELADA_SOCIO = "CANCELADA_SOCIO"
-    CANCELADA_GIMNASIO = "CANCELADA_GIMNASIO"
-
-
-class PlanActividadOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id_plan_actividad: int
-    id_actividad: int
-    nombre: str
-    tipo_limite: TipoLimite
-    cantidad: int
-    precio: float
-    activo: bool
-
-
-class ActividadOut(BaseModel):
-    id_actividad: int
-    nombre: str
-    descripcion: str | None = None
-    cupo_default: int
-    precio_clase_suelta: float
-    horas_anticipacion_cancelacion: int
-    activo: bool
-    planes: list[PlanActividadOut] = []
-
-
-class ActividadCrear(BaseModel):
-    nombre: str = Field(min_length=1, max_length=80)
-    descripcion: str | None = None
-    cupo_default: int = Field(ge=1)
-    precio_clase_suelta: float = Field(ge=0)
-    horas_anticipacion_cancelacion: int = Field(default=0, ge=0)
-
-
-class TurnoOut(BaseModel):
-    id_turno: int
-    id_actividad: int
-    actividad: str
-    fecha: date
-    hora: time
-    cupo_maximo: int
-    # Calculados: la grilla los necesita para pintar "3/15" y deshabilitar el
-    # botón. Contarlos en el cliente obligaría a bajarse todas las reservas.
-    reservados: int = 0
-    lugares_libres: int = 0
-    estado: EstadoTurno
-    profesor: str | None = None
-    motivo_cancelacion: str | None = None
-
-
-class TurnoCrear(BaseModel):
-    id_actividad: int
-    id_sede: int
-    fecha: date
-    hora: time
-    # Si no se indica, se usa el cupo_default de la actividad.
-    cupo_maximo: int | None = Field(default=None, ge=1)
-    id_profesor: int | None = None
-
-
-class ReservarRequest(BaseModel):
-    id_socio: int
-    # True cuando el socio paga la clase individual en vez de usar su abono.
-    es_clase_suelta: bool = False
-
-
-class ReservaOut(BaseModel):
-    id_reserva: int
-    id_turno: int
-    id_socio: int
-    socio: str
-    actividad: str
-    fecha: date
-    hora: time
-    estado: EstadoReserva
-    es_clase_suelta: bool
-    clases_restantes: int | None = None
-
-
-# =============================================================================
 # COBROS
 # =============================================================================
 
@@ -576,6 +480,153 @@ class EstadoCuentaOut(BaseModel):
     deuda_total: float
     deudas: list[DeudaOut] = []
     ultimos_pagos: list[PagoOut] = []
+
+
+# =============================================================================
+# ACTIVIDADES
+# =============================================================================
+
+class TipoLimite(str, Enum):
+    POR_SEMANA = "POR_SEMANA"
+    POR_MES = "POR_MES"
+
+
+class EstadoTurno(str, Enum):
+    HABILITADO = "HABILITADO"
+    CANCELADO = "CANCELADO"
+
+
+class EstadoReserva(str, Enum):
+    RESERVADA = "RESERVADA"
+    CANCELADA_SOCIO = "CANCELADA_SOCIO"
+    CANCELADA_GIMNASIO = "CANCELADA_GIMNASIO"
+
+
+class PlanActividadOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id_plan_actividad: int
+    id_actividad: int
+    nombre: str
+    tipo_limite: TipoLimite
+    cantidad: int
+    precio: float
+    activo: bool
+
+
+class ActividadOut(BaseModel):
+    id_actividad: int
+    nombre: str
+    descripcion: str | None = None
+    cupo_default: int
+    precio_clase_suelta: float
+    horas_anticipacion_cancelacion: int
+    activo: bool
+    planes: list[PlanActividadOut] = []
+
+
+class ActividadCrear(BaseModel):
+    nombre: str = Field(min_length=1, max_length=80)
+    descripcion: str | None = None
+    # gt=0 y no ge=0: una clase con cupo cero no la puede tomar nadie.
+    cupo_default: int = Field(ge=1)
+    # El precio SÍ puede ser 0 — una actividad incluida en la cuota.
+    precio_clase_suelta: float = Field(ge=0)
+    horas_anticipacion_cancelacion: int = Field(default=0, ge=0)
+
+
+class PlanActividadCrear(BaseModel):
+    nombre: str = Field(min_length=1, max_length=80)
+    tipo_limite: TipoLimite
+    cantidad: int = Field(ge=1)
+    precio: float = Field(ge=0)
+
+
+class ComprarPlanRequest(BaseModel):
+    """
+    Un socio compra un abono de actividad.
+
+    Igual que en el cobro de membresía, el precio NO se recibe: sale del plan.
+    Y se exige `metodo` porque comprar un abono genera un Pago real — no es
+    una inscripción gratuita.
+    """
+    id_socio: int
+    metodo: MetodoPago
+
+
+class InscripcionOut(BaseModel):
+    id_inscripcion: int
+    id_socio: int
+    socio: str
+    id_plan_actividad: int
+    plan: str
+    actividad: str
+    id_actividad: int
+    tipo_limite: TipoLimite
+    cantidad: int
+    precio_pactado: float
+    fecha_inicio: date
+    fecha_vencimiento: date
+    clases_restantes: int | None = None
+    estado: str
+
+
+class ComprarPlanResponse(BaseModel):
+    inscripcion: InscripcionOut
+    pago: PagoOut
+    mensaje: str
+
+
+class ProfesorActividadOut(BaseModel):
+    id_profesor: int
+    nombre: str
+    titulo: str | None = None
+    especialidad: str | None = None
+
+
+class TurnoOut(BaseModel):
+    id_turno: int
+    id_actividad: int
+    actividad: str
+    fecha: date
+    hora: time
+    cupo_maximo: int
+    # Calculados: la grilla los necesita para pintar "3/15" y deshabilitar el
+    # botón. Contarlos en el cliente obligaría a bajarse todas las reservas.
+    reservados: int = 0
+    lugares_libres: int = 0
+    estado: EstadoTurno
+    profesor: str | None = None
+    motivo_cancelacion: str | None = None
+
+
+class TurnoCrear(BaseModel):
+    id_actividad: int
+    id_sede: int
+    fecha: date
+    hora: time
+    # Si no se indica, se usa el cupo_default de la actividad.
+    cupo_maximo: int | None = Field(default=None, ge=1)
+    id_profesor: int | None = None
+
+
+class ReservarRequest(BaseModel):
+    id_socio: int
+    # True cuando el socio paga la clase individual en vez de usar su abono.
+    es_clase_suelta: bool = False
+
+
+class ReservaOut(BaseModel):
+    id_reserva: int
+    id_turno: int
+    id_socio: int
+    socio: str
+    actividad: str
+    fecha: date
+    hora: time
+    estado: EstadoReserva
+    es_clase_suelta: bool
+    clases_restantes: int | None = None
 
 
 # =============================================================================
