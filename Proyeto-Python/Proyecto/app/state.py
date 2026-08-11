@@ -531,6 +531,311 @@ class AppState:
         ]
 
 
+    # =========================================================================
+    # ESCRITURAS
+    # =========================================================================
+    # Todas devuelven la misma forma, para que las vistas no tengan que
+    # distinguir de dónde vino el problema:
+    #
+    #     {"ok": True,  "mensaje": "...", ...datos}
+    #     {"ok": False, "mensaje": "<lo que dijo el backend o la red>"}
+    #
+    # El mensaje de error viene REDACTADO POR EL BACKEND. No se reescribe acá:
+    # es el mismo texto que ve la PWA, y el backend es quien sabe por qué
+    # rechazó — "el turno ya está completo (15 lugares)" es más útil que un
+    # "no se pudo" armado en el cliente.
+
+    @staticmethod
+    def _resultado(respuesta: dict, mensaje_ok: str = "") -> dict:
+        """Traduce una respuesta del api_client a la forma que esperan las vistas."""
+        if not respuesta.get("ok"):
+            return {"ok": False, "mensaje": respuesta.get("error", "No se pudo completar la acción.")}
+        datos = respuesta.get("data") or {}
+        return {
+            "ok": True,
+            "mensaje": (datos.get("mensaje") if isinstance(datos, dict) else None) or mensaje_ok,
+            "data": datos,
+        }
+
+    # ── Asistencia ────────────────────────────────────────────────────────────
+
+    def fichar_rfid(self, codigo: str) -> dict:
+        """
+        Ficha por tarjeta.
+
+        Puede volver ok=True con una `advertencia`: el backend registra el
+        ingreso AUNQUE el socio deba o tenga la cuota vencida. Es una decisión
+        de negocio — dejar a alguien afuera lo decide una persona en el
+        mostrador, no un torniquete — y además, si no se registrara, el
+        gimnasio perdería el dato de que esa persona estuvo.
+        """
+        return self._fichaje(api_client.fichar_rfid(codigo))
+
+    def fichar_manual(self, id_socio: int) -> dict:
+        """Carga manual, para quien se olvidó la tarjeta."""
+        return self._fichaje(api_client.fichar_manual(id_socio))
+
+    def _fichaje(self, respuesta: dict) -> dict:
+        if not respuesta.get("ok"):
+            return {"ok": False, "mensaje": respuesta.get("error", "No se pudo fichar.")}
+
+        datos = respuesta["data"]
+        a = datos.get("asistencia", {})
+        return {
+            "ok": True,
+            "mensaje": datos.get("mensaje", ""),
+            "advertencia": datos.get("advertencia"),
+            "permitido": datos.get("permitido", True),
+            "fichaje": {
+                "id": a.get("id_asistencia"),
+                "socio": a.get("socio", "—"),
+                "hora": self._hora(a.get("fecha_hora_ingreso")),
+                "metodo": "RFID" if a.get("metodo_registro") == "RFID" else "Manual",
+            },
+        }
+
+    # ── Cobros ────────────────────────────────────────────────────────────────
+
+    def cobrar_membresia(self, id_socio: int, id_tipo: int, metodo_display: str,
+                          comprobante: str | None = None) -> dict:
+        """
+        Cobra una membresía.
+
+        NO manda el monto: lo calcula el backend a partir del plan. Si viniera
+        de acá, cualquiera con la app abierta podría cobrar $1 una membresía de
+        $30.000 — y en la base quedaría un pago perfectamente válido.
+        """
+        return self._resultado(api_client.cobrar({
+            "id_socio": id_socio,
+            "id_tipo_membresia": id_tipo,
+            "metodo": METODO_PAGO_BACKEND.get(metodo_display, "EFECTIVO"),
+            "numero_comprobante": comprobante or None,
+        }))
+
+    def comprar_plan_actividad(self, id_socio: int, id_plan: int,
+                                metodo_display: str) -> dict:
+        """
+        Compra un abono de actividad.
+
+        El backend exige cuota al día, que la membresía cubra el mes entero del
+        abono y que el socio no tenga deudas. Si algo falla, el mensaje explica
+        cuál de las tres y qué hacer.
+        """
+        return self._resultado(api_client.comprar_plan_actividad(id_plan, {
+            "id_socio": id_socio,
+            "metodo": METODO_PAGO_BACKEND.get(metodo_display, "EFECTIVO"),
+        }))
+
+    def comprar_clase_suelta(self, id_socio: int, id_turno: int,
+                              metodo_display: str) -> dict:
+        """Cobra y reserva una clase individual, sin abono previo."""
+        return self._resultado(api_client.comprar_clase_suelta(id_turno, {
+            "id_socio": id_socio,
+            "metodo": METODO_PAGO_BACKEND.get(metodo_display, "EFECTIVO"),
+        }))
+
+    def puede_comprar_actividad(self, id_socio: int) -> dict:
+        """
+        Si el socio está en condiciones de comprar un abono, SIN comprar nada.
+        Se consulta ANTES de cobrar: si el abono no va a entrar, hay que
+        ofrecer renovar la cuota primero en vez de cobrar y descubrirlo después.
+        """
+        respuesta = api_client.puede_comprar(id_socio)
+        if not respuesta.get("ok"):
+            return {"puede": False, "motivo": respuesta.get("error", "")}
+        d = respuesta["data"]
+        return {"puede": d.get("puede", False), "motivo": d.get("motivo") or ""}
+
+    def anular_pago(self, id_pago: int) -> dict:
+        return self._resultado(api_client.anular_pago(id_pago), "Pago anulado.")
+
+    def get_turnos_de_actividad(self, id_actividad: int) -> list[dict]:
+        """Turnos habilitados de una actividad, para el selector de clase suelta."""
+        datos = self._datos(api_client.obtener_turnos(), [])
+        return [
+            {
+                "id": t["id_turno"],
+                "actividad": t.get("actividad", "?"),
+                "fecha": self._fecha(t.get("fecha")),
+                "hora": (t.get("hora") or "")[:5],
+                "libres": t.get("lugares_libres", 0),
+                "cupo": t.get("cupo_maximo", 0),
+                "profesor": t.get("profesor") or "—",
+            }
+            for t in datos
+            if t.get("id_actividad") == id_actividad and t.get("estado") == "HABILITADO"
+        ]
+
+    # ── Actividades (ABM) ─────────────────────────────────────────────────────
+
+    def crear_actividad(self, datos: dict) -> dict:
+        return self._resultado(api_client.crear_actividad(datos), "Actividad creada.")
+
+    def editar_actividad(self, id_actividad: int, datos: dict) -> dict:
+        return self._resultado(api_client.editar_actividad(id_actividad, datos),
+                                "Actividad actualizada.")
+
+    def cambiar_estado_actividad(self, id_actividad: int, activa: bool) -> dict:
+        """
+        Da de baja o reactiva. Manda el estado DESTINO, no un toggle: con una
+        pantalla desactualizada, "dar de baja" sobre algo ya dado de baja lo
+        reactivaría.
+        """
+        return self._resultado(
+            api_client.cambiar_estado_actividad(id_actividad, activa),
+            "Actividad reactivada." if activa else "Actividad dada de baja.",
+        )
+
+    def crear_plan_actividad(self, id_actividad: int, datos: dict) -> dict:
+        return self._resultado(api_client.crear_plan_actividad(id_actividad, datos),
+                                "Plan creado.")
+
+    def editar_plan_actividad(self, id_plan: int, datos: dict) -> dict:
+        return self._resultado(api_client.editar_plan_actividad(id_plan, datos),
+                                "Plan actualizado.")
+
+    def cambiar_estado_plan(self, id_plan: int, activo: bool) -> dict:
+        return self._resultado(
+            api_client.cambiar_estado_plan(id_plan, activo),
+            "Plan reactivado." if activo else "Plan dado de baja.",
+        )
+
+    def asignar_profesor(self, id_actividad: int, id_profesor: int) -> dict:
+        return self._resultado(api_client.asignar_profesor(id_actividad, id_profesor),
+                                "Profesor asignado.")
+
+    def desasignar_profesor(self, id_actividad: int, id_profesor: int) -> dict:
+        return self._resultado(api_client.desasignar_profesor(id_actividad, id_profesor),
+                                "Profesor desasignado.")
+
+    # ── Socios ────────────────────────────────────────────────────────────────
+
+    def alta_socio(self, datos: dict) -> dict:
+        """
+        Alta por invitación. El backend crea Persona + Teléfono + Socio y, si
+        se pidió, la cuenta con una contraseña temporal.
+
+        La contraseña vuelve EN TEXTO PLANO y es la única vez que existe
+        legible: en la base solo queda su hash. Quien la reciba la muestra una
+        vez y la olvida — no se guarda ni se loguea.
+        """
+        respuesta = api_client.alta_socio(datos)
+        if not respuesta.get("ok"):
+            return {"ok": False, "mensaje": respuesta.get("error", "No se pudo dar de alta.")}
+        d = respuesta["data"]
+        return {
+            "ok": True,
+            "mensaje": d.get("mensaje", ""),
+            "usuario": d.get("username"),
+            "password_temporal": d.get("password_temporal"),
+            "texto_credenciales": d.get("texto_credenciales"),
+            "numero_socio": d.get("numero_socio"),
+        }
+
+    def dar_de_baja_socio(self, id_socio: int, tipo: str = "VOLUNTARIA",
+                           motivo: str | None = None) -> dict:
+        return self._resultado(api_client.dar_de_baja_socio(id_socio, tipo, motivo),
+                                "Socio dado de baja.")
+
+    def reactivar_socio(self, id_socio: int) -> dict:
+        return self._resultado(api_client.reactivar_socio(id_socio), "Socio reactivado.")
+
+    # ── Personal ──────────────────────────────────────────────────────────────
+
+    def alta_empleado(self, datos: dict) -> dict:
+        respuesta = api_client.alta_empleado(datos)
+        if not respuesta.get("ok"):
+            return {"ok": False, "mensaje": respuesta.get("error", "No se pudo dar de alta.")}
+        d = respuesta["data"]
+        return {
+            "ok": True,
+            "mensaje": d.get("mensaje", ""),
+            "usuario": d.get("username"),
+            "password_temporal": d.get("password_temporal"),
+            "legajo": d.get("legajo"),
+        }
+
+    # ── Rutinas y nutrición ───────────────────────────────────────────────────
+
+    def crear_rutina(self, datos: dict) -> dict:
+        return self._resultado(api_client.crear_rutina(datos), "Rutina creada.")
+
+    def asignar_rutina(self, id_rutina: int, id_socio: int) -> dict:
+        return self._resultado(api_client.asignar_rutina(id_rutina, id_socio),
+                                "Rutina asignada.")
+
+    def crear_dieta(self, datos: dict) -> dict:
+        return self._resultado(api_client.crear_dieta(datos), "Plan nutricional creado.")
+
+    def asignar_dieta(self, id_dieta: int, id_socio: int) -> dict:
+        return self._resultado(api_client.asignar_dieta(id_dieta, id_socio),
+                                "Plan asignado.")
+
+    def get_ejercicios(self) -> list[dict]:
+        datos = self._datos(api_client.obtener_ejercicios(), [])
+        return [
+            {"id": e["id_ejercicio"], "nombre": e["nombre"],
+             "grupo": e.get("grupo_muscular", "—")}
+            for e in datos
+        ]
+
+    # ── Usuarios ──────────────────────────────────────────────────────────────
+
+    def get_usuarios(self) -> list[dict]:
+        datos = self._datos(api_client.obtener_usuarios(), [])
+        return [
+            {
+                "id": u["id_usuario"],
+                "usuario": u["username"],
+                "nombre": u.get("nombre_completo", "—"),
+                "dni": u.get("dni", "—"),
+                "roles": u.get("roles", []),
+                "rol": (u.get("roles") or ["—"])[0],
+                "estado": "Inactivo" if not u.get("activo") else
+                          ("Bloqueado" if u.get("bloqueado") else "Activo"),
+                "debe_cambiar": u.get("debe_cambiar_password", False),
+                "ultimo_acceso": self._fecha(u.get("ultimo_acceso")),
+            }
+            for u in datos
+        ]
+
+    def get_personas_sin_cuenta(self) -> list[dict]:
+        datos = self._datos(api_client.obtener_personas_sin_cuenta(), [])
+        return [
+            {"id": p["id_persona"], "nombre": p.get("nombre_completo", "—"),
+             "dni": p.get("dni", "—"), "roles": p.get("roles", [])}
+            for p in datos
+        ]
+
+    def crear_cuenta(self, id_persona: int) -> dict:
+        """
+        Crea la cuenta de una persona ya cargada. Devuelve las credenciales
+        generadas — el sistema las elige, nunca un administrador: que alguien
+        elija la contraseña de otro sería conocerla para siempre.
+        """
+        respuesta = api_client.crear_cuenta(id_persona)
+        if not respuesta.get("ok"):
+            return {"ok": False, "mensaje": respuesta.get("error", "No se pudo crear la cuenta.")}
+        d = respuesta["data"]
+        return {"ok": True, "mensaje": d.get("mensaje", ""),
+                "usuario": d.get("username"), "password_temporal": d.get("password_temporal")}
+
+    def resetear_password_usuario(self, id_usuario: int) -> dict:
+        respuesta = api_client.resetear_password(id_usuario)
+        if not respuesta.get("ok"):
+            return {"ok": False, "mensaje": respuesta.get("error", "No se pudo resetear.")}
+        d = respuesta["data"]
+        return {"ok": True, "mensaje": d.get("mensaje", ""),
+                "usuario": d.get("username"), "password_temporal": d.get("password_temporal")}
+
+    def desbloquear_usuario(self, id_usuario: int) -> dict:
+        return self._resultado(api_client.desbloquear_usuario(id_usuario), "Cuenta desbloqueada.")
+
+    def cambiar_estado_usuario(self, id_usuario: int) -> dict:
+        return self._resultado(api_client.cambiar_estado_usuario(id_usuario),
+                                "Estado de la cuenta actualizado.")
+
+
 # ── Instancia global única ─────────────────────────────────────────────────────
 # Se crea una sola instancia de AppState al importar este módulo (Singleton).
 # Todos los archivos de la app importan `app_state` desde aquí para compartir

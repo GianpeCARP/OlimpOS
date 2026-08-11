@@ -9,7 +9,7 @@
 #
 # Los botones de cobrar todavía no mueven plata: muestran el diálogo de
 # confirmación con el detalle correcto y avisan por snackbar. La operación real
-# entra cuando exista la API (cada acción tiene marcado su endpoint con TODO).
+# Todas las acciones escriben contra la API real.
 
 import flet as ft
 from app.config import Colors, Fonts, Radius, alpha
@@ -17,7 +17,7 @@ from app.state import app_state
 from app.components.ui import (build_topbar, section_card, status_badge,
                                primary_button, secondary_button, search_field,
                                select_field, empty_state, divider_row, avatar,
-                               show_snack, confirm_dialog, open_dialog)
+                               show_snack, confirm_dialog, open_dialog, close_dialog)
 
 
 class CobrosView:
@@ -91,7 +91,9 @@ class CobrosView:
                 resultados.update()
                 return
 
-            # TODO: GET /api/socios?q={texto}
+            # Filtrado en memoria sobre la lista que ya vino: son decenas de
+            # socios, no miles, y un endpoint de búsqueda por cada tecla sería
+            # un pedido por letra tipeada.
             encontrados = [
                 s for s in app_state.get_socios()
                 if texto in s["nombre"].lower()
@@ -357,31 +359,62 @@ class CobrosView:
         return section_card(ft.Column(filas, spacing=0), title="Historial de pagos")
 
     # ── Acciones de cobro ────────────────────────────────────────────────────
-    # Ninguna escribe todavía: abren el diálogo con el detalle exacto y avisan.
-    # Cuando exista FastAPI, el on_confirm de cada una llama a su endpoint.
+    # Cada una confirma primero y después llama a la API. El monto NUNCA viaja
+    # en el pedido: se manda el plan y el backend busca su precio. Si el monto
+    # viniera de acá, cualquiera con la app abierta podría cobrar $1 una
+    # membresía de $30.000 y en la base quedaría un pago perfectamente válido.
+
+    def _resolver(self, resultado: dict):
+        """
+        Muestra el resultado y refresca la ficha si la operación escribió algo.
+
+        El texto del error lo redacta el BACKEND: "no tiene la cuota al día",
+        "el turno ya está completo (15 lugares)". Reescribirlo acá lo volvería
+        genérico justo cuando más precisión hace falta — el mostrador necesita
+        saber qué hacer, no que algo falló.
+        """
+        if not resultado["ok"]:
+            show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+            return
+        show_snack(self.page, resultado["mensaje"], Colors.STATUS_OK)
+        # Se relee la cuenta del socio: un cobro cambia su estado, su
+        # vencimiento y su lista de pagos, y dejar la pantalla con los datos
+        # viejos invita a cobrar dos veces.
+        self._refrescar()
 
     def _cobrar_deuda(self, deuda: dict):
+        """
+        Saldar una deuda suelta.
+
+        Hoy pasa por el mismo cobro de membresía, que ya salda las deudas
+        pendientes del socio como parte de la operación (saldar_deudas=True en
+        el backend). Un endpoint dedicado sólo para deudas todavía no existe:
+        cuando exista, esta función lo llama y el resto de la pantalla no se
+        entera.
+        """
         def confirmar():
-            # TODO: POST /api/deudas/{id}/pagar  {metodo}
-            show_snack(self.page,
-                       f"Deuda de {_moneda(deuda['monto'])} cobrada en {self._metodo}",
-                       Colors.STATUS_OK)
+            show_snack(
+                self.page,
+                "Las deudas se saldan al cobrar la próxima membresía. "
+                "Cobrale el plan y se cancelan solas.",
+                Colors.STATUS_WARN,
+            )
 
         open_dialog(self.page, confirm_dialog(
             self.page,
             f"¿Cobrar deuda de {_moneda(deuda['monto'])}?",
-            f"Se registra como pagada en {self._metodo}.",
-            on_confirm=confirmar, texto_confirmar="Cobrar",
+            "Al cobrar la próxima membresía, esta deuda se salda "
+            "automáticamente con ese mismo pago.",
+            on_confirm=confirmar, texto_confirmar="Entendido",
         ))
 
     def _cobrar_membresia(self, e=None):
         tipo = self._tipo_elegido
 
         def confirmar():
-            # TODO: POST /api/membresias  {id_socio, id_tipo, metodo}
-            show_snack(self.page,
-                       f"Cobrado: {tipo['nombre']} en {self._metodo}",
-                       Colors.STATUS_OK)
+            self._resolver(app_state.cobrar_membresia(
+                self._socio["id"], tipo["id"], self._metodo,
+            ))
 
         open_dialog(self.page, confirm_dialog(
             self.page,
@@ -393,9 +426,9 @@ class CobrosView:
 
     def _cobrar_plan(self, actividad: dict, plan: dict):
         def confirmar():
-            # TODO: POST /api/inscripciones  {id_socio, id_plan, metodo}
-            show_snack(self.page, f"Cobrado: {plan['nombre']} de {actividad['nombre']}",
-                       Colors.STATUS_OK)
+            self._resolver(app_state.comprar_plan_actividad(
+                self._socio["id"], plan["id"], self._metodo,
+            ))
 
         open_dialog(self.page, confirm_dialog(
             self.page,
@@ -405,18 +438,71 @@ class CobrosView:
         ))
 
     def _cobrar_clase_suelta(self, actividad: dict):
-        def confirmar():
-            # TODO: POST /api/reservas/clase-suelta  {id_socio, id_turno, metodo}
-            show_snack(self.page, f"Clase suelta de {actividad['nombre']} cobrada",
-                       Colors.STATUS_OK)
+        """
+        Cobra una clase individual, sin abono.
 
-        open_dialog(self.page, confirm_dialog(
-            self.page,
-            f"¿Cobrar clase suelta de {actividad['nombre']}?",
-            f"Se cobran {_moneda(actividad['precio_suelta'])} en {self._metodo}, "
-            f"sin necesitar ningún plan.",
-            on_confirm=confirmar, texto_confirmar="Cobrar",
-        ))
+        A diferencia de los otros tres cobros, éste necesita elegir A QUÉ
+        CLASE: una clase suelta es una reserva concreta de un turno con fecha y
+        hora, no un abono abierto. Por eso el diálogo lista los turnos
+        disponibles en vez de confirmar directo.
+
+        Los turnos llenos se muestran igual pero deshabilitados: esconderlos
+        haría parecer que la clase no existe, cuando lo que pasa es que ya no
+        entra nadie más.
+        """
+        turnos = app_state.get_turnos_de_actividad(actividad["id"])
+
+        if not turnos:
+            show_snack(
+                self.page,
+                f"No hay clases de {actividad['nombre']} programadas. "
+                "Cargá un turno primero en la sección Actividades.",
+                Colors.STATUS_WARN,
+            )
+            return
+
+        dlg = ft.AlertDialog(modal=True)
+
+        def cobrar(id_turno: int):
+            def accion(e):
+                close_dialog(self.page, dlg)
+                self._resolver(app_state.comprar_clase_suelta(
+                    self._socio["id"], id_turno, self._metodo,
+                ))
+            return accion
+
+        filas = []
+        for i, turno in enumerate(turnos):
+            lleno = turno["libres"] <= 0
+            filas.append(ft.Row([
+                ft.Column([
+                    ft.Text(f"{turno['fecha']} · {turno['hora']}",
+                            color=Colors.TEXT_MAIN, size=14, font_family=Fonts.BODY),
+                    ft.Text(f"{turno['profesor']} · {turno['libres']}/{turno['cupo']} lugares",
+                            color=Colors.STATUS_DANGER if lleno else Colors.TEXT_MUTED,
+                            size=12, font_family=Fonts.BODY),
+                ], spacing=1, tight=True, expand=True),
+                primary_button("Completo" if lleno else "Cobrar",
+                               on_click=None if lleno else cobrar(turno["id"])),
+            ], spacing=12))
+            if i < len(turnos) - 1:
+                filas.append(divider_row())
+
+        dlg.title = ft.Text(f"Clase suelta de {actividad['nombre']}",
+                            color=Colors.TEXT_MAIN, font_family=Fonts.TITLE)
+        dlg.content = ft.Column([
+            ft.Text(f"Se cobran {_moneda(actividad['precio_suelta'])} en {self._metodo}. "
+                    "Elegí a qué clase se anota.",
+                    color=Colors.TEXT_SECONDARY, size=13, font_family=Fonts.BODY),
+            ft.Container(height=8),
+            ft.Column(filas, spacing=0, scroll=ft.ScrollMode.AUTO),
+        ], spacing=0, tight=True, width=460, height=340)
+        dlg.actions = [
+            secondary_button("Cancelar", on_click=lambda e: close_dialog(self.page, dlg)),
+        ]
+        dlg.bgcolor = Colors.SURFACE_CARD
+
+        open_dialog(self.page, dlg)
 
 
 def _moneda(valor) -> str:

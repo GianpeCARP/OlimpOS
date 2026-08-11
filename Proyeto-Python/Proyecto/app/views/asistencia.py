@@ -21,14 +21,13 @@ class AsistenciaView:
         self.page   = page
         self.router = router
 
-        # Fichajes de la jornada. Arranca con lo que traiga el backend y se le
-        # van sumando los de esta sesión al principio de la lista.
-        # TODO: GET /api/asistencias?fecha=hoy
+        # Fichajes de la jornada, tal como los devuelve GET /asistencia/hoy.
+        # Los que se registran en esta sesión se insertan al principio con el
+        # id y la hora que asignó el backend, no fabricados acá.
         self._fichajes = list(app_state.get_asistencias_hoy())
 
         self._rfid_ref  = ft.Ref[ft.TextField]()
         self._lista_ref = ft.Ref[ft.Column]()
-        self._subtitulo_ref = ft.Ref[ft.Text]()
 
     # ── Construcción ─────────────────────────────────────────────────────────
 
@@ -81,14 +80,18 @@ class AsistenciaView:
         if not codigo:
             return
 
-        # TODO: POST /api/asistencias/rfid  {codigo}
-        # El backend resuelve el socio por su codigo_rfid y rechaza si la
-        # tarjeta no corresponde a ninguno activo.
-        self._registrar(f"Tarjeta {codigo}", "RFID")
+        # El backend resuelve el socio por su codigo_rfid y rechaza con 404 si
+        # la tarjeta no corresponde a ninguno.
+        resultado = app_state.fichar_rfid(codigo)
 
+        # El campo se limpia y se reenfoca SIEMPRE, salga bien o mal: el lector
+        # es un teclado que dispara solo, y si quedara texto viejo el próximo
+        # pase lo concatenaría al anterior.
         self._rfid_ref.current.value = ""
         self._rfid_ref.current.focus()
         self._rfid_ref.current.update()
+
+        self._mostrar_resultado(resultado)
 
     # ── Carga manual ─────────────────────────────────────────────────────────
 
@@ -103,7 +106,9 @@ class AsistenciaView:
                 resultados.update()
                 return
 
-            # TODO: GET /api/socios?q={texto}&activos=true
+            # El filtrado es en memoria sobre la lista que ya vino: son
+            # decenas de socios, no miles, y un endpoint de búsqueda por cada
+            # tecla sería un pedido por letra tipeada.
             encontrados = [
                 s for s in app_state.get_socios()
                 if texto in s["nombre"].lower()
@@ -129,8 +134,8 @@ class AsistenciaView:
 
     def _fila_socio(self, socio: dict) -> ft.Container:
         def registrar(e):
-            # TODO: POST /api/asistencias/manual  {id_socio, id_registrado_por}
-            self._registrar(socio["nombre"], "Manual")
+            # Quién lo cargó no se manda: el backend lo saca de la sesión.
+            self._mostrar_resultado(app_state.fichar_manual(socio["id"]))
 
         return ft.Container(
             content=ft.Row([
@@ -190,18 +195,35 @@ class AsistenciaView:
                 filas.append(divider_row())
         return filas
 
-    def _registrar(self, quien: str, metodo: str):
-        """Suma un fichaje al principio de la lista y refresca sólo esa tarjeta."""
-        from datetime import datetime
-        self._fichajes.insert(0, {
-            "id": len(self._fichajes) + 1,
-            "socio": quien,
-            "hora": datetime.now().strftime("%H:%M"),
-            "metodo": metodo,
-        })
+    def _mostrar_resultado(self, resultado: dict):
+        """
+        Refleja en pantalla lo que contestó el backend.
 
-        if self._lista_ref.current:
-            self._lista_ref.current.controls = self._filas_fichajes()
-            self._lista_ref.current.update()
+        Tres desenlaces, no dos: además de "salió" y "falló" existe "se
+        registró PERO hay algo que mirar" — el socio debe, o tiene la cuota
+        vencida. En ese caso el ingreso SÍ queda guardado y se avisa en
+        amarillo: dejar a alguien afuera del gimnasio lo decide una persona en
+        el mostrador, no el sistema.
+        """
+        if not resultado["ok"]:
+            show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+            return
 
-        show_snack(self.page, f"Ingreso registrado: {quien}", Colors.STATUS_OK)
+        fichaje = resultado.get("fichaje")
+        if fichaje:
+            # Se inserta el que devolvió el backend, con SU id y SU hora, en vez
+            # de fabricar uno acá: si se inventara el id, el próximo refresco
+            # traería la fila real y quedaría duplicada en pantalla.
+            self._fichajes.insert(0, fichaje)
+            if self._lista_ref.current:
+                self._lista_ref.current.controls = self._filas_fichajes()
+                self._lista_ref.current.update()
+            # El contador del subtítulo ("N ingresos hoy") NO se refresca acá:
+            # build_topbar recibe un string, no una referencia, así que no hay
+            # nada a lo que apuntar. Se actualiza al volver a entrar a la
+            # sección. Dejar un update que no puede funcionar sería peor que
+            # esta limitación anotada.
+
+        advertencia = resultado.get("advertencia")
+        color = Colors.STATUS_WARN if advertencia else Colors.STATUS_OK
+        show_snack(self.page, resultado["mensaje"], color)

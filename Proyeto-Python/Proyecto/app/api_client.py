@@ -371,6 +371,26 @@ def desasignar_profesor(id_actividad: int, id_profesor: int) -> dict:
     return _delete(f"/actividades/{id_actividad}/profesores/{id_profesor}")
 
 
+def obtener_turnos(desde: str | None = None, hasta: str | None = None) -> dict:
+    """Turnos de la grilla. Sin rango, el backend devuelve la semana que viene."""
+    consulta = ""
+    if desde and hasta:
+        consulta = f"?desde={desde}&hasta={hasta}"
+    return _get(f"/actividades/turnos{consulta}")
+
+
+def puede_comprar(id_socio: int) -> dict:
+    return _get(f"/actividades/socio/{id_socio}/puede-comprar")
+
+
+def comprar_plan_actividad(id_plan: int, datos: dict) -> dict:
+    return _post(f"/actividades/planes/{id_plan}/comprar", datos)
+
+
+def comprar_clase_suelta(id_turno: int, datos: dict) -> dict:
+    return _post(f"/actividades/turnos/{id_turno}/clase-suelta", datos)
+
+
 # =============================================================================
 # USUARIOS
 # =============================================================================
