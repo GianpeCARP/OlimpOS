@@ -552,6 +552,7 @@ def actualizar_actividad(
 @router.post("/{id_actividad}/toggle-estado", response_model=ActividadOut)
 def alternar_estado_actividad(
     id_actividad: int,
+    activo: bool | None = None,
     db: Session = Depends(get_db),
     sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES, Acceso.TOTAL)),
 ):
@@ -568,7 +569,11 @@ def alternar_estado_actividad(
     Los turnos pasados no se tocan, son historial.
     """
     actividad = _buscar_actividad(db, id_actividad)
-    actividad.activo = not bool(actividad.activo)
+    #  explicito gana sobre el toggle. El toggle solo es seguro si
+    # quien llama conoce el estado actual: con una pantalla desactualizada,
+    # "dar de baja" sobre algo ya dado de baja lo REACTIVARIA. El frontend
+    # manda el estado que quiere y no depende de lo que crea tener.
+    actividad.activo = (not bool(actividad.activo)) if activo is None else activo
 
     if not actividad.activo:
         hoy = date.today()
@@ -660,6 +665,7 @@ def actualizar_plan(
 @router.post("/planes/{id_plan}/toggle-estado", response_model=PlanActividadOut)
 def alternar_estado_plan(
     id_plan: int,
+    activo: bool | None = None,
     db: Session = Depends(get_db),
     sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES, Acceso.TOTAL)),
 ):
@@ -671,7 +677,8 @@ def alternar_estado_plan(
     gimnasio deje de ofrecer ese abono. Solo deja de poder comprarse.
     """
     plan = _buscar_plan(db, id_plan)
-    plan.activo = not bool(plan.activo)
+    # Igual que en actividades: el estado explicito gana sobre el toggle.
+    plan.activo = (not bool(plan.activo)) if activo is None else activo
     db.commit()
     db.refresh(plan)
     return _a_plan_out(plan)
@@ -680,6 +687,41 @@ def alternar_estado_plan(
 # =============================================================================
 # PROFESORES POR ACTIVIDAD
 # =============================================================================
+
+@router.get("/profesores", response_model=list[ProfesorActividadOut])
+def listar_todos_los_profesores(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES)),
+):
+    """
+    Todos los profesores activos del plantel, estén o no asignados.
+
+    Va aparte de `/{id_actividad}/profesores` —que devuelve solo los
+    asignados— porque el panel de asignación necesita las DOS listas: los que
+    ya están y los que se podrían agregar. Sin este endpoint, el frontend
+    tendría que sacarlos de /personal y ahí solo viene `id_empleado`, no
+    `id_profesor`, que es lo que la tabla puente necesita.
+
+    Declarado ANTES de /{id_actividad}/profesores: si fuera después, FastAPI
+    intentaría leer "profesores" como si fuera un id de actividad.
+    """
+    profesores = (
+        db.query(Profesor)
+        .join(Empleado, Profesor.id_empleado == Empleado.id_empleado)
+        .filter(Empleado.activo == True)  # noqa: E712
+        .all()
+    )
+    salida = []
+    for p in profesores:
+        persona = p.empleado.persona if p.empleado else None
+        salida.append(ProfesorActividadOut(
+            id_profesor=p.id_profesor,
+            nombre=persona.nombre_completo if persona else "?",
+            titulo=p.titulo,
+            especialidad=p.especialidad,
+        ))
+    return salida
+
 
 @router.get("/{id_actividad}/profesores", response_model=list[ProfesorActividadOut])
 def listar_profesores(
