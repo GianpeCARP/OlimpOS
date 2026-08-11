@@ -43,14 +43,15 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import (
-    Actividad, Empleado, InscripcionActividad, Membresia, Pago, PlanActividad,
+    Actividad, Deuda, Empleado, InscripcionActividad, Membresia, Pago, PlanActividad,
     Profesor, ProfesorActividad, Reserva, Sede, Socio, Turno,
 )
 from permisos import Acceso, Accion, Seccion
 from schemas import (
     ActividadCrear, ActividadOut, ComprarPlanRequest, ComprarPlanResponse,
     InscripcionOut, PagoOut, PlanActividadCrear, PlanActividadOut,
-    ProfesorActividadOut, ReservaOut, ReservarRequest, TurnoCrear, TurnoOut,
+    ProfesorActividadOut, PuedeComprarOut, ReservaOut, ReservarRequest,
+    TurnoCrear, TurnoOut, ClaseSueltaResponse, ComprarClaseSueltaRequest,
 )
 from security import Sesion, requiere_accion, requiere_seccion
 
@@ -58,6 +59,30 @@ router = APIRouter(prefix="/actividades", tags=["Actividades"])
 
 # Estados de reserva que ocupan un lugar. Las canceladas liberan el cupo.
 RESERVA_OCUPA = ("RESERVADA",)
+
+
+def _sumar_un_mes(desde: date) -> date:
+    """
+    Un mes calendario exacto, no 30 días.
+
+    La diferencia importa: una membresía "mensual" de 30 días NO cubre un mes
+    calendario de 31, que es la mayoría de los meses. Usar 30 días haría que
+    la validación de cobertura pase cuando no debería.
+
+    El 31 de enero + 1 mes da 28 de febrero (o 29): se recorta al último día
+    del mes destino, que es lo que hace cualquier calendario.
+    """
+    anio = desde.year + (1 if desde.month == 12 else 0)
+    mes = 1 if desde.month == 12 else desde.month + 1
+
+    # Último día del mes destino: el día 1 del siguiente, menos uno.
+    if mes == 12:
+        primero_del_siguiente = date(anio + 1, 1, 1)
+    else:
+        primero_del_siguiente = date(anio, mes + 1, 1)
+    ultimo_dia = (primero_del_siguiente - timedelta(days=1)).day
+
+    return date(anio, mes, min(desde.day, ultimo_dia))
 
 
 # =============================================================================
@@ -845,12 +870,43 @@ def comprar_plan(
                     f"{plan.nombre}, vigente hasta el {ya.fecha_vencimiento}."),
         )
 
-    precio = float(plan.precio)
+    # --- REGLA 1: cobertura -------------------------------------------------
+    # El abono vence UN MES DESPUÉS de comprarse, sea cual sea su tipo_limite:
+    # un plan "2 por semana" se factura mensual igual que uno de "12 clases al
+    # mes". `tipo_limite` cambia CÓMO se mide el consumo, no cuándo se cobra
+    # de nuevo.
+    #
+    # Y por eso la membresía tiene que cubrir ese mes ENTERO. Si no llega, se
+    # rechaza acá en vez de recortar el abono en silencio: recortarlo sería
+    # cobrarle un mes y darle veinte días. La alternativa correcta es que el
+    # mostrador renueve la cuota primero, y para eso existe /puede-comprar,
+    # que deja preguntarlo ANTES de cobrar nada.
+    vencimiento = _sumar_un_mes(hoy)
 
-    # El abono acompaña a la membresía: vence cuando vence la cuota. Darle una
-    # duración propia haría que un abono sobreviva a la membresía que lo
-    # habilita, que es justo lo que la FK NOT NULL quiere evitar.
-    vencimiento = membresia.fecha_vencimiento or (hoy + timedelta(days=30))
+    if membresia.fecha_vencimiento and membresia.fecha_vencimiento < vencimiento:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(f"La membresía de {socio.persona.nombre_completo} vence el "
+                    f"{membresia.fecha_vencimiento} y este abono se extendería hasta el "
+                    f"{vencimiento}. Renovale la cuota primero."),
+        )
+
+    # --- REGLA 8: deudas ----------------------------------------------------
+    # Corta cualquier COMPRA nueva. NO aplica al reservar con un abono ya
+    # pagado: usar algo que ya se pagó no es comprar. Y tampoco puede aplicar
+    # nunca a pagar una deuda — si pagar dependiera de no deber, nadie podría
+    # regularizar jamás.
+    deuda = (db.query(Deuda)
+             .filter(Deuda.id_socio == socio.id_socio, Deuda.estado == "PENDIENTE")
+             .first())
+    if deuda is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(f"{socio.persona.nombre_completo} tiene una deuda pendiente. "
+                    "Regularizala en recepción antes de comprar."),
+        )
+
+    precio = float(plan.precio)
 
     inscripcion = InscripcionActividad(
         id_socio=socio.id_socio,
@@ -937,3 +993,199 @@ def cancelar_inscripcion(
     db.commit()
     db.refresh(inscripcion)
     return _a_inscripcion_out(inscripcion)
+
+
+# =============================================================================
+# CHEQUEO PREVIO Y CLASE SUELTA
+# =============================================================================
+
+@router.get("/socio/{id_socio}/puede-comprar", response_model=PuedeComprarOut)
+def puede_comprar(
+    id_socio: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES)),
+):
+    """
+    Si el socio está en condiciones de comprar un abono HOY, sin comprar nada.
+
+    Existe porque la vista de Cobros necesita decidir ANTES de cobrar si
+    ofrecer el combo "renovar cuota + comprar abono" en una sola
+    confirmación. Sin esto, el flujo cobraba la membresía y recién después
+    descubría que el abono no entraba — con la plata ya cobrada.
+
+    Es la misma situación que en un gimnasio real pasa todo el tiempo: la
+    cuota vence a mitad de mes y el abono siempre se cobra por mes completo.
+
+    Reusa exactamente las mismas condiciones que `comprar_plan`, así el
+    chequeo previo y la compra real no pueden desincronizarse.
+    """
+    socio = db.get(Socio, id_socio)
+    if socio is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="El socio no existe.")
+
+    hoy = date.today()
+    vencimiento_abono = _sumar_un_mes(hoy)
+
+    membresia = (db.query(Membresia)
+                 .filter(Membresia.id_socio == id_socio, Membresia.estado == "ACTIVA")
+                 .order_by(Membresia.fecha_vencimiento.desc())
+                 .first())
+
+    tiene_deuda = (db.query(Deuda)
+                   .filter(Deuda.id_socio == id_socio, Deuda.estado == "PENDIENTE")
+                   .first()) is not None
+
+    if membresia is None or (membresia.fecha_vencimiento and membresia.fecha_vencimiento < hoy):
+        return PuedeComprarOut(
+            puede=False, tiene_deuda=tiene_deuda,
+            membresia_cubre=False,
+            vencimiento_membresia=membresia.fecha_vencimiento if membresia else None,
+            vencimiento_abono=vencimiento_abono,
+            motivo="No tiene la cuota al día.",
+        )
+
+    cubre = (membresia.fecha_vencimiento is None
+             or membresia.fecha_vencimiento >= vencimiento_abono)
+
+    motivo = None
+    if tiene_deuda:
+        motivo = "Tiene una deuda pendiente. Regularizala antes de comprar."
+    elif not cubre:
+        motivo = (f"La cuota vence el {membresia.fecha_vencimiento} y el abono llegaría "
+                  f"hasta el {vencimiento_abono}. Hay que renovar primero.")
+
+    return PuedeComprarOut(
+        puede=cubre and not tiene_deuda,
+        tiene_deuda=tiene_deuda,
+        membresia_cubre=cubre,
+        vencimiento_membresia=membresia.fecha_vencimiento,
+        vencimiento_abono=vencimiento_abono,
+        motivo=motivo,
+    )
+
+
+@router.post("/turnos/{id_turno}/clase-suelta", response_model=ClaseSueltaResponse,
+             status_code=status.HTTP_201_CREATED)
+def comprar_clase_suelta(
+    id_turno: int,
+    datos: ComprarClaseSueltaRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.COBRAR_PAGOS)),
+):
+    """
+    Cobra y reserva una clase individual, sin abono.
+
+    Compite por el MISMO cupo que las reservas hechas con plan: quien paga
+    suelto no tiene prioridad ni lugar reservado aparte. Por eso el chequeo de
+    cupo es idéntico al de `reservar`.
+
+    Exige membresía activa —hay que ser socio para entrar al gimnasio— pero
+    NO exige que la cuota cubra un mes: la clase es de hoy, se agota hoy. Es
+    la diferencia con el abono, que se proyecta un mes hacia adelante.
+
+    Sí aplica la regla de deudas: es una compra.
+    """
+    turno = db.get(Turno, id_turno)
+    if turno is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="El turno no existe.")
+    if turno.estado == "CANCELADO":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Esa clase está cancelada.")
+
+    socio = db.get(Socio, datos.id_socio)
+    if socio is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="El socio no existe.")
+
+    hoy = date.today()
+
+    membresia = (db.query(Membresia)
+                 .filter(Membresia.id_socio == socio.id_socio,
+                         Membresia.estado == "ACTIVA")
+                 .order_by(Membresia.fecha_vencimiento.desc())
+                 .first())
+    if membresia is None or (membresia.fecha_vencimiento and membresia.fecha_vencimiento < hoy):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(f"{socio.persona.nombre_completo} no tiene la cuota al día. "
+                    "Hay que ser socio activo para tomar una clase."),
+        )
+
+    deuda = (db.query(Deuda)
+             .filter(Deuda.id_socio == socio.id_socio, Deuda.estado == "PENDIENTE")
+             .first())
+    if deuda is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(f"{socio.persona.nombre_completo} tiene una deuda pendiente. "
+                    "Regularizala en recepción antes de comprar."),
+        )
+
+    ya = next((r for r in turno.reservas
+               if r.id_socio == socio.id_socio and r.estado == "RESERVADA"), None)
+    if ya:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{socio.persona.nombre_completo} ya está anotado en esa clase.",
+        )
+
+    if _reservas_activas(turno) >= turno.cupo_maximo:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(f"La clase de {turno.actividad.nombre} del {turno.fecha} "
+                    f"ya está completa ({turno.cupo_maximo} lugares)."),
+        )
+
+    precio = float(turno.actividad.precio_clase_suelta) if turno.actividad else 0.0
+
+    pago = Pago(
+        id_socio=socio.id_socio,
+        id_sede=socio.id_sede,
+        metodo=datos.metodo.value,
+        monto=precio,
+        fecha_pago=datetime.now(),
+        periodo_desde=turno.fecha,
+        periodo_hasta=turno.fecha,
+        estado="CONFIRMADO",
+    )
+    db.add(pago)
+    db.flush()
+
+    reserva = Reserva(
+        id_turno=turno.id_turno,
+        id_socio=socio.id_socio,
+        es_clase_suelta=True,
+        id_pago=pago.id_pago,
+        fecha_reserva=datetime.now(),
+        estado="RESERVADA",
+    )
+    db.add(reserva)
+    db.commit()
+    db.refresh(reserva)
+    db.refresh(pago)
+
+    return ClaseSueltaResponse(
+        reserva=ReservaOut(
+            id_reserva=reserva.id_reserva,
+            id_turno=turno.id_turno,
+            id_socio=socio.id_socio,
+            socio=socio.persona.nombre_completo,
+            actividad=turno.actividad.nombre if turno.actividad else "?",
+            fecha=turno.fecha,
+            hora=turno.hora,
+            estado=reserva.estado,
+            es_clase_suelta=True,
+            clases_restantes=None,
+        ),
+        pago=PagoOut(
+            id_pago=pago.id_pago, id_socio=pago.id_socio,
+            socio=socio.persona.nombre_completo, monto=float(pago.monto),
+            metodo=pago.metodo, fecha_pago=pago.fecha_pago,
+            periodo_desde=pago.periodo_desde, periodo_hasta=pago.periodo_hasta,
+            estado=pago.estado, numero_comprobante=pago.numero_comprobante,
+        ),
+        mensaje=(f"{socio.persona.nombre_completo} compró una clase suelta de "
+                 f"{turno.actividad.nombre if turno.actividad else '?'} por ${precio:,.2f}."),
+    )

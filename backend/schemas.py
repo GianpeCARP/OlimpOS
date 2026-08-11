@@ -584,6 +584,8 @@ class ProfesorActividadOut(BaseModel):
     especialidad: str | None = None
 
 
+
+
 class TurnoOut(BaseModel):
     id_turno: int
     id_actividad: int
@@ -627,6 +629,34 @@ class ReservaOut(BaseModel):
     estado: EstadoReserva
     es_clase_suelta: bool
     clases_restantes: int | None = None
+
+
+class PuedeComprarOut(BaseModel):
+    """
+    Si un socio está en condiciones de comprar un abono, SIN comprar nada.
+
+    Lo consulta la vista de Cobros antes de cobrar: si el abono no va a
+    entrar, hay que ofrecer el combo "renovar cuota + comprar" en vez de
+    cobrar la membresía y descubrirlo después, con la plata ya cobrada.
+    """
+    puede: bool
+    tiene_deuda: bool
+    membresia_cubre: bool
+    vencimiento_membresia: date | None = None
+    vencimiento_abono: date
+    # None cuando `puede` es True. Es el texto que la vista muestra tal cual.
+    motivo: str | None = None
+
+
+class ComprarClaseSueltaRequest(BaseModel):
+    id_socio: int
+    metodo: MetodoPago
+
+
+class ClaseSueltaResponse(BaseModel):
+    reserva: ReservaOut
+    pago: PagoOut
+    mensaje: str
 
 
 # =============================================================================
