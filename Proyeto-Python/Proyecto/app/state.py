@@ -9,11 +9,27 @@
 # existe HTTP: piden datos acá y reciben diccionarios listos para dibujar.
 # Gemelo de los `services/*.ts` de la PWA.
 #
-# La AUTENTICACIÓN ya está conectada a la API real (FastAPI). El resto de los
-# métodos siguen devolviendo datos mock y se van migrando cuando se escriba el
-# router correspondiente — cada uno tiene su TODO con el endpoint que le toca.
+# TODO el estado sale de la API real (FastAPI). No queda ni un dato inventado.
+#
+# Cuando un pedido falla, los getters devuelven una lista vacía en vez de
+# propagar el error: una grilla vacía con su cartel de "todavía no hay nada"
+# es mejor que una pantalla que explota porque el backend está apagado.
+
+from datetime import datetime
 
 from app import api_client
+
+# Método de pago: el enum del esquema en un lado, la etiqueta que ve el
+# usuario en el otro. Los dos sentidos, porque las pantallas muestran
+# "Billetera virtual" y el backend espera "BILLETERA_VIRTUAL".
+METODO_PAGO_DISPLAY = {
+    "EFECTIVO": "Efectivo",
+    "DEBITO": "Débito",
+    "CREDITO": "Crédito",
+    "TRANSFERENCIA": "Transferencia",
+    "BILLETERA_VIRTUAL": "Billetera virtual",
+}
+METODO_PAGO_BACKEND = {v: k for k, v in METODO_PAGO_DISPLAY.items()}
 
 
 class AppState:
@@ -164,218 +180,354 @@ class AppState:
         """
         return any(rol in ("dueno", "recepcionista") for rol in self.get_user_roles())
 
-    # ── Datos mock de socios ──────────────────────────────────────────────────
+    # ── Traductores de formato ────────────────────────────────────────────────
+    # El backend habla ISO (2026-08-11) porque es lo que ordena y compara bien.
+    # Las pantallas muestran dd/mm/aaaa porque es lo que lee una persona. La
+    # traducción vive acá y no en cada vista: si mañana se muestra distinto, se
+    # cambia en un lugar.
+
+    @staticmethod
+    def _fecha(iso: str | None) -> str:
+        """'2026-08-11' -> '11/08/2026'. Devuelve '—' si no hay fecha."""
+        if not iso:
+            return "—"
+        try:
+            return datetime.strptime(iso[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
+        except (ValueError, TypeError):
+            return str(iso)
+
+    @staticmethod
+    def _hora(iso: str | None) -> str:
+        """'2026-08-11T19:42:03' -> '19:42'."""
+        if not iso:
+            return "—"
+        try:
+            return datetime.fromisoformat(iso).strftime("%H:%M")
+        except (ValueError, TypeError):
+            return str(iso)[11:16]
+
+    @staticmethod
+    def _hace_cuanto(iso: str | None) -> str:
+        """
+        Fecha absoluta a texto relativo: 'hace 4 días', 'dentro de 6 días'.
+
+        El backend manda la fecha cruda y no el texto armado a propósito: el
+        texto es presentación, y las dos apps lo redactan igual pero cada una
+        en su idioma de UI. Mandar "hace 4 días" desde el servidor obligaría a
+        que el servidor supiera en qué idioma está la pantalla.
+        """
+        if not iso:
+            return ""
+        try:
+            momento = datetime.fromisoformat(iso)
+        except (ValueError, TypeError):
+            return ""
+
+        dias = (momento.date() - datetime.now().date()).days
+        if dias == 0:
+            return "hoy"
+        if dias == 1:
+            return "mañana"
+        if dias == -1:
+            return "ayer"
+        if dias > 0:
+            return f"dentro de {dias} días"
+        return f"hace {abs(dias)} días"
+
+    @staticmethod
+    def _datos(resultado: dict, por_defecto):
+        """
+        Extrae `data` de una respuesta del api_client, o el default si falló.
+
+        Las vistas NO reciben el error: reciben una lista vacía y muestran su
+        estado vacío ("Todavía no hay socios cargados"). Es deliberado — una
+        grilla que explota porque el backend está apagado es peor que una
+        grilla vacía, y la pantalla de login ya avisa cuando no hay conexión.
+        """
+        return resultado["data"] if resultado.get("ok") else por_defecto
+
+    # ── Socios ────────────────────────────────────────────────────────────────
 
     def get_socios(self) -> list[dict]:
         """
-        Retorna la lista de socios del gimnasio.
-        TODO: reemplazar con GET /api/socios
-        Cada socio tiene: id, nombre, plan, estado y fecha de vencimiento.
+        Lista de socios para la grilla.
+
+        El `estado` y el `plan` YA VIENEN resueltos del backend: se derivan de
+        la membresía vigente, y esa regla —los 7 días de aviso, que "dado de
+        baja" gane sobre "vencido"— tiene que valer igual acá, en la PWA y en
+        cualquier reporte. Derivarla en cada cliente sería mantenerla en tres
+        lugares.
         """
+        datos = self._datos(api_client.obtener_socios(), [])
         return [
-            {"id": 1, "nombre": "Ana García",       "plan": "Premium",  "estado": "Activo",    "vence": "30/06/2025"},
-            {"id": 2, "nombre": "Luis Martínez",     "plan": "Básico",   "estado": "Activo",    "vence": "15/05/2025"},
-            {"id": 3, "nombre": "Sofía López",       "plan": "Premium",  "estado": "Vencido",   "vence": "01/04/2025"},
-            {"id": 4, "nombre": "Marcos Rodríguez",  "plan": "Anual",    "estado": "Activo",    "vence": "10/12/2025"},
-            {"id": 5, "nombre": "Valentina Torres",  "plan": "Básico",   "estado": "Suspendido","vence": "20/04/2025"},
-            {"id": 6, "nombre": "Diego Fernández",   "plan": "Premium",  "estado": "Activo",    "vence": "28/07/2025"},
+            {
+                "id": s["id_socio"],
+                "nombre": f"{s['nombre']} {s['apellido']}".strip(),
+                "plan": s.get("plan") or "Sin plan",
+                "estado": s.get("estado") or "Sin membresía",
+                "vence": self._fecha(s.get("vencimiento")),
+            }
+            for s in datos
         ]
 
-    # ── Datos mock de personal ────────────────────────────────────────────────
+    # ── Personal ──────────────────────────────────────────────────────────────
 
     def get_personal(self) -> list[dict]:
         """
-        Retorna la lista de empleados del gimnasio.
-        TODO: reemplazar con GET /api/personal
-        Cada empleado tiene: id, nombre, rol, turno y estado.
+        Lista de empleados.
+
+        El `rol` no es una columna: el backend lo deriva de en cuál de las
+        cuatro tablas hijas de Empleado está la persona. Y `turno` solo existe
+        para el Recepcionista, así que para el resto viene vacío — se muestra
+        un guion en vez de dejar la celda en blanco.
         """
+        datos = self._datos(api_client.obtener_personal(), [])
         return [
-            {"id": 1, "nombre": "Carlos Pérez",    "rol": "Entrenador",     "turno": "Mañana",  "estado": "Activo"},
-            {"id": 2, "nombre": "María Gómez",     "rol": "Nutricionista",  "turno": "Tarde",   "estado": "Activo"},
-            {"id": 3, "nombre": "Roberto Silva",   "rol": "Recepcionista",  "turno": "Mañana",  "estado": "Activo"},
-            {"id": 4, "nombre": "Natalia Cruz",    "rol": "Entrenadora",    "turno": "Noche",   "estado": "Activo"},
+            {
+                "id": e["id_empleado"],
+                "nombre": f"{e['nombre']} {e['apellido']}".strip(),
+                "rol": e.get("rol") or "Sin asignar",
+                "turno": e.get("turno_laboral") or "—",
+                "estado": "Activo" if e.get("activo") else "Inactivo",
+            }
+            for e in datos
         ]
 
-    # ── Datos mock de rutinas ─────────────────────────────────────────────────
+    # ── Rutinas ───────────────────────────────────────────────────────────────
 
     def get_rutinas(self) -> list[dict]:
         """
-        Retorna el catálogo de rutinas de entrenamiento.
-        TODO: reemplazar con GET /api/rutinas
-        Cada rutina tiene: id, nombre, nivel, días por semana, duración y
-        cantidad de socios asignados.
+        Catálogo de rutinas.
+
+        `duracion` no existe en el esquema —Rutina solo tiene `objetivo` como
+        texto libre— así que se arma a partir de los días por semana. Es la
+        misma decisión que tomó la PWA: inventar una columna en la base para
+        un dato de presentación habría sido peor.
         """
+        datos = self._datos(api_client.obtener_rutinas(), [])
         return [
-            {"id": 1, "nombre": "Fuerza Total",    "nivel": "Avanzado",     "dias": 5, "duracion": "60 min", "asignados": 12},
-            {"id": 2, "nombre": "Cardio Express",  "nivel": "Principiante", "dias": 3, "duracion": "30 min", "asignados": 25},
-            {"id": 3, "nombre": "Hipertrofia Pro", "nivel": "Intermedio",   "dias": 4, "duracion": "75 min", "asignados": 8},
-            {"id": 4, "nombre": "Full Body",       "nivel": "Principiante", "dias": 3, "duracion": "45 min", "asignados": 30},
-            {"id": 5, "nombre": "HIIT Extreme",    "nivel": "Avanzado",     "dias": 4, "duracion": "40 min", "asignados": 15},
+            {
+                "id": r["id_rutina"],
+                "nombre": r["nombre"],
+                "nivel": r.get("nivel") or "Sin nivel",
+                "dias": r.get("dias_por_semana") or 0,
+                "duracion": r.get("objetivo") or "—",
+                "asignados": r.get("asignados", 0),
+            }
+            for r in datos
         ]
 
-    # ── Datos mock de nutrición ───────────────────────────────────────────────
+    # ── Nutrición ─────────────────────────────────────────────────────────────
 
     def get_planes_nutricion(self) -> list[dict]:
-        """
-        Retorna los planes nutricionales disponibles.
-        TODO: reemplazar con GET /api/nutricion
-        Cada plan tiene: id, nombre, calorías diarias, objetivo y socios asignados.
-        """
+        datos = self._datos(api_client.obtener_dietas(), [])
         return [
-            {"id": 1, "nombre": "Volumen Limpio",  "calorias": 3200, "objetivo": "Masa muscular",    "asignados": 10},
-            {"id": 2, "nombre": "Definición",      "calorias": 1800, "objetivo": "Bajar peso",       "asignados": 18},
-            {"id": 3, "nombre": "Mantenimiento",   "calorias": 2400, "objetivo": "Mantenimiento",    "asignados": 22},
-            {"id": 4, "nombre": "Rendimiento",     "calorias": 2800, "objetivo": "Alto rendimiento", "asignados": 7},
+            {
+                "id": d["id_dieta"],
+                "nombre": d["nombre"],
+                "calorias": d.get("calorias_diarias") or 0,
+                "objetivo": d.get("objetivo") or "—",
+                "asignados": d.get("asignados", 0),
+            }
+            for d in datos
         ]
 
-    # ── Stats del dashboard ───────────────────────────────────────────────────
+    # ── Dashboard ─────────────────────────────────────────────────────────────
 
     def get_dashboard_stats(self) -> dict:
         """
-        Estadísticas principales del dashboard.
-        TODO: reemplazar con GET /api/stats
+        Las cuatro métricas de la portada.
 
-        Cada métrica trae `valor` (el número grande) y `delta_pct` (la
-        variación porcentual contra el período anterior). El texto del delta
-        NO viene armado desde acá: la vista le pega la comparación que
-        corresponde ("vs mes anterior", "vs ayer"), igual que hace
-        textoDelta() en DashboardView.tsx de la PWA.
+        `delta_pct` puede venir None cuando el mes anterior fue cero: dividir
+        daría infinito, y mostrar "+100%" al pasar de 0 a 1 socio sería
+        inventar un dato. La vista, con None, no dibuja el delta.
+
+        Ojo: `ingresos_mes` llega en 0 para quien no tiene el permiso de ver
+        ingresos. El backend devuelve cero en vez de omitir el campo para no
+        romper el contrato de la pantalla, que espera las cuatro métricas.
         """
+        vacio = {"valor": 0, "delta_pct": None}
+        datos = self._datos(api_client.obtener_dashboard_stats(), None)
+        if not datos:
+            return {k: dict(vacio) for k in
+                    ("socios_activos", "ingresos_mes", "clases_hoy", "nuevos_mes")}
+
+        def metrica(clave: str) -> dict:
+            m = datos.get(clave) or {}
+            return {"valor": m.get("valor", 0), "delta_pct": m.get("deltaPorcentual")}
+
         return {
-            "socios_activos": {"valor": 148,       "delta_pct": 80.0},
-            "ingresos_mes":   {"valor": 284500,    "delta_pct": -30.7},
-            "clases_hoy":     {"valor": 9,         "delta_pct": 20.0},
-            "nuevos_mes":     {"valor": 23,        "delta_pct": 33.3},
+            "socios_activos": metrica("sociosActivos"),
+            "ingresos_mes": metrica("ingresosMes"),
+            "clases_hoy": metrica("clasesHoy"),
+            "nuevos_mes": metrica("nuevosMes"),
         }
 
+    def get_actividad_reciente(self) -> list[dict]:
+        """
+        Feed del dashboard. El backend manda la fecha cruda y acá se convierte
+        a "hace 4 días" — ver _hace_cuanto.
+        """
+        datos = self._datos(api_client.obtener_actividad_reciente(), [])
+        return [
+            {
+                # El backend ya manda el tipo en la forma que la vista usa para
+                # elegir el ícono: pago / nuevo_socio / vencimiento. Acá había
+                # un diccionario que traducía desde MAYÚSCULAS y no matcheaba
+                # nunca, así que todo caía al default y un alta se dibujaba con
+                # el ícono de pago. Sin traducción no puede volver a pasar.
+                "tipo": e.get("tipo", ""),
+                "desc": e.get("descripcion", ""),
+                "hora": self._hace_cuanto(e.get("fecha")),
+            }
+            for e in datos
+        ]
+
     # ── Cobros ────────────────────────────────────────────────────────────────
-    # Sección espejo de CobrosView.tsx de la PWA: recepción busca un socio, ve
-    # su estado de cuenta y le cobra membresía, deuda, plan de actividad o
-    # clase suelta.
 
     def get_tipos_membresia(self) -> list[dict]:
-        """
-        Planes de membresía que se pueden cobrar.
-        TODO: reemplazar con GET /api/tipos-membresia
-        """
+        datos = self._datos(api_client.obtener_tipos_membresia(), [])
         return [
-            {"id": 1, "nombre": "Mensual Full",     "dias": 30,  "precio": 28000},
-            {"id": 2, "nombre": "Mensual Básico",   "dias": 30,  "precio": 19500},
-            {"id": 3, "nombre": "Trimestral Full",  "dias": 90,  "precio": 75000},
-            {"id": 4, "nombre": "Pase Libre Anual", "dias": 365, "precio": 260000},
+            {
+                "id": t["id_tipo_membresia"],
+                "nombre": t["nombre"],
+                "dias": t["duracion_dias"],
+                "precio": t["precio_actual"],
+            }
+            for t in datos
         ]
 
     def get_cuenta_socio(self, id_socio: int) -> dict:
         """
-        Estado de cuenta de un socio: su membresía, lo que debe y lo que pagó.
-        TODO: reemplazar con GET /api/socios/{id}/cuenta
+        Estado de cuenta: membresía vigente, deudas y últimos pagos.
+
+        `dias_atraso` lo calcula esta capa a partir de la fecha de generación
+        de la deuda. Podría venir del backend, pero es puro formato de
+        pantalla: el dato real es la fecha, y el "hace 8 días" cambia solo con
+        que pase el tiempo.
         """
+        vacio = {"plan": "—", "estado": "Sin membresía", "vencimiento": "—",
+                 "deudas": [], "total_adeudado": 0, "pagos": []}
+        datos = self._datos(api_client.obtener_estado_cuenta(id_socio), None)
+        if not datos:
+            return vacio
+
+        membresia = datos.get("membresia_actual") or {}
+        hoy = datetime.now().date()
+
+        deudas = []
+        for d in datos.get("deudas", []):
+            atraso = 0
+            try:
+                generada = datetime.strptime(d["fecha_generacion"][:10], "%Y-%m-%d").date()
+                atraso = max(0, (hoy - generada).days)
+            except (ValueError, TypeError, KeyError):
+                pass
+            deudas.append({
+                "id": d["id_deuda"],
+                "monto": d["monto"],
+                "generada": self._fecha(d.get("fecha_generacion")),
+                "detalle": d.get("observaciones") or "Cuota adeudada",
+                "dias_atraso": atraso,
+            })
+
         return {
-            "plan": "Mensual Full",
-            "estado": "Por vencer",
-            "vencimiento": "11/08/2026",
-            "deudas": [
-                {"id": 1, "monto": 21600, "generada": "01/07/2026",
-                 "detalle": "Cuota mensual del plan anual", "dias_atraso": 8},
-            ],
-            "total_adeudado": 21600,
+            "plan": membresia.get("tipo") or "—",
+            # "Al día" / "Con deuda" es lo que decide el backend cruzando
+            # membresía vigente Y ausencia de deudas: alguien puede tener la
+            # cuota del mes paga y arrastrar una deuda vieja.
+            "estado": "Al día" if datos.get("al_dia") else "Con deuda",
+            "vencimiento": self._fecha(membresia.get("fecha_vencimiento")),
+            "deudas": deudas,
+            "total_adeudado": datos.get("deuda_total", 0),
             "pagos": [
-                {"id": 1, "fecha": "04/08/2026", "monto": 28000, "metodo": "Efectivo",
-                 "estado": "Confirmado", "comprobante": "A-000113"},
-                {"id": 2, "fecha": "06/07/2026", "monto": 28000, "metodo": "Transferencia",
-                 "estado": "Confirmado", "comprobante": "A-000102"},
-                {"id": 3, "fecha": "05/06/2026", "monto": 28000, "metodo": "Débito",
-                 "estado": "Confirmado", "comprobante": "A-000091"},
+                {
+                    "id": p["id_pago"],
+                    "fecha": self._fecha(p.get("fecha_pago")),
+                    "monto": p["monto"],
+                    "metodo": METODO_PAGO_DISPLAY.get(p.get("metodo"), p.get("metodo", "—")),
+                    "estado": p.get("estado", "").capitalize(),
+                    "comprobante": p.get("numero_comprobante") or "—",
+                }
+                for p in datos.get("ultimos_pagos", [])
             ],
         }
 
     def get_metodos_pago(self) -> list[str]:
-        """Medios de pago aceptados (enum metodo_pago del esquema)."""
-        return ["Efectivo", "Débito", "Crédito", "Transferencia", "Billetera virtual"]
+        """
+        Medios de pago, con la etiqueta que ve el usuario.
+
+        La lista es fija porque es un enum del esquema, no datos: pedirla a la
+        API sería un viaje de red para traer algo que no cambia nunca. Lo que
+        sí importa es que estas etiquetas se traduzcan de vuelta al valor del
+        enum antes de cobrar — para eso está METODO_PAGO_BACKEND.
+        """
+        return list(METODO_PAGO_DISPLAY.values())
 
     # ── Asistencia ────────────────────────────────────────────────────────────
-    # Espejo de AsistenciaView.tsx: fichaje por tarjeta RFID + carga manual.
 
     def get_asistencias_hoy(self) -> list[dict]:
-        """
-        Fichajes del día en la sede activa, del más reciente al más viejo.
-        TODO: reemplazar con GET /api/asistencias?fecha=hoy
-        """
+        datos = self._datos(api_client.obtener_asistencias_hoy(), [])
         return [
-            {"id": 5, "socio": "Sofía Ledesma",     "hora": "19:42", "metodo": "RFID"},
-            {"id": 4, "socio": "Diego Sosa",        "hora": "19:15", "metodo": "RFID"},
-            {"id": 3, "socio": "Valentina Ríos",    "hora": "18:58", "metodo": "Manual"},
-            {"id": 2, "socio": "Nicolás Paz",       "hora": "18:30", "metodo": "RFID"},
-            {"id": 1, "socio": "Federico Arce",     "hora": "17:47", "metodo": "RFID"},
+            {
+                "id": a["id_asistencia"],
+                "socio": a.get("socio", "—"),
+                "hora": self._hora(a.get("fecha_hora_ingreso")),
+                "metodo": "RFID" if a.get("metodo_registro") == "RFID" else "Manual",
+            }
+            for a in datos
         ]
 
     # ── Actividades ───────────────────────────────────────────────────────────
-    # Espejo de ActividadesAdminView.tsx: ABM del catálogo (actividad + sus
-    # planes) y asignación de profesores.
 
     def get_actividades(self) -> list[dict]:
         """
-        Catálogo de actividades con sus planes y profesores asignados.
-        TODO: reemplazar con GET /api/actividades
+        Catálogo con sus planes y los profesores asignados.
+
+        Los profesores necesitan un pedido por actividad, así que la lista de
+        nombres se arma acá. Con tres o cuatro actividades es despreciable; si
+        el catálogo creciera mucho, correspondería un endpoint que los traiga
+        anidados como ya vienen los planes.
         """
-        return [
-            {
-                "id": 1, "nombre": "Musculación", "activa": True,
-                "descripcion": "Acceso libre a la sala de musculación y cardio.",
-                "cupo": 40, "precio_suelta": 3500, "horas_cancelacion": 0,
-                "profesores": [],
+        datos = self._datos(api_client.obtener_actividades(), [])
+
+        salida = []
+        for a in datos:
+            profesores = self._datos(
+                api_client.obtener_profesores_de_actividad(a["id_actividad"]), []
+            )
+            salida.append({
+                "id": a["id_actividad"],
+                "nombre": a["nombre"],
+                "activa": a.get("activo", True),
+                "descripcion": a.get("descripcion") or "",
+                "cupo": a.get("cupo_default", 0),
+                "precio_suelta": a.get("precio_clase_suelta", 0),
+                "horas_cancelacion": a.get("horas_anticipacion_cancelacion", 0),
+                "profesores": [p.get("nombre", "?") for p in profesores],
                 "planes": [
-                    {"id": 1, "nombre": "12 clases al mes", "tipo": "POR_MES",    "cantidad": 12, "precio": 28000, "activo": True},
-                    {"id": 2, "nombre": "20 clases al mes", "tipo": "POR_MES",    "cantidad": 20, "precio": 42000, "activo": True},
+                    {
+                        "id": p["id_plan_actividad"],
+                        "nombre": p["nombre"],
+                        "tipo": p["tipo_limite"],
+                        "cantidad": p["cantidad"],
+                        "precio": p["precio"],
+                        "activo": p.get("activo", True),
+                    }
+                    for p in a.get("planes", [])
                 ],
-            },
-            {
-                "id": 2, "nombre": "Yoga", "activa": True,
-                "descripcion": "Clase de yoga para todos los niveles.",
-                "cupo": 20, "precio_suelta": 4500, "horas_cancelacion": 12,
-                "profesores": ["Romina Duarte"],
-                "planes": [
-                    {"id": 3, "nombre": "2 veces por semana", "tipo": "POR_SEMANA", "cantidad": 2, "precio": 15000, "activo": True},
-                    {"id": 4, "nombre": "8 clases al mes",    "tipo": "POR_MES",    "cantidad": 8, "precio": 26000, "activo": True},
-                ],
-            },
-            {
-                "id": 3, "nombre": "Boxeo", "activa": True,
-                "descripcion": "Clase de boxeo recreativo, grupal.",
-                "cupo": 15, "precio_suelta": 5000, "horas_cancelacion": 24,
-                "profesores": ["Romina Duarte"],
-                "planes": [
-                    {"id": 5, "nombre": "3 veces por semana", "tipo": "POR_SEMANA", "cantidad": 3,  "precio": 20000, "activo": True},
-                    {"id": 6, "nombre": "12 clases al mes",   "tipo": "POR_MES",    "cantidad": 12, "precio": 45000, "activo": True},
-                ],
-            },
-        ]
+            })
+        return salida
 
     def get_profesores(self) -> list[dict]:
-        """
-        Profesores activos, para el diálogo de asignación.
-        TODO: reemplazar con GET /api/profesores
-        """
+        datos = self._datos(api_client.obtener_todos_los_profesores(), [])
         return [
-            {"id": 1, "nombre": "Romina Duarte", "especialidad": "Yoga y Boxeo recreativo"},
-            {"id": 2, "nombre": "Bruno Ferrari", "especialidad": "Crossfit y funcional"},
-        ]
-
-    def get_actividad_reciente(self) -> list[dict]:
-        """
-        Retorna las últimas actividades del sistema para el feed del dashboard.
-        TODO: reemplazar con GET /api/actividad?limit=5
-        Cada actividad tiene: tipo (determina el ícono), descripción y hora relativa.
-        """
-        # Mismos textos que arma dashboardService.ts en la PWA: los
-        # vencimientos se redactan en futuro ("Vence la membresía de…") porque
-        # son los que piden una acción, y los pagos en pasado con el monto.
-        return [
-            {"tipo": "vencimiento", "desc": "Vence la membresía de Julieta Molina",  "hora": "dentro de 6 días"},
-            {"tipo": "vencimiento", "desc": "Vence la membresía de Martín Gómez",    "hora": "dentro de 3 días"},
-            {"tipo": "pago",        "desc": "Martín Gómez pagó $ 28.000",             "hora": "hace 4 días"},
-            {"tipo": "nuevo_socio", "desc": "Sofía Ledesma se dio de alta como socio","hora": "hace 4 días"},
-            {"tipo": "pago",        "desc": "Diego Sosa pagó $ 37.500",               "hora": "hace 4 días"},
+            {
+                "id": p["id_profesor"],
+                "nombre": p.get("nombre", "?"),
+                "especialidad": p.get("especialidad") or p.get("titulo") or "—",
+            }
+            for p in datos
         ]
 
 

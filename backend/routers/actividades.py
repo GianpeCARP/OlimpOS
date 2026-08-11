@@ -480,6 +480,41 @@ def listar_reservas(
     ]
 
 
+@router.get("/profesores", response_model=list[ProfesorActividadOut])
+def listar_todos_los_profesores(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES)),
+):
+    """
+    Todos los profesores activos del plantel, estén o no asignados.
+
+    Va aparte de `/{id_actividad}/profesores` —que devuelve solo los
+    asignados— porque el panel de asignación necesita las DOS listas: los que
+    ya están y los que se podrían agregar. Sin este endpoint, el frontend
+    tendría que sacarlos de /personal y ahí solo viene `id_empleado`, no
+    `id_profesor`, que es lo que la tabla puente necesita.
+
+    Declarado ANTES de /{id_actividad}/profesores: si fuera después, FastAPI
+    intentaría leer "profesores" como si fuera un id de actividad.
+    """
+    profesores = (
+        db.query(Profesor)
+        .join(Empleado, Profesor.id_empleado == Empleado.id_empleado)
+        .filter(Empleado.activo == True)  # noqa: E712
+        .all()
+    )
+    salida = []
+    for p in profesores:
+        persona = p.empleado.persona if p.empleado else None
+        salida.append(ProfesorActividadOut(
+            id_profesor=p.id_profesor,
+            nombre=persona.nombre_completo if persona else "?",
+            titulo=p.titulo,
+            especialidad=p.especialidad,
+        ))
+    return salida
+
+
 # =============================================================================
 # ABM DE ACTIVIDADES Y PLANES
 # =============================================================================
@@ -687,41 +722,6 @@ def alternar_estado_plan(
 # =============================================================================
 # PROFESORES POR ACTIVIDAD
 # =============================================================================
-
-@router.get("/profesores", response_model=list[ProfesorActividadOut])
-def listar_todos_los_profesores(
-    db: Session = Depends(get_db),
-    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES)),
-):
-    """
-    Todos los profesores activos del plantel, estén o no asignados.
-
-    Va aparte de `/{id_actividad}/profesores` —que devuelve solo los
-    asignados— porque el panel de asignación necesita las DOS listas: los que
-    ya están y los que se podrían agregar. Sin este endpoint, el frontend
-    tendría que sacarlos de /personal y ahí solo viene `id_empleado`, no
-    `id_profesor`, que es lo que la tabla puente necesita.
-
-    Declarado ANTES de /{id_actividad}/profesores: si fuera después, FastAPI
-    intentaría leer "profesores" como si fuera un id de actividad.
-    """
-    profesores = (
-        db.query(Profesor)
-        .join(Empleado, Profesor.id_empleado == Empleado.id_empleado)
-        .filter(Empleado.activo == True)  # noqa: E712
-        .all()
-    )
-    salida = []
-    for p in profesores:
-        persona = p.empleado.persona if p.empleado else None
-        salida.append(ProfesorActividadOut(
-            id_profesor=p.id_profesor,
-            nombre=persona.nombre_completo if persona else "?",
-            titulo=p.titulo,
-            especialidad=p.especialidad,
-        ))
-    return salida
-
 
 @router.get("/{id_actividad}/profesores", response_model=list[ProfesorActividadOut])
 def listar_profesores(

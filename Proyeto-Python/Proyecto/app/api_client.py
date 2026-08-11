@@ -195,3 +195,221 @@ def cambiar_password(username: str, password_actual: str, password_nueva: str) -
 def estado_api() -> dict:
     """GET / — chequeo de que el backend está vivo. No requiere token."""
     return _get("/")
+
+
+# =============================================================================
+# SOCIOS
+# =============================================================================
+
+def obtener_socios() -> dict:
+    return _get("/socios")
+
+
+def obtener_socio(id_socio: int) -> dict:
+    return _get(f"/socios/{id_socio}")
+
+
+def alta_socio(datos: dict) -> dict:
+    return _post("/socios", datos)
+
+
+def editar_socio(id_socio: int, datos: dict) -> dict:
+    return _put(f"/socios/{id_socio}", datos)
+
+
+def dar_de_baja_socio(id_socio: int, tipo: str = "VOLUNTARIA", motivo: str | None = None) -> dict:
+    return _post(f"/socios/{id_socio}/baja", {"tipo": tipo, "motivo": motivo})
+
+
+def reactivar_socio(id_socio: int) -> dict:
+    return _post(f"/socios/{id_socio}/reactivar")
+
+
+# =============================================================================
+# PERSONAL
+# =============================================================================
+
+def obtener_personal() -> dict:
+    return _get("/personal")
+
+
+def alta_empleado(datos: dict) -> dict:
+    return _post("/personal", datos)
+
+
+# =============================================================================
+# RUTINAS
+# =============================================================================
+
+def obtener_rutinas() -> dict:
+    return _get("/rutinas")
+
+
+def obtener_rutina(id_rutina: int) -> dict:
+    return _get(f"/rutinas/{id_rutina}")
+
+
+def obtener_ejercicios() -> dict:
+    return _get("/rutinas/ejercicios")
+
+
+def crear_rutina(datos: dict) -> dict:
+    return _post("/rutinas", datos)
+
+
+def asignar_rutina(id_rutina: int, id_socio: int) -> dict:
+    return _post(f"/rutinas/{id_rutina}/asignar", {"id_socio": id_socio})
+
+
+# =============================================================================
+# NUTRICIÓN
+# =============================================================================
+
+def obtener_dietas() -> dict:
+    return _get("/nutricion")
+
+
+def obtener_dieta(id_dieta: int) -> dict:
+    return _get(f"/nutricion/{id_dieta}")
+
+
+def crear_dieta(datos: dict) -> dict:
+    return _post("/nutricion", datos)
+
+
+def asignar_dieta(id_dieta: int, id_socio: int) -> dict:
+    return _post(f"/nutricion/{id_dieta}/asignar", {"id_socio": id_socio})
+
+
+# =============================================================================
+# COBROS
+# =============================================================================
+
+def obtener_tipos_membresia() -> dict:
+    return _get("/cobros/tipos-membresia")
+
+
+def obtener_estado_cuenta(id_socio: int) -> dict:
+    return _get(f"/cobros/socio/{id_socio}")
+
+
+def obtener_deudas() -> dict:
+    return _get("/cobros/deudas")
+
+
+def cobrar(datos: dict) -> dict:
+    return _post("/cobros", datos)
+
+
+def anular_pago(id_pago: int) -> dict:
+    return _post(f"/cobros/pagos/{id_pago}/anular")
+
+
+# =============================================================================
+# ASISTENCIA
+# =============================================================================
+
+def obtener_asistencias_hoy() -> dict:
+    return _get("/asistencia/hoy")
+
+
+def fichar_rfid(codigo_rfid: str) -> dict:
+    return _post("/asistencia/fichar", {"codigo_rfid": codigo_rfid})
+
+
+def fichar_manual(id_socio: int) -> dict:
+    return _post("/asistencia/fichar", {"id_socio": id_socio})
+
+
+# =============================================================================
+# ACTIVIDADES
+# =============================================================================
+
+def obtener_actividades() -> dict:
+    return _get("/actividades")
+
+
+def obtener_todos_los_profesores() -> dict:
+    return _get("/actividades/profesores")
+
+
+def obtener_profesores_de_actividad(id_actividad: int) -> dict:
+    return _get(f"/actividades/{id_actividad}/profesores")
+
+
+def crear_actividad(datos: dict) -> dict:
+    return _post("/actividades", datos)
+
+
+def editar_actividad(id_actividad: int, datos: dict) -> dict:
+    return _put(f"/actividades/{id_actividad}", datos)
+
+
+def cambiar_estado_actividad(id_actividad: int, activo: bool) -> dict:
+    # El estado destino va explícito y no como toggle: con una pantalla
+    # desactualizada, "dar de baja" sobre algo ya dado de baja lo reactivaría.
+    return _post(f"/actividades/{id_actividad}/toggle-estado?activo={str(activo).lower()}")
+
+
+def crear_plan_actividad(id_actividad: int, datos: dict) -> dict:
+    return _post(f"/actividades/{id_actividad}/planes", datos)
+
+
+def editar_plan_actividad(id_plan: int, datos: dict) -> dict:
+    return _put(f"/actividades/planes/{id_plan}", datos)
+
+
+def cambiar_estado_plan(id_plan: int, activo: bool) -> dict:
+    return _post(f"/actividades/planes/{id_plan}/toggle-estado?activo={str(activo).lower()}")
+
+
+def asignar_profesor(id_actividad: int, id_profesor: int) -> dict:
+    return _post(f"/actividades/{id_actividad}/profesores/{id_profesor}")
+
+
+def desasignar_profesor(id_actividad: int, id_profesor: int) -> dict:
+    return _delete(f"/actividades/{id_actividad}/profesores/{id_profesor}")
+
+
+# =============================================================================
+# USUARIOS
+# =============================================================================
+
+def obtener_usuarios() -> dict:
+    return _get("/usuarios")
+
+
+def obtener_personas_sin_cuenta() -> dict:
+    return _get("/usuarios/personas-sin-cuenta")
+
+
+def crear_cuenta(id_persona: int) -> dict:
+    return _post("/usuarios", {"id_persona": id_persona})
+
+
+def resetear_password(id_usuario: int) -> dict:
+    return _post(f"/usuarios/{id_usuario}/resetear-password")
+
+
+def desbloquear_usuario(id_usuario: int) -> dict:
+    return _post(f"/usuarios/{id_usuario}/desbloquear")
+
+
+def cambiar_estado_usuario(id_usuario: int) -> dict:
+    return _post(f"/usuarios/{id_usuario}/toggle-estado")
+
+
+# =============================================================================
+# DASHBOARD
+# =============================================================================
+
+def obtener_dashboard_stats() -> dict:
+    return _get("/dashboard/stats")
+
+
+def obtener_actividad_reciente() -> dict:
+    return _get("/dashboard/actividad")
+
+
+def obtener_socios_recientes() -> dict:
+    return _get("/dashboard/socios-recientes")
