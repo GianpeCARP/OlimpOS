@@ -2,3 +2,8 @@
 .vscode/
 __pycache__/
 *.pyc
+
+# El .env NO va al repo: hoy solo tiene API_URL, pero es el archivo donde
+# terminan las credenciales el día que haga falta una. Se versiona
+# .env.example, que muestra qué claves hacen falta sin sus valores.
+.env
