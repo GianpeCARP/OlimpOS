@@ -3,12 +3,12 @@
 # =============================================================================
 
 import flet as ft
-from app.config import Colors                 # Paleta de colores del sistema
+from app.config import Colors, Routes         # Paleta de colores y rutas
 from app.state import app_state               # Estado global con los datos de socios
 # Componentes reutilizables del sistema de diseño
 from app.components.ui import (build_topbar, status_badge, primary_button,
                                input_field, show_snack, open_dialog,
-                               close_dialog, confirm_dialog)
+                               close_dialog)
 
 
 class SociosView:
@@ -245,8 +245,18 @@ class SociosView:
                 ft.Row([
                     ft.IconButton(ft.Icons.EDIT_ROUNDED, icon_color=Colors.INFO, icon_size=18, tooltip="Editar",
                                   on_click=lambda e, x=s: self._open_form(e, x)),
-                    ft.IconButton(ft.Icons.DELETE_OUTLINE_ROUNDED, icon_color=Colors.DANGER, icon_size=18, tooltip="Eliminar",
-                                  on_click=lambda e, x=s: self._confirm_delete(x)),
+                    # Baja o reactivación según cómo esté. El botón de "eliminar"
+                    # que había acá prometía algo que el sistema no hace: la baja
+                    # es LÓGICA —la fila queda, con su historial de pagos y
+                    # asistencias— y se puede deshacer. Un socio dado de baja
+                    # muestra el botón de volver a activarlo, no uno de borrar.
+                    (ft.IconButton(ft.Icons.PERSON_OFF_ROUNDED, icon_color=Colors.DANGER,
+                                   icon_size=18, tooltip="Dar de baja",
+                                   on_click=lambda e, x=s: self._confirmar_baja(x))
+                     if s["estado"] != "Dado de baja" else
+                     ft.IconButton(ft.Icons.PERSON_ADD_ALT_1_ROUNDED, icon_color=Colors.SUCCESS,
+                                   icon_size=18, tooltip="Reactivar",
+                                   on_click=lambda e, x=s: self._reactivar(x))),
                 ], expand=2),
             ]),
             padding=ft.Padding.symmetric(horizontal=20, vertical=12),
@@ -256,61 +266,275 @@ class SociosView:
         )
 
     def _open_form(self, e=None, socio: dict = None):
-        """Abre el modal para crear o editar un socio."""
-        is_edit    = socio is not None
-        nombre_ref = ft.Ref[ft.TextField]()
-        plan_ref   = ft.Ref[ft.Dropdown]()
+        """
+        Abre el modal para crear o editar un socio.
+
+        Dos cambios respecto de la versión con datos de prueba:
+
+        1. Nombre y apellido van SEPARADOS. Persona los guarda en dos columnas
+           y el "nombre completo" de un solo campo no se puede partir de forma
+           confiable — "Juan Carlos De la Fuente" no se resuelve con un split.
+
+        2. Se fue el selector de "Plan". El plan no es un dato del socio: es
+           una Membresía, que se crea cobrándola. Elegirlo en el alta daba a
+           entender que el socio quedaba con plan asignado sin haber pagado
+           nada, y no quedaba: el alta no tocaba ninguna membresía. En su
+           lugar va "Objetivo", que sí es una columna de Socio.
+        """
+        is_edit = socio is not None
+
+        nombre_ref   = ft.Ref[ft.TextField]()
+        apellido_ref = ft.Ref[ft.TextField]()
+        dni_ref      = ft.Ref[ft.TextField]()
+        email_ref    = ft.Ref[ft.TextField]()
+        telefono_ref = ft.Ref[ft.TextField]()
+        objetivo_ref = ft.Ref[ft.TextField]()
+        obs_ref      = ft.Ref[ft.TextField]()
 
         dlg = ft.AlertDialog(
             modal=True,
-            title=ft.Text("Editar Socio" if is_edit else "Nuevo Socio", color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
+            title=ft.Text("Editar Socio" if is_edit else "Nuevo Socio",
+                          color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
             bgcolor=Colors.BG_CARD,
             content=ft.Container(
                 width=420,
+                height=400,
                 content=ft.Column([
-                    input_field("Nombre completo", "Ej: Juan García", icon=ft.Icons.PERSON_OUTLINE_ROUNDED, ref=nombre_ref),
+                    input_field("Nombre", "Ej: Juan", ref=nombre_ref,
+                                icon=ft.Icons.PERSON_OUTLINE_ROUNDED,
+                                value=socio["nombre_pila"] if is_edit else ""),
                     ft.Container(height=12),
-                    ft.Dropdown(
-                        ref=plan_ref,
-                        label="Plan",
-                        options=[
-                            ft.dropdown.Option("Básico"),
-                            ft.dropdown.Option("Premium"),
-                            ft.dropdown.Option("Anual"),
-                        ],
-                        value=socio["plan"] if is_edit else "Básico",
-                        color=Colors.TEXT_PRIMARY,
-                        bgcolor=Colors.BG_INPUT,
-                        border_color=Colors.BORDER,
-                        focused_border_color=Colors.ACCENT,
-                        border_radius=10,
-                    ),
+                    input_field("Apellido", "Ej: García", ref=apellido_ref,
+                                icon=ft.Icons.PERSON_OUTLINE_ROUNDED,
+                                value=socio["apellido"] if is_edit else ""),
                     ft.Container(height=12),
-                    input_field("Email", "ejemplo@mail.com", icon=ft.Icons.EMAIL_OUTLINED),
+                    # En edición el DNI se muestra pero no se manda: cambiarlo
+                    # sería decir que es otra persona, y el backend directamente
+                    # no lo acepta en el PUT.
+                    input_field("DNI", "Ej: 30123456", ref=dni_ref,
+                                icon=ft.Icons.BADGE_OUTLINED,
+                                value=socio["dni"] if is_edit else ""),
                     ft.Container(height=12),
-                    input_field("Teléfono", "+54 9 000 0000000", icon=ft.Icons.PHONE_OUTLINED),
-                ], spacing=0, tight=True),
+                    input_field("Email", "ejemplo@mail.com", ref=email_ref,
+                                icon=ft.Icons.EMAIL_OUTLINED,
+                                value=socio["email"] if is_edit else ""),
+                    ft.Container(height=12),
+                    input_field("Teléfono", "Ej: 3415551234", ref=telefono_ref,
+                                icon=ft.Icons.PHONE_OUTLINED,
+                                value=socio["telefono"] if is_edit else ""),
+                    ft.Container(height=12),
+                    input_field("Objetivo", "Ej: Bajar de peso", ref=objetivo_ref,
+                                icon=ft.Icons.FLAG_OUTLINED,
+                                value=socio["objetivo"] if is_edit else ""),
+                    ft.Container(height=12),
+                    input_field("Observaciones", "Lesiones, restricciones...",
+                                ref=obs_ref, multiline=True,
+                                value=socio["observaciones"] if is_edit else ""),
+                ], spacing=0, tight=True, scroll=ft.ScrollMode.AUTO),
             ),
             actions=[
-                ft.TextButton("Cancelar", style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY), on_click=lambda e: close_dialog(self.page, dlg)),
-                ft.TextButton("Guardar", style=ft.ButtonStyle(color=Colors.ACCENT), on_click=lambda e: self._save_socio(dlg)),
+                ft.TextButton("Cancelar",
+                              style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                              on_click=lambda e: close_dialog(self.page, dlg)),
+                ft.TextButton("Guardar",
+                              style=ft.ButtonStyle(color=Colors.ACCENT),
+                              on_click=lambda e: self._save_socio(
+                                  dlg,
+                                  socio["id"] if is_edit else None,
+                                  {"nombre": nombre_ref, "apellido": apellido_ref,
+                                   "dni": dni_ref, "email": email_ref,
+                                   "telefono": telefono_ref,
+                                   "objetivo": objetivo_ref, "observaciones": obs_ref},
+                              )),
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )
-        if is_edit and nombre_ref.current:
-            nombre_ref.current.value = socio["nombre"]
 
         open_dialog(self.page, dlg)
 
-    def _save_socio(self, dlg):
-        close_dialog(self.page, dlg)
-        show_snack(self.page, "Socio guardado correctamente ✓", Colors.SUCCESS)
+    @staticmethod
+    def _texto(ref) -> str:
+        """Lee un campo aunque todavía no esté montado, sin reventar."""
+        return (ref.current.value or "").strip() if ref.current else ""
 
-    def _confirm_delete(self, socio: dict):
-        dlg = confirm_dialog(
-            self.page,
-            "Eliminar Socio",
-            f"¿Estás seguro de eliminar a {socio['nombre']}? Esta acción no se puede deshacer.",
-            on_confirm=lambda: show_snack(self.page, f"{socio['nombre']} eliminado", Colors.DANGER),
+    def _save_socio(self, dlg, id_socio, refs):
+        datos = {campo: self._texto(ref) for campo, ref in refs.items()}
+
+        faltan = [c for c in ("nombre", "apellido") if not datos[c]]
+        if id_socio is None and not datos["dni"]:
+            faltan.append("dni")
+        if faltan:
+            show_snack(self.page, "Falta completar: " + ", ".join(faltan),
+                       Colors.STATUS_DANGER)
+            return
+
+        # Los opcionales van como None y no como "": el backend valida el mail
+        # con EmailStr y una cadena vacía no es un mail válido — mandarla haría
+        # fallar el alta de alguien que simplemente no dejó mail.
+        cuerpo = {
+            "nombre": datos["nombre"],
+            "apellido": datos["apellido"],
+            "email": datos["email"] or None,
+            "telefono": datos["telefono"] or None,
+            "objetivo": datos["objetivo"] or None,
+            "observaciones": datos["observaciones"] or None,
+        }
+
+        if id_socio is None:
+            cuerpo["dni"] = datos["dni"]
+            # id_sede clavado en 1 igual que en la PWA (sociosService.ts): el
+            # gimnasio tiene una sola sede y no hay endpoint que las liste.
+            cuerpo["id_sede"] = 1
+            cuerpo["crear_cuenta"] = True
+            resultado = app_state.alta_socio(cuerpo)
+        else:
+            resultado = app_state.editar_socio(id_socio, cuerpo)
+
+        if not resultado["ok"]:
+            show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+            return
+
+        close_dialog(self.page, dlg)
+
+        if id_socio is None and resultado.get("password_temporal"):
+            self._mostrar_credenciales(resultado)
+        else:
+            show_snack(self.page, resultado["mensaje"], Colors.SUCCESS)
+
+        self.router.navigate(Routes.SOCIOS)
+
+    def _mostrar_credenciales(self, resultado: dict):
+        """
+        Muestra el número de socio y las credenciales del alta.
+
+        Diálogo y no snack: la contraseña temporal es la única vez que existe
+        legible —en la base queda el hash— y un snack se va solo antes de que
+        alguien alcance a copiarla.
+
+        `texto_credenciales` viene armado por el backend para mandar por
+        WhatsApp cuando el mail no salió, que es la alternativa que contempla
+        la consigna.
+        """
+        texto = resultado.get("texto_credenciales")
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Socio dado de alta",
+                          color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
+            bgcolor=Colors.BG_CARD,
+            content=ft.Container(
+                width=400,
+                content=ft.Column([
+                    ft.Text(resultado.get("mensaje", ""),
+                            color=Colors.TEXT_SECONDARY, size=13),
+                    ft.Container(height=12),
+                    ft.Text(f"N° de socio: {resultado.get('numero_socio', '—')}",
+                            color=Colors.TEXT_PRIMARY, size=13,
+                            weight=ft.FontWeight.W_500, selectable=True),
+                    ft.Container(height=8),
+                    ft.Text(f"Usuario: {resultado.get('usuario', '—')}",
+                            color=Colors.TEXT_PRIMARY, size=14,
+                            weight=ft.FontWeight.BOLD, selectable=True),
+                    ft.Text(f"Contraseña temporal: {resultado.get('password_temporal', '—')}",
+                            color=Colors.PRIMARY_VOLT, size=14,
+                            weight=ft.FontWeight.BOLD, selectable=True),
+                    ft.Container(height=12),
+                    ft.Text("Anotala ahora: no se puede volver a ver. "
+                            "Se la va a pedir cambiar al entrar por primera vez.",
+                            color=Colors.STATUS_WARN, size=12),
+                    *([ft.Container(height=12),
+                       ft.Text("Mensaje para enviar:", color=Colors.TEXT_MUTED, size=12),
+                       ft.Container(
+                           content=ft.Text(texto, color=Colors.TEXT_SECONDARY,
+                                           size=12, selectable=True),
+                           bgcolor=Colors.BG_INPUT,
+                           border_radius=8,
+                           padding=ft.Padding.all(10),
+                       )] if texto else []),
+                ], spacing=0, tight=True, scroll=ft.ScrollMode.AUTO),
+                height=340,
+            ),
+            actions=[
+                ft.TextButton("Listo",
+                              style=ft.ButtonStyle(color=Colors.ACCENT),
+                              on_click=lambda e: close_dialog(self.page, dlg)),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
         )
         open_dialog(self.page, dlg)
+
+    def _confirmar_baja(self, socio: dict):
+        """
+        Da de baja al socio. Pide el tipo porque no todas las bajas son
+        iguales: la voluntaria la pide el socio, la de mora la decide el
+        gimnasio, y la administrativa cubre el resto. El backend guarda el
+        motivo en la tabla Baja, así que elegir mal deja mal el historial.
+        """
+        tipo_ref   = ft.Ref[ft.Dropdown]()
+        motivo_ref = ft.Ref[ft.TextField]()
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Dar de baja",
+                          color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
+            bgcolor=Colors.BG_CARD,
+            content=ft.Container(
+                width=400,
+                content=ft.Column([
+                    ft.Text(f"Se va a dar de baja a {socio['nombre']}.",
+                            color=Colors.TEXT_SECONDARY, size=13),
+                    ft.Container(height=8),
+                    ft.Text("La ficha NO se borra: queda su historial de pagos y "
+                            "asistencias, y se puede reactivar. Se cancela la "
+                            "membresía vigente y se desactiva su cuenta.",
+                            color=Colors.TEXT_MUTED, size=12),
+                    ft.Container(height=14),
+                    ft.Dropdown(
+                        ref=tipo_ref,
+                        label="Tipo de baja",
+                        options=[
+                            ft.dropdown.Option(key="VOLUNTARIA", text="Voluntaria"),
+                            ft.dropdown.Option(key="MORA", text="Por mora"),
+                            ft.dropdown.Option(key="ADMINISTRATIVA", text="Administrativa"),
+                        ],
+                        value="VOLUNTARIA",
+                        color=Colors.TEXT_PRIMARY, bgcolor=Colors.BG_INPUT,
+                        border_color=Colors.BORDER, focused_border_color=Colors.ACCENT,
+                        border_radius=10,
+                    ),
+                    ft.Container(height=12),
+                    input_field("Motivo (opcional)", "Ej: se mudó de ciudad",
+                                ref=motivo_ref, multiline=True),
+                ], spacing=0, tight=True),
+            ),
+            actions=[
+                ft.TextButton("Cancelar",
+                              style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                              on_click=lambda e: close_dialog(self.page, dlg)),
+                ft.TextButton("Dar de baja",
+                              style=ft.ButtonStyle(color=Colors.DANGER),
+                              on_click=lambda e: self._ejecutar_baja(
+                                  dlg, socio, tipo_ref, motivo_ref)),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        open_dialog(self.page, dlg)
+
+    def _ejecutar_baja(self, dlg, socio, tipo_ref, motivo_ref):
+        resultado = app_state.dar_de_baja_socio(
+            socio["id"],
+            tipo_ref.current.value if tipo_ref.current else "VOLUNTARIA",
+            self._texto(motivo_ref) or None,
+        )
+        if not resultado["ok"]:
+            show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+            return
+        close_dialog(self.page, dlg)
+        show_snack(self.page, resultado["mensaje"], Colors.SUCCESS)
+        self.router.navigate(Routes.SOCIOS)
+
+    def _reactivar(self, socio: dict):
+        resultado = app_state.reactivar_socio(socio["id"])
+        show_snack(self.page, resultado["mensaje"],
+                   Colors.SUCCESS if resultado["ok"] else Colors.STATUS_DANGER)
+        if resultado["ok"]:
+            self.router.navigate(Routes.SOCIOS)

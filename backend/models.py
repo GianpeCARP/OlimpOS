@@ -334,7 +334,12 @@ class Baja(Base):
     tipo = Column(ENUM("VOLUNTARIA", "MORA", "ADMINISTRATIVA",
                         name="tipo_baja", create_type=False))
     motivo = Column(Text)
-    id_registrado_por = Column(Integer, ForeignKey("Usuario.id_usuario"))
+    # NO hay `id_registrado_por` acá. Lo tuvo un rato porque Asistencia sí lo
+    # tiene y parecía razonable guardar también quién dio la baja, pero
+    # schema.sql —que es de donde se crea la base— no declara esa columna en
+    # Baja, así que el INSERT fallaba con un 500 al primer intento real.
+    # Si alguna vez hace falta, se agrega primero en schema.sql y recién
+    # después acá; el modelo no puede inventar columnas.
 
     socio = relationship("Socio")
 

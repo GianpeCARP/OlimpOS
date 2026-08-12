@@ -266,9 +266,23 @@ class AppState:
                 "plan": s.get("plan") or "Sin plan",
                 "estado": s.get("estado") or "Sin membresía",
                 "vence": self._fecha(s.get("vencimiento")),
+                # Igual que en get_personal: estos no se muestran en la grilla,
+                # los necesita el formulario de edición para precargarse. Sin
+                # ellos, guardar una edición borraría el mail y el teléfono.
+                "nombre_pila": s["nombre"],
+                "apellido": s["apellido"],
+                "dni": s.get("dni", ""),
+                "email": s.get("email") or "",
+                "telefono": s.get("telefono") or "",
+                "objetivo": s.get("objetivo") or "",
+                "observaciones": s.get("observaciones") or "",
             }
             for s in datos
         ]
+
+    def editar_socio(self, id_socio: int, datos: dict) -> dict:
+        return self._resultado(api_client.editar_socio(id_socio, datos),
+                                "Socio actualizado.")
 
     # ── Personal ──────────────────────────────────────────────────────────────
 
@@ -289,6 +303,18 @@ class AppState:
                 "rol": e.get("rol") or "Sin asignar",
                 "turno": e.get("turno_laboral") or "—",
                 "estado": "Activo" if e.get("activo") else "Inactivo",
+                # Los de abajo no se muestran en la tarjeta: los necesita el
+                # formulario de edición para precargarse. Si no viajaran acá,
+                # abrir "Editar" arrancaría con los campos vacíos y guardar
+                # borraría el mail y la matrícula de alguien sin querer.
+                "nombre_pila": e["nombre"],
+                "apellido": e["apellido"],
+                "dni": e.get("dni", ""),
+                "email": e.get("email") or "",
+                "titulo": e.get("titulo") or "",
+                "especialidad": e.get("especialidad") or "",
+                "matricula": e.get("matricula") or "",
+                "turno_laboral": e.get("turno_laboral") or "",
             }
             for e in datos
         ]
@@ -755,6 +781,26 @@ class AppState:
             "legajo": d.get("legajo"),
         }
 
+    def get_entrenadores(self) -> list[dict]:
+        """
+        Entrenadores activos, para el selector del formulario de rutinas.
+
+        Hace falta porque `Rutina.id_entrenador` es NOT NULL y el Dueño —que
+        es quien más usa esta pantalla— no es entrenador: sin elegir a alguien
+        el backend rechaza la creación. Un entrenador logueado no necesita
+        elegir (la rutina queda a su nombre), pero el selector se muestra
+        igual y el backend valida que no elija a otro.
+        """
+        return self._datos(api_client.obtener_entrenadores(), [])
+
+    def get_nutricionistas(self) -> list[dict]:
+        """Espejo del anterior, para el formulario de dietas."""
+        return self._datos(api_client.obtener_nutricionistas(), [])
+
+    def editar_empleado(self, id_empleado: int, datos: dict) -> dict:
+        return self._resultado(api_client.editar_empleado(id_empleado, datos),
+                                "Empleado actualizado.")
+
     # ── Rutinas y nutrición ───────────────────────────────────────────────────
 
     def crear_rutina(self, datos: dict) -> dict:
@@ -831,9 +877,11 @@ class AppState:
     def desbloquear_usuario(self, id_usuario: int) -> dict:
         return self._resultado(api_client.desbloquear_usuario(id_usuario), "Cuenta desbloqueada.")
 
-    def cambiar_estado_usuario(self, id_usuario: int) -> dict:
-        return self._resultado(api_client.cambiar_estado_usuario(id_usuario),
-                                "Estado de la cuenta actualizado.")
+    def cambiar_estado_usuario(self, id_usuario: int, activo: bool) -> dict:
+        return self._resultado(
+            api_client.cambiar_estado_usuario(id_usuario, activo),
+            "Cuenta activada." if activo else "Cuenta desactivada.",
+        )
 
 
 # ── Instancia global única ─────────────────────────────────────────────────────

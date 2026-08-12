@@ -144,6 +144,7 @@ def _a_socio_out(db: Session, socio: Socio) -> SocioOut:
         numero_socio=socio.numero_socio,
         fecha_alta=socio.fecha_alta,
         objetivo=socio.objetivo,
+        observaciones=socio.observaciones,
         activo=bool(socio.activo),
         dni=persona.dni,
         nombre=persona.nombre,
@@ -448,7 +449,6 @@ def dar_de_baja(
         fecha_baja=hoy,
         tipo=datos.tipo.value,
         motivo=datos.motivo,
-        id_registrado_por=sesion.id_usuario,
     ))
 
     membresia = _membresia_vigente(db, socio.id_socio)

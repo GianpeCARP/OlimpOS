@@ -1,29 +1,41 @@
 # =============================================================================
-# views/usuarios.py — Gestión de usuarios del sistema (solo admin)
+# views/usuarios.py — Gestión de usuarios del sistema
 # =============================================================================
 import flet as ft
-from app.config import Colors, alpha
+from app.config import Colors, Routes, alpha
 from app.state import app_state
 from app.components.ui import (build_topbar, status_badge, primary_button,
-                                input_field, show_snack, open_dialog, close_dialog)
+                                show_snack, open_dialog, close_dialog)
 
 # rol → (etiqueta, color, fondo translúcido, ícono)
-# Espejo de RoleChip.tsx. Fondos derivados con alpha() en vez de hex de la
-# paleta vieja (naranja #FF5722, azul #3B82F6) que ya no existen acá.
+#
+# Las CLAVES son los roles que devuelve el backend, no las etiquetas que se
+# muestran. Antes eran "admin"/"trainer"/"staff"/"nutri", que no existen en
+# ningún lado del sistema: el backend deriva el rol de en qué tabla está la
+# persona (Dueno, Entrenador, ...) y devuelve esos nombres. Con las claves
+# viejas TODA fila caía en el default y salía como "Desconocido" en gris.
 ROLE_CONFIG = {
-    "admin":   ("Administrador", Colors.PRIMARY_VOLT, alpha(Colors.PRIMARY_VOLT, 0.10), ft.Icons.SHIELD_ROUNDED),
-    "trainer": ("Entrenador",    Colors.STATUS_OK,    alpha(Colors.STATUS_OK, 0.10),    ft.Icons.FITNESS_CENTER_ROUNDED),
-    "staff":   ("Recepción",     Colors.ACCENT_CORAL, alpha(Colors.ACCENT_CORAL, 0.10), ft.Icons.SUPPORT_AGENT_ROUNDED),
-    "nutri":   ("Nutricionista", Colors.STATUS_WARN,  alpha(Colors.STATUS_WARN, 0.10),  ft.Icons.RESTAURANT_MENU_ROUNDED),
+    "dueno":         ("Dueño",         Colors.PRIMARY_VOLT, alpha(Colors.PRIMARY_VOLT, 0.10), ft.Icons.SHIELD_ROUNDED),
+    "entrenador":    ("Entrenador",    Colors.STATUS_OK,    alpha(Colors.STATUS_OK, 0.10),    ft.Icons.FITNESS_CENTER_ROUNDED),
+    "recepcionista": ("Recepción",     Colors.ACCENT_CORAL, alpha(Colors.ACCENT_CORAL, 0.10), ft.Icons.SUPPORT_AGENT_ROUNDED),
+    "nutricionista": ("Nutricionista", Colors.STATUS_WARN,  alpha(Colors.STATUS_WARN, 0.10),  ft.Icons.RESTAURANT_MENU_ROUNDED),
+    "socio":         ("Socio",         Colors.INFO,         alpha(Colors.INFO, 0.10),         ft.Icons.PERSON_ROUNDED),
 }
 
-# Datos mock de usuarios del sistema
-_MOCK_SYSTEM_USERS = [
-    {"id": 1, "nombre": "Administrador",  "username": "admin",   "role": "admin",   "estado": "Activo"},
-    {"id": 2, "nombre": "Carlos Pérez",   "username": "trainer", "role": "trainer", "estado": "Activo"},
-    {"id": 3, "nombre": "Roberto Silva",  "username": "rsilva",  "role": "staff",   "estado": "Activo"},
-    {"id": 4, "nombre": "María Gómez",    "username": "mgomez",  "role": "nutri",   "estado": "Inactivo"},
-]
+# Secciones que ve cada rol, para la tarjeta informativa de abajo.
+#
+# Es un RESUMEN para mostrar en pantalla, no la fuente de verdad: quien decide
+# de verdad es la matriz de permisos del backend (permisos.py), que además
+# distingue tres niveles de acceso por sección y no sólo "ve / no ve". Si las
+# dos se contradicen, manda el backend — acá se vería mal, allá se rechaza.
+PERMISOS_RESUMEN = {
+    "dueno":         ["Dashboard", "Socios", "Personal", "Cobros", "Asistencia",
+                      "Rutinas", "Nutrición", "Actividades", "Usuarios"],
+    "entrenador":    ["Dashboard", "Socios", "Asistencia", "Rutinas", "Actividades"],
+    "nutricionista": ["Dashboard", "Socios", "Nutrición"],
+    "recepcionista": ["Dashboard", "Socios", "Cobros", "Asistencia", "Actividades"],
+    "socio":         ["Portal del socio"],
+}
 
 
 class UsuariosView:
@@ -32,18 +44,18 @@ class UsuariosView:
         self.router = router
 
     def build(self) -> ft.Column:
-        usuarios = _MOCK_SYSTEM_USERS
+        usuarios = app_state.get_usuarios()
 
         topbar = build_topbar(
             "Usuarios",
             "Gestión de accesos al sistema",
             actions=[
-                primary_button("Nuevo Usuario", ft.Icons.PERSON_ADD_ROUNDED,
+                primary_button("Nueva Cuenta", ft.Icons.PERSON_ADD_ROUNDED,
                                on_click=self._open_form),
             ]
         )
 
-        # ── Banner de advertencia (solo admin) ───────────────────────────────
+        # ── Banner de advertencia ────────────────────────────────────────────
         admin_banner = ft.Container(
             content=ft.Row([
                 ft.Icon(ft.Icons.SHIELD_ROUNDED, color=Colors.ACCENT, size=18),
@@ -57,10 +69,19 @@ class UsuariosView:
         )
 
         # ── Tabla de usuarios ─────────────────────────────────────────────────
+        filas = ([self._user_row(u) for u in usuarios] if usuarios else [
+            ft.Container(
+                content=ft.Text("No hay cuentas para mostrar.",
+                                color=Colors.TEXT_MUTED, size=13),
+                padding=ft.Padding.all(24),
+                alignment=ft.Alignment.CENTER,
+            )
+        ])
+
         table = ft.Container(
             content=ft.Column([
                 _table_header(),
-                *[self._user_row(u) for u in usuarios],
+                *filas,
             ], spacing=0),
             bgcolor=Colors.BG_CARD,
             border_radius=14,
@@ -101,13 +122,58 @@ class UsuariosView:
 
     def _user_row(self, u: dict) -> ft.Container:
         role_label, role_color, role_bg, role_icon = ROLE_CONFIG.get(
-            u["role"], ("Desconocido", Colors.TEXT_MUTED, Colors.BG_INPUT, ft.Icons.PERSON_ROUNDED)
+            u["rol"], ("Sin rol", Colors.TEXT_MUTED, Colors.BG_INPUT, ft.Icons.PERSON_ROUNDED)
         )
-        initial = u["nombre"][0].upper()
+        # El nombre puede venir vacío; la inicial se saca del usuario en ese caso
+        # para no reventar con un IndexError sobre una cadena vacía.
+        etiqueta = u["nombre"] if u["nombre"] not in ("", "—") else u["usuario"]
+        initial  = etiqueta[0].upper() if etiqueta else "?"
+        activo   = u["estado"] == "Activo"
+        bloqueado = u["estado"] == "Bloqueado"
 
         def on_hover(e: ft.HoverEvent):
             e.control.bgcolor = Colors.BG_INPUT if e.data == "true" else ft.Colors.TRANSPARENT
             e.control.update()
+
+        acciones = [
+            ft.IconButton(ft.Icons.KEY_ROUNDED, icon_color=Colors.WARNING,
+                          icon_size=18, tooltip="Resetear contraseña",
+                          on_click=lambda e, x=u: self._reset_password(x)),
+        ]
+
+        # El botón de desbloquear sólo aparece si la cuenta está bloqueada. No
+        # es una preferencia estética: desbloquear una cuenta que no lo está no
+        # hace nada, y tenerlo siempre a la vista invita a apretarlo pensando
+        # que "arregla" un problema distinto (una cuenta desactivada, por
+        # ejemplo, que se arregla con el botón de al lado).
+        if bloqueado:
+            acciones.append(
+                ft.IconButton(ft.Icons.LOCK_OPEN_ROUNDED, icon_color=Colors.INFO,
+                              icon_size=18, tooltip="Desbloquear",
+                              on_click=lambda e, x=u: self._desbloquear(x))
+            )
+
+        acciones.append(
+            ft.IconButton(
+                ft.Icons.BLOCK_ROUNDED if activo else ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED,
+                icon_color=Colors.DANGER if activo else Colors.SUCCESS,
+                icon_size=18,
+                tooltip="Desactivar" if activo else "Activar",
+                on_click=lambda e, x=u: self._cambiar_estado(x),
+            )
+        )
+
+        # Aviso de que todavía no cambió la contraseña inicial. Es informativo
+        # y aparece al lado del estado porque es exactamente eso: un estado
+        # intermedio entre "cuenta creada" y "cuenta en uso".
+        marca_pendiente = ([
+            ft.Container(
+                content=ft.Text("Clave sin cambiar", color=Colors.STATUS_WARN, size=10),
+                bgcolor=alpha(Colors.STATUS_WARN, 0.12),
+                border_radius=6,
+                padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+            )
+        ] if u.get("debe_cambiar") else [])
 
         return ft.Container(
             content=ft.Row([
@@ -119,8 +185,8 @@ class UsuariosView:
                         bgcolor=role_color, alignment=ft.Alignment.CENTER,
                     ),
                     ft.Column([
-                        ft.Text(u["nombre"], color=Colors.TEXT_PRIMARY, size=14),
-                        ft.Text(f"@{u['username']}", color=Colors.TEXT_MUTED, size=11),
+                        ft.Text(etiqueta, color=Colors.TEXT_PRIMARY, size=14),
+                        ft.Text(f"@{u['usuario']}", color=Colors.TEXT_MUTED, size=11),
                     ], spacing=1, tight=True),
                 ], spacing=10, expand=3),
                 ft.Container(
@@ -134,28 +200,13 @@ class UsuariosView:
                     ], spacing=8),
                     expand=2,
                 ),
-                ft.Container(content=status_badge(u["estado"]), expand=2,
-                             alignment=ft.Alignment.CENTER_LEFT,
+                ft.Container(
+                    content=ft.Row([status_badge(u["estado"]), *marca_pendiente],
+                                   spacing=6, wrap=True),
+                    expand=2,
+                    alignment=ft.Alignment.CENTER_LEFT,
                 ),
-                ft.Row([
-                    ft.IconButton(ft.Icons.EDIT_ROUNDED, icon_color=Colors.INFO,
-                                  icon_size=18, tooltip="Editar usuario",
-                                  on_click=lambda e, x=u: self._open_form(e, x)),
-                    ft.IconButton(ft.Icons.KEY_ROUNDED, icon_color=Colors.WARNING,
-                                  icon_size=18, tooltip="Resetear contraseña",
-                                  on_click=lambda e, x=u: self._reset_password(x)),
-                    ft.IconButton(
-                        ft.Icons.BLOCK_ROUNDED if u["estado"] == "Activo" else ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED,
-                        icon_color=Colors.DANGER if u["estado"] == "Activo" else Colors.SUCCESS,
-                        icon_size=18,
-                        tooltip="Desactivar" if u["estado"] == "Activo" else "Activar",
-                        on_click=lambda e, x=u: show_snack(
-                            self.page,
-                            f"Usuario {x['nombre']} {'desactivado' if x['estado'] == 'Activo' else 'activado'}",
-                            Colors.WARNING
-                        ),
-                    ),
-                ], expand=2),
+                ft.Row(acciones, expand=2),
             ]),
             padding=ft.Padding.symmetric(horizontal=20, vertical=12),
             border=ft.Border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
@@ -163,102 +214,202 @@ class UsuariosView:
             animate=ft.Animation(120),
         )
 
-    def _open_form(self, e=None, usuario: dict = None):
-        is_edit = usuario is not None
-        nombre_ref = ft.Ref[ft.TextField]()
-        user_ref   = ft.Ref[ft.TextField]()
+    # ── Acciones ──────────────────────────────────────────────────────────────
+
+    def _open_form(self, e=None):
+        """
+        Da acceso al sistema a una persona que ya está cargada.
+
+        El formulario cambió de raíz: antes pedía usuario, rol y contraseña
+        inicial. Ninguno de los tres se manda ahora.
+
+          - El USUARIO lo arma el backend a partir del nombre.
+          - El ROL no es un dato de la cuenta: sale de en qué tabla está la
+            persona (Socio, Entrenador, ...). Elegirlo acá habría sido
+            inventar un segundo lugar donde vive el rol, con el problema de
+            siempre: cuál de los dos gana cuando no coinciden.
+          - La CONTRASEÑA la genera el sistema. Que un administrador elija la
+            contraseña de otro es peor que una temporal: la conocería para
+            siempre, y el dueño de la cuenta no tendría forma de saberlo.
+
+        Por eso lo único que se elige es la persona.
+        """
+        personas = app_state.get_personas_sin_cuenta()
+
+        if not personas:
+            show_snack(self.page,
+                       "Todas las personas cargadas ya tienen cuenta.",
+                       Colors.INFO)
+            return
+
+        persona_ref = ft.Ref[ft.Dropdown]()
 
         dlg = ft.AlertDialog(
             modal=True,
-            title=ft.Text("Editar Usuario" if is_edit else "Nuevo Usuario",
+            title=ft.Text("Nueva Cuenta de Acceso",
                           color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
             bgcolor=Colors.BG_CARD,
             content=ft.Container(
-                width=440,
+                width=420,
                 content=ft.Column([
-                    input_field("Nombre completo", "Ej: Juan García",
-                                icon=ft.Icons.PERSON_OUTLINE_ROUNDED, ref=nombre_ref),
-                    ft.Container(height=12),
-                    input_field("Nombre de usuario", "juan_garcia",
-                                icon=ft.Icons.ALTERNATE_EMAIL_ROUNDED, ref=user_ref),
-                    ft.Container(height=12),
+                    ft.Text("Sólo aparecen las personas ya cargadas que todavía "
+                            "no tienen acceso al sistema.",
+                            color=Colors.TEXT_SECONDARY, size=13),
+                    ft.Container(height=14),
                     ft.Dropdown(
-                        label="Rol del sistema",
+                        ref=persona_ref,
+                        label="Persona",
                         options=[
-                            ft.dropdown.Option("admin",   "Administrador"),
-                            ft.dropdown.Option("trainer", "Entrenador"),
-                            ft.dropdown.Option("nutri",   "Nutricionista"),
-                            ft.dropdown.Option("staff",   "Recepción"),
+                            ft.dropdown.Option(
+                                key=str(p["id"]),
+                                text=f"{p['nombre']} — DNI {p['dni']}"
+                                     + (f" ({', '.join(p['roles'])})" if p["roles"] else ""),
+                            )
+                            for p in personas
                         ],
-                        value=usuario["role"] if is_edit else "staff",
+                        value=str(personas[0]["id"]),
                         color=Colors.TEXT_PRIMARY, bgcolor=Colors.BG_INPUT,
                         border_color=Colors.BORDER, focused_border_color=Colors.ACCENT,
                         border_radius=10,
                     ),
                     ft.Container(height=12),
-                    input_field("Email", "usuario@gimnasio.com",
-                                icon=ft.Icons.EMAIL_OUTLINED),
-                    ft.Container(height=12),
-                    *([] if is_edit else [
-                        input_field("Contraseña inicial", "••••••••",
-                                    password=True, icon=ft.Icons.LOCK_OUTLINE_ROUNDED),
-                        ft.Container(height=8),
-                        ft.Container(
-                            content=ft.Row([
-                                ft.Icon(ft.Icons.INFO_OUTLINE_ROUNDED,
-                                        color=Colors.TEXT_MUTED, size=14),
-                                ft.Text("El usuario deberá cambiar su contraseña al primer login.",
-                                        color=Colors.TEXT_MUTED, size=12),
-                            ], spacing=6),
-                        ),
-                    ]),
+                    ft.Row([
+                        ft.Icon(ft.Icons.INFO_OUTLINE_ROUNDED,
+                                color=Colors.TEXT_MUTED, size=14),
+                        ft.Text("El sistema genera usuario y contraseña temporal.\n"
+                                "Se muestran una sola vez.",
+                                color=Colors.TEXT_MUTED, size=12),
+                    ], spacing=6),
                 ], spacing=0, tight=True),
             ),
             actions=[
                 ft.TextButton("Cancelar",
                               style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
                               on_click=lambda e: close_dialog(self.page, dlg)),
-                ft.TextButton("Guardar",
+                ft.TextButton("Crear cuenta",
                               style=ft.ButtonStyle(color=Colors.ACCENT),
-                              on_click=lambda e: self._save(dlg)),
+                              on_click=lambda e: self._crear_cuenta(dlg, persona_ref)),
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )
-        if is_edit:
-            if nombre_ref.current:
-                nombre_ref.current.value = usuario["nombre"]
-            if user_ref.current:
-                user_ref.current.value = usuario["username"]
-
         open_dialog(self.page, dlg)
 
-    def _save(self, dlg):
-        """TODO: POST/PUT /api/usuarios"""
+    def _crear_cuenta(self, dlg, persona_ref):
+        elegida = persona_ref.current.value if persona_ref.current else None
+        if not elegida:
+            show_snack(self.page, "Elegí una persona.", Colors.STATUS_DANGER)
+            return
+
+        resultado = app_state.crear_cuenta(int(elegida))
+        if not resultado["ok"]:
+            show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+            return
+
         close_dialog(self.page, dlg)
-        show_snack(self.page, "Usuario guardado correctamente ✓", Colors.SUCCESS)
+        self._mostrar_credenciales("Cuenta creada", resultado)
 
     def _reset_password(self, u: dict):
+        """
+        Resetea la contraseña. Pide confirmación antes porque el reseteo deja
+        la cuenta afuera: la contraseña vieja deja de servir en el acto, así
+        que apretarlo por error a la persona equivocada la desconecta hasta
+        que alguien le dicte la nueva.
+        """
         dlg = ft.AlertDialog(
             modal=True,
             title=ft.Text("Resetear Contraseña",
                           color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
             bgcolor=Colors.BG_CARD,
-            content=ft.Text(
-                f"Se enviará un enlace de reseteo a {u['nombre']}.\n"
-                "El usuario deberá crear una nueva contraseña.",
-                color=Colors.TEXT_SECONDARY, size=13,
+            content=ft.Container(
+                width=380,
+                content=ft.Column([
+                    ft.Text(f"Se va a generar una contraseña temporal para "
+                            f"@{u['usuario']}.",
+                            color=Colors.TEXT_SECONDARY, size=13),
+                    ft.Container(height=8),
+                    ft.Text("La contraseña actual deja de funcionar de inmediato "
+                            "y habrá que dictarle la nueva.",
+                            color=Colors.STATUS_WARN, size=12),
+                ], spacing=0, tight=True),
             ),
             actions=[
                 ft.TextButton("Cancelar",
                               style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
                               on_click=lambda e: close_dialog(self.page, dlg)),
-                ft.TextButton("Confirmar",
+                ft.TextButton("Resetear",
                               style=ft.ButtonStyle(color=Colors.WARNING),
-                              on_click=lambda e: (
-                                  close_dialog(self.page, dlg),
-                                  show_snack(self.page, f"Reseteo enviado a {u['nombre']}",
-                                             Colors.WARNING)
-                              )),
+                              on_click=lambda e: self._confirmar_reset(dlg, u)),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        open_dialog(self.page, dlg)
+
+    def _confirmar_reset(self, dlg, u: dict):
+        resultado = app_state.resetear_password_usuario(u["id"])
+        if not resultado["ok"]:
+            show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+            return
+        close_dialog(self.page, dlg)
+        self._mostrar_credenciales("Contraseña reseteada", resultado)
+
+    def _desbloquear(self, u: dict):
+        resultado = app_state.desbloquear_usuario(u["id"])
+        show_snack(self.page, resultado["mensaje"],
+                   Colors.SUCCESS if resultado["ok"] else Colors.STATUS_DANGER)
+        if resultado["ok"]:
+            self.router.navigate(Routes.USUARIOS)
+
+    def _cambiar_estado(self, u: dict):
+        """
+        Activa o desactiva la cuenta.
+
+        Se manda el estado DESTINO y no un "invertí lo que haya": desactivar
+        una cuenta es la única forma de cortar una sesión en curso, y si dos
+        personas desactivan la misma cuenta comprometida a la vez, un toggle
+        haría que el segundo click la reactive.
+        """
+        destino = u["estado"] != "Activo"
+        resultado = app_state.cambiar_estado_usuario(u["id"], destino)
+        show_snack(self.page, resultado["mensaje"],
+                   Colors.SUCCESS if resultado["ok"] else Colors.STATUS_DANGER)
+        if resultado["ok"]:
+            self.router.navigate(Routes.USUARIOS)
+
+    def _mostrar_credenciales(self, titulo: str, resultado: dict):
+        """
+        Muestra usuario y contraseña temporal.
+
+        Va en un diálogo con botón y no en un snack que se va solo: en la base
+        queda únicamente el hash, así que esta es la única vez que la
+        contraseña existe legible. Si se pierde, hay que resetearla de nuevo.
+        """
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(titulo, color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
+            bgcolor=Colors.BG_CARD,
+            content=ft.Container(
+                width=380,
+                content=ft.Column([
+                    ft.Text(resultado.get("mensaje", ""),
+                            color=Colors.TEXT_SECONDARY, size=13),
+                    ft.Container(height=12),
+                    ft.Text(f"Usuario: {resultado.get('usuario', '—')}",
+                            color=Colors.TEXT_PRIMARY, size=14,
+                            weight=ft.FontWeight.BOLD, selectable=True),
+                    ft.Text(f"Contraseña temporal: {resultado.get('password_temporal', '—')}",
+                            color=Colors.PRIMARY_VOLT, size=14,
+                            weight=ft.FontWeight.BOLD, selectable=True),
+                    ft.Container(height=12),
+                    ft.Text("Anotala ahora: no se puede volver a ver. "
+                            "Se la va a pedir cambiar al entrar.",
+                            color=Colors.STATUS_WARN, size=12),
+                ], spacing=0, tight=True),
+            ),
+            actions=[
+                ft.TextButton("Listo",
+                              style=ft.ButtonStyle(color=Colors.ACCENT),
+                              on_click=lambda e: (close_dialog(self.page, dlg),
+                                                  self.router.navigate(Routes.USUARIOS))),
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )
@@ -284,13 +435,7 @@ def _table_header() -> ft.Container:
 
 def _perms_row(rol: str, cfg: tuple) -> ft.Container:
     label, color, bg, icon = cfg
-    PERMS = {
-        "admin":   ["Dashboard", "Socios", "Personal", "Rutinas", "Nutrición", "Usuarios"],
-        "trainer": ["Dashboard", "Socios", "Rutinas"],
-        "nutri":   ["Dashboard", "Socios", "Nutrición"],
-        "staff":   ["Dashboard", "Socios"],
-    }
-    perms = PERMS.get(rol, [])
+    perms = PERMISOS_RESUMEN.get(rol, [])
     return ft.Container(
         content=ft.Row([
             ft.Container(
@@ -298,17 +443,11 @@ def _perms_row(rol: str, cfg: tuple) -> ft.Container:
                 width=30, height=30, border_radius=8,
                 bgcolor=bg, alignment=ft.Alignment.CENTER,
             ),
-            ft.Text(label, color=Colors.TEXT_PRIMARY, size=13,
-                    weight=ft.FontWeight.W_500, width=120),
-            ft.Row([
-                ft.Container(
-                    content=ft.Text(p, color=Colors.TEXT_SECONDARY, size=11),
-                    bgcolor=Colors.BG_SIDEBAR, border_radius=20,
-                    padding=ft.Padding.symmetric(horizontal=8, vertical=3),
-                )
-                for p in perms
-            ], spacing=4, wrap=True),
-        ], spacing=10),
+            ft.Column([
+                ft.Text(label, color=Colors.TEXT_PRIMARY, size=13,
+                        weight=ft.FontWeight.W_500),
+                ft.Text(", ".join(perms), color=Colors.TEXT_MUTED, size=11),
+            ], spacing=2, tight=True, expand=True),
+        ], spacing=12),
         padding=ft.Padding.symmetric(vertical=6),
-        border=ft.Border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
     )

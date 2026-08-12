@@ -9,7 +9,7 @@
 #   - Modal de detalle con distribución de macros en barras de progreso
 
 import flet as ft
-from app.config import Colors, Fonts, alpha
+from app.config import Colors, Fonts, Routes, alpha
 from app.state import app_state
 from app.components.ui import (build_topbar, primary_button, input_field,
                                 show_snack, open_dialog, close_dialog)
@@ -151,8 +151,20 @@ class NutricionView:
     def _open_form(self, e=None):
         """
         Abre el modal de creación de un nuevo plan nutricional.
-        Incluye campos para nombre, objetivo, calorías y distribución de macros.
+
+        El selector de nutricionista responde a lo mismo que el de entrenador
+        en rutinas: `Dieta.id_nutricionista` es NOT NULL y el Dueño no es
+        nutricionista, así que sin elegir a alguien no hay a quién atribuir
+        la dieta y el backend la rechaza.
         """
+        nombre_ref     = ft.Ref[ft.TextField]()
+        calorias_ref   = ft.Ref[ft.TextField]()
+        notas_ref      = ft.Ref[ft.TextField]()
+        objetivo_ref   = ft.Ref[ft.Dropdown]()
+        nutri_ref      = ft.Ref[ft.Dropdown]()
+
+        nutricionistas = app_state.get_nutricionistas()
+
         dlg = ft.AlertDialog(
             modal=True,
             title=ft.Text("Nuevo Plan Nutricional",
@@ -162,10 +174,12 @@ class NutricionView:
                 width=440,
                 content=ft.Column([
                     input_field("Nombre del plan", "Ej: Volumen Limpio",
+                                ref=nombre_ref,
                                 icon=ft.Icons.RESTAURANT_MENU_ROUNDED),
                     ft.Container(height=12),
                     # Dropdown de objetivo nutricional
                     ft.Dropdown(
+                        ref=objetivo_ref,
                         label="Objetivo",
                         options=[ft.dropdown.Option(k) for k in OBJETIVO_CONFIG],
                         value="Mantenimiento",  # Valor por defecto
@@ -175,9 +189,16 @@ class NutricionView:
                     ),
                     ft.Container(height=12),
                     input_field("Calorías diarias (kcal)", "Ej: 2400",
+                                ref=calorias_ref,
                                 icon=ft.Icons.LOCAL_FIRE_DEPARTMENT_ROUNDED),
                     ft.Container(height=12),
-                    # Fila de tres inputs para macronutrientes en paralelo
+                    # Fila de tres inputs para macronutrientes en paralelo.
+                    #
+                    # NO se guardan: Dieta no tiene columnas de macros — el
+                    # detalle nutricional del esquema vive en Comida, que es
+                    # otra pantalla. Las barras del modal de detalle son un
+                    # 30/50/20 fijo y están rotuladas "referencial" por eso
+                    # mismo. Los campos quedan porque la PWA los muestra.
                     ft.Row([
                         input_field("Proteínas (g)", "150", width=130),
                         ft.Container(width=8),
@@ -186,8 +207,21 @@ class NutricionView:
                         input_field("Grasas (g)", "70", width=130),
                     ]),
                     ft.Container(height=12),
-                    # Área de texto para notas adicionales (restricciones, preferencias)
+                    ft.Dropdown(
+                        ref=nutri_ref,
+                        label="Nutricionista a cargo",
+                        options=[ft.dropdown.Option(key=str(x["id"]), text=x["nombre"])
+                                 for x in nutricionistas],
+                        value=str(nutricionistas[0]["id"]) if nutricionistas else None,
+                        color=Colors.TEXT_PRIMARY, bgcolor=Colors.BG_INPUT,
+                        border_color=Colors.BORDER, focused_border_color=Colors.ACCENT,
+                        border_radius=10,
+                    ),
+                    ft.Container(height=12),
+                    # Notas adicionales. Van a `descripcion`, la única columna
+                    # de texto libre que tiene Dieta.
                     ft.TextField(
+                        ref=notas_ref,
                         label="Notas adicionales",
                         hint_text="Restricciones, alimentos preferidos...",
                         multiline=True, min_lines=3, max_lines=4,
@@ -207,7 +241,9 @@ class NutricionView:
                               on_click=lambda e: close_dialog(self.page, dlg)),
                 ft.TextButton("Crear Plan",
                               style=ft.ButtonStyle(color=Colors.ACCENT),
-                              on_click=lambda e: self._save(dlg)),
+                              on_click=lambda e: self._save(
+                                  dlg, nombre_ref, objetivo_ref,
+                                  calorias_ref, notas_ref, nutri_ref)),
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )
@@ -274,13 +310,36 @@ class NutricionView:
         )
         open_dialog(self.page, dlg)
 
-    def _save(self, dlg):
-        """
-        Guarda el nuevo plan nutricional.
-        TODO: conectar con POST /api/nutricion
-        """
+    def _save(self, dlg, nombre_ref, objetivo_ref, calorias_ref, notas_ref, nutri_ref):
+        """Crea el plan nutricional."""
+        nombre = (nombre_ref.current.value or "").strip() if nombre_ref.current else ""
+        if not nombre:
+            show_snack(self.page, "El plan necesita un nombre.", Colors.STATUS_DANGER)
+            return
+
+        calorias = None
+        crudo = (calorias_ref.current.value or "").strip() if calorias_ref.current else ""
+        if crudo.isdigit():
+            calorias = int(crudo)
+
+        elegido = nutri_ref.current.value if nutri_ref.current else None
+
+        resultado = app_state.crear_dieta({
+            "nombre": nombre,
+            "objetivo": objetivo_ref.current.value if objetivo_ref.current else None,
+            "calorias_diarias": calorias,
+            "descripcion": ((notas_ref.current.value or "").strip() or None
+                            if notas_ref.current else None),
+            "id_nutricionista": int(elegido) if elegido else None,
+        })
+
+        if not resultado["ok"]:
+            show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+            return
+
         close_dialog(self.page, dlg)
-        show_snack(self.page, "Plan nutricional creado ✓", Colors.SUCCESS)
+        show_snack(self.page, resultado["mensaje"], Colors.SUCCESS)
+        self.router.navigate(Routes.NUTRICION)
 
 
 def _cal_stat(label: str, value: str, icon: str, color: str) -> ft.Container:

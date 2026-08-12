@@ -252,11 +252,26 @@ export async function resetearPassword(idUsuario: number): Promise<ResultadoRese
  * cada pedido y corta apenas ve la cuenta inactiva. Ante un problema de
  * seguridad, la herramienta es esta, no el logout.
  */
-export async function alternarEstadoUsuario(idUsuario: number): Promise<UsuarioListado> {
-  const datos = await pedir<UsuarioApi>(`/usuarios/${idUsuario}/toggle-estado`, { metodo: 'POST' });
+export async function alternarEstadoUsuario(
+  idUsuario: number,
+  activo: boolean,
+): Promise<UsuarioListado> {
+  const datos = await pedir<UsuarioApi>(
+    `/usuarios/${idUsuario}/toggle-estado?activo=${activo}`,
+    { metodo: 'POST' },
+  );
   return aUsuarioListado(datos);
 }
 
-/** Nombres que ya usaban las vistas — el backend resuelve las dos con el mismo endpoint. */
-export const darDeBajaUsuario = alternarEstadoUsuario;
-export const activarUsuario = alternarEstadoUsuario;
+/**
+ * Los dos nombres que usan las vistas. Antes eran ALIAS de la misma función
+ * sin parámetro, y ahí estaba el problema: "dar de baja" y "activar" mandaban
+ * exactamente el mismo pedido, y lo que pasaba dependía de en qué estado
+ * estuviera la cuenta en el servidor, no de cuál de los dos botones se apretó.
+ * Con una pantalla desactualizada —o con dos personas desactivando la misma
+ * cuenta comprometida a la vez— el segundo click la reactivaba.
+ *
+ * Ahora cada una manda su estado destino y el resultado no depende del orden.
+ */
+export const darDeBajaUsuario = (idUsuario: number) => alternarEstadoUsuario(idUsuario, false);
+export const activarUsuario = (idUsuario: number) => alternarEstadoUsuario(idUsuario, true);

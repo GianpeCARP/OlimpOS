@@ -10,7 +10,7 @@
 # Permite crear nuevas rutinas mediante un modal.
 
 import flet as ft
-from app.config import Colors
+from app.config import Colors, Routes
 from app.state import app_state
 from app.components.ui import (build_topbar, level_badge, primary_button,
                                 input_field, show_snack, open_dialog, close_dialog)
@@ -129,9 +129,25 @@ class RutinasView:
     def _open_form(self, e=None, rutina: dict = None):
         """
         Abre el modal para crear o editar una rutina.
-        El modal incluye campos para nombre, nivel, días, duración y descripción.
+
+        El selector de entrenador es nuevo y no es cosmético: `id_entrenador`
+        es NOT NULL, y quien más usa esta pantalla —el Dueño— no es
+        entrenador, así que sin elegir a alguien el backend rechaza la
+        creación. Si el que está logueado SÍ es entrenador, el backend lo
+        resuelve solo e ignora lo que se elija acá salvo que elija a otro,
+        que es lo único que rechaza.
         """
         is_edit = rutina is not None
+
+        nombre_ref    = ft.Ref[ft.TextField]()
+        dias_ref      = ft.Ref[ft.TextField]()
+        duracion_ref  = ft.Ref[ft.TextField]()
+        objetivo_ref  = ft.Ref[ft.TextField]()
+        nivel_ref     = ft.Ref[ft.Dropdown]()
+        entrenador_ref = ft.Ref[ft.Dropdown]()
+
+        entrenadores = app_state.get_entrenadores()
+
         dlg = ft.AlertDialog(
             modal=True,
             title=ft.Text("Nueva Rutina" if not is_edit else "Editar Rutina",
@@ -141,9 +157,11 @@ class RutinasView:
                 width=440,
                 content=ft.Column([
                     input_field("Nombre de la rutina", "Ej: Fuerza Total",
+                                ref=nombre_ref,
                                 icon=ft.Icons.FITNESS_CENTER_ROUNDED),
                     ft.Container(height=12),
                     ft.Dropdown(
+                        ref=nivel_ref,
                         label="Nivel",
                         options=[
                             ft.dropdown.Option("Principiante"),
@@ -158,15 +176,34 @@ class RutinasView:
                     ft.Container(height=12),
                     # Fila con dos inputs de ancho fijo en paralelo
                     ft.Row([
-                        input_field("Días/semana", "Ej: 3",
+                        input_field("Días/semana", "Ej: 3", ref=dias_ref,
                                     icon=ft.Icons.CALENDAR_TODAY_ROUNDED, width=180),
                         ft.Container(width=8),
-                        input_field("Duración (min)", "Ej: 60",
+                        # La duración en minutos NO se guarda: el esquema no
+                        # tiene la columna. La tarjeta la deriva de los días
+                        # por semana (ver get_rutinas en state.py). Se deja el
+                        # campo porque la PWA lo muestra y las dos apps tienen
+                        # que verse iguales, pero lo que se escriba se pierde.
+                        input_field("Duración (min)", "Ej: 60", ref=duracion_ref,
                                     icon=ft.Icons.TIMER_ROUNDED, width=180),
                     ]),
                     ft.Container(height=12),
-                    # Área de texto multilínea para descripción detallada
+                    ft.Dropdown(
+                        ref=entrenador_ref,
+                        label="Entrenador a cargo",
+                        options=[ft.dropdown.Option(key=str(x["id"]), text=x["nombre"])
+                                 for x in entrenadores],
+                        value=str(entrenadores[0]["id"]) if entrenadores else None,
+                        color=Colors.TEXT_PRIMARY, bgcolor=Colors.BG_INPUT,
+                        border_color=Colors.BORDER, focused_border_color=Colors.ACCENT,
+                        border_radius=10,
+                    ),
+                    ft.Container(height=12),
+                    # Área de texto multilínea para descripción detallada.
+                    # Va a `objetivo`, que es la única columna de texto libre
+                    # que tiene Rutina en el esquema.
                     ft.TextField(
+                        ref=objetivo_ref,
                         label="Descripción",
                         hint_text="Detalle los ejercicios y objetivos...",
                         multiline=True, min_lines=3, max_lines=5,
@@ -186,7 +223,9 @@ class RutinasView:
                               on_click=lambda e: close_dialog(self.page, dlg)),
                 ft.TextButton("Crear Rutina",
                               style=ft.ButtonStyle(color=Colors.ACCENT),
-                              on_click=lambda e: self._save(dlg)),
+                              on_click=lambda e: self._save(
+                                  dlg, nombre_ref, nivel_ref, dias_ref,
+                                  objetivo_ref, entrenador_ref)),
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )
@@ -229,13 +268,39 @@ class RutinasView:
         )
         open_dialog(self.page, dlg)
 
-    def _save(self, dlg):
-        """
-        Guarda la nueva rutina.
-        TODO: conectar con POST /api/rutinas
-        """
+    def _save(self, dlg, nombre_ref, nivel_ref, dias_ref, objetivo_ref, entrenador_ref):
+        """Crea la rutina."""
+        nombre = (nombre_ref.current.value or "").strip() if nombre_ref.current else ""
+        if not nombre:
+            show_snack(self.page, "La rutina necesita un nombre.", Colors.STATUS_DANGER)
+            return
+
+        # dias_por_semana viaja como None si está vacío o no es un número. El
+        # backend lo acepta nulo, y mandar 0 sería peor: lo rechaza por el
+        # ge=1 del schema y el error no explicaría que el campo estaba vacío.
+        dias = None
+        crudo = (dias_ref.current.value or "").strip() if dias_ref.current else ""
+        if crudo.isdigit():
+            dias = int(crudo)
+
+        elegido = entrenador_ref.current.value if entrenador_ref.current else None
+
+        resultado = app_state.crear_rutina({
+            "nombre": nombre,
+            "nivel": nivel_ref.current.value if nivel_ref.current else None,
+            "dias_por_semana": dias,
+            "objetivo": ((objetivo_ref.current.value or "").strip() or None
+                         if objetivo_ref.current else None),
+            "id_entrenador": int(elegido) if elegido else None,
+        })
+
+        if not resultado["ok"]:
+            show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+            return
+
         close_dialog(self.page, dlg)
-        show_snack(self.page, "Rutina creada correctamente ✓", Colors.SUCCESS)
+        show_snack(self.page, resultado["mensaje"], Colors.SUCCESS)
+        self.router.navigate(Routes.RUTINAS)
 
 
 def _info_pill(icon: str, text: str) -> ft.Container:

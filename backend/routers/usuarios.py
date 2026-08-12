@@ -339,6 +339,7 @@ def desbloquear(
 @router.post("/{id_usuario}/toggle-estado", response_model=UsuarioAdminOut)
 def alternar_estado(
     id_usuario: int,
+    activo: bool | None = None,
     db: Session = Depends(get_db),
     sesion: Sesion = Depends(requiere_accion(Accion.GESTION_USUARIOS)),
 ):
@@ -354,12 +355,35 @@ def alternar_estado(
     No se borra la fila: la cuenta desactivada conserva su historial y se
     puede reactivar. Es el mismo criterio de baja lógica que usa el resto del
     sistema.
+
+    `activo` es opcional y dice a qué estado ir. Sin él el endpoint invierte
+    el que haya, que es lo que pide un switch de pantalla, pero eso convierte
+    una pantalla desactualizada en un peligro: si dos personas desactivan la
+    misma cuenta comprometida a la vez, el segundo pedido la REACTIVA. Cuando
+    el que llama sabe qué quiere —y desactivar por seguridad siempre lo
+    sabe— manda el destino y el resultado deja de depender del orden.
     """
     usuario = _buscar_usuario(db, id_usuario)
     _validar_no_es_propia(sesion, usuario)
     _validar_jerarquia(sesion, usuario)
 
-    usuario.activo = not bool(usuario.activo)
+    # Nadie se desactiva a sí mismo, NI SIQUIERA EL DUEÑO.
+    #
+    # _validar_no_es_propia exime al Dueño porque para editarse los datos no
+    # hay problema, pero desactivarse es otra cosa: deja el sistema sin salida.
+    # Un Dueño que se desactiva no puede volver a entrar, y por la regla 2
+    # —solo un Dueño opera sobre la cuenta de un Dueño— ningún otro usuario
+    # puede reactivarlo. Con un solo Dueño cargado, que es el caso normal, el
+    # sistema queda inutilizable y hay que arreglarlo entrando a la base a
+    # mano. Se descubrió haciéndolo: un click dejó la instalación sin acceso.
+    if usuario.id_usuario == sesion.id_usuario:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No podés desactivar tu propia cuenta: quedarías afuera del "
+                   "sistema sin poder volver a entrar.",
+        )
+
+    usuario.activo = (not bool(usuario.activo)) if activo is None else activo
     if usuario.activo:
         # Reactivar y dejarla bloqueada sería reactivarla a medias.
         usuario.bloqueado = False

@@ -222,6 +222,10 @@ class SocioOut(BaseModel):
     numero_socio: str | None = None
     fecha_alta: date
     objetivo: str | None = None
+    # Viaja aunque la grilla no lo muestre: el formulario de edición lo manda
+    # de vuelta siempre, así que si no pudiera precargarse, cada edición lo
+    # dejaría en blanco sin que nadie tocara el campo.
+    observaciones: str | None = None
     activo: bool
     # Datos de la persona, aplanados para que la tabla del frontend no tenga
     # que hacer una segunda consulta ni navegar objetos anidados.

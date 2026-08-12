@@ -233,6 +233,18 @@ def obtener_personal() -> dict:
     return _get("/personal")
 
 
+def obtener_entrenadores() -> dict:
+    return _get("/personal/entrenadores")
+
+
+def obtener_nutricionistas() -> dict:
+    return _get("/personal/nutricionistas")
+
+
+def editar_empleado(id_empleado: int, datos: dict) -> dict:
+    return _put(f"/personal/{id_empleado}", datos)
+
+
 def alta_empleado(datos: dict) -> dict:
     return _post("/personal", datos)
 
@@ -415,8 +427,11 @@ def desbloquear_usuario(id_usuario: int) -> dict:
     return _post(f"/usuarios/{id_usuario}/desbloquear")
 
 
-def cambiar_estado_usuario(id_usuario: int) -> dict:
-    return _post(f"/usuarios/{id_usuario}/toggle-estado")
+def cambiar_estado_usuario(id_usuario: int, activo: bool) -> dict:
+    # Se manda siempre el destino, nunca "invertí lo que haya". La pantalla ya
+    # sabe si está activando o desactivando; mandarlo hace que el resultado no
+    # dependa de si la lista que se ve en pantalla sigue estando al día.
+    return _post(f"/usuarios/{id_usuario}/toggle-estado?activo={str(activo).lower()}")
 
 
 # =============================================================================

@@ -7,10 +7,10 @@
 #
 # Desde acá se puede: dar de alta/editar una actividad, darla de baja y
 # reactivarla, agregar/editar/dar de baja sus planes, y asignarle profesores.
-# Todo el diseño está armado; las escrituras esperan a la API (ver los TODO).
+# Todas las acciones escriben contra la API real.
 
 import flet as ft
-from app.config import Colors, Fonts, Radius, alpha
+from app.config import Colors, Fonts, Radius, Routes, alpha
 from app.state import app_state
 from app.components.ui import (build_topbar, section_card, primary_button,
                                secondary_button, icon_action, input_field,
@@ -24,11 +24,42 @@ class ActividadesView:
         self.page   = page
         self.router = router
 
+    # ── Resultado de una escritura ───────────────────────────────────────────
+
+    def _resolver(self, resultado: dict):
+        """
+        Muestra lo que contestó el backend y, si escribió, recarga la sección.
+
+        El ABM cambia la grilla entera —una actividad nueva, un plan que
+        desaparece del catálogo— así que se vuelve a construir la vista en vez
+        de parchear controles sueltos. Es una pantalla de configuración, no el
+        panel de recepción: se usa de a ratos y un refresco completo no molesta.
+        """
+        if not resultado["ok"]:
+            show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+            return
+        show_snack(self.page, resultado["mensaje"], Colors.STATUS_OK)
+        self.router.navigate(Routes.ACTIVIDADES)
+
+    @staticmethod
+    def _entero(campo, por_defecto: int = 0) -> int:
+        """
+        Lee un campo de texto como número.
+
+        Devuelve el default si está vacío o tiene letras, en vez de reventar:
+        el backend valida igual (cupo >= 1, precio >= 0) y su mensaje es más
+        útil que un ValueError en la consola.
+        """
+        try:
+            return int(float((campo.value or "").strip().replace(",", ".")))
+        except (ValueError, AttributeError):
+            return por_defecto
+
     # ── Construcción ─────────────────────────────────────────────────────────
 
     def build(self) -> ft.Column:
-        # TODO: GET /api/actividades (sin filtrar por activa: el ABM también
-        # tiene que mostrar las dadas de baja para poder reactivarlas)
+        # Sin filtrar por activa: el ABM también tiene que mostrar las dadas de
+        # baja para poder reactivarlas. El backend devuelve todas.
         actividades = app_state.get_actividades()
 
         topbar = build_topbar(
@@ -194,11 +225,17 @@ class ActividadesView:
                               value=str(act["horas_cancelacion"]) if editando else "0")
 
         def guardar():
-            # TODO: POST /api/actividades   (alta)
-            #       PUT  /api/actividades/{id}  (edición)
-            show_snack(self.page,
-                       "Actividad actualizada" if editando else "Actividad creada",
-                       Colors.STATUS_OK)
+            datos = {
+                "nombre": (nombre.value or "").strip(),
+                "descripcion": (desc.value or "").strip() or None,
+                "cupo_default": self._entero(cupo, 1),
+                "precio_clase_suelta": self._entero(precio, 0),
+                "horas_anticipacion_cancelacion": self._entero(horas, 0),
+            }
+            self._resolver(
+                app_state.editar_actividad(act["id"], datos) if editando
+                else app_state.crear_actividad(datos)
+            )
 
         open_dialog(self.page, form_dialog(
             self.page,
@@ -211,11 +248,10 @@ class ActividadesView:
         activa = act["activa"]
 
         def confirmar():
-            # TODO: DELETE /api/actividades/{id}      (baja lógica)
-            #       POST   /api/actividades/{id}/reactivar
-            show_snack(self.page,
-                       f"\"{act['nombre']}\" fue {'dada de baja' if activa else 'reactivada'}",
-                       Colors.STATUS_OK)
+            # Se manda el estado DESTINO, no un toggle: con la grilla
+            # desactualizada, "dar de baja" sobre algo ya dado de baja lo
+            # reactivaría.
+            self._resolver(app_state.cambiar_estado_actividad(act["id"], not activa))
 
         # Reactivar no pide confirmación en la web: es reversible y de bajo
         # riesgo. Sólo la baja pregunta.
@@ -248,11 +284,16 @@ class ActividadesView:
                              value=str(plan["precio"]) if editando else "")
 
         def guardar():
-            # TODO: POST /api/actividades/{id}/planes   (alta)
-            #       PUT  /api/planes/{id}               (edición)
-            show_snack(self.page,
-                       "Plan actualizado" if editando else "Plan creado",
-                       Colors.STATUS_OK)
+            datos = {
+                "nombre": (nombre.value or "").strip(),
+                "tipo_limite": tipo.value or "POR_MES",
+                "cantidad": self._entero(cant, 1),
+                "precio": self._entero(precio, 0),
+            }
+            self._resolver(
+                app_state.editar_plan_actividad(plan["id"], datos) if editando
+                else app_state.crear_plan_actividad(act["id"], datos)
+            )
 
         open_dialog(self.page, form_dialog(
             self.page,
@@ -265,10 +306,7 @@ class ActividadesView:
         activo = plan["activo"]
 
         def confirmar():
-            # TODO: DELETE /api/planes/{id}  /  POST /api/planes/{id}/reactivar
-            show_snack(self.page,
-                       f"\"{plan['nombre']}\" fue {'dado de baja' if activo else 'reactivado'}",
-                       Colors.STATUS_OK)
+            self._resolver(app_state.cambiar_estado_plan(plan["id"], not activo))
 
         if not activo:
             confirmar()
@@ -290,7 +328,6 @@ class ActividadesView:
         relación N:M pura: no hay "editar", sólo existe o no existe — por eso
         cada fila se guarda al toque y no hay botón "Guardar" al pie.
         """
-        # TODO: GET /api/profesores  +  GET /api/actividades/{id}/profesores
         profesores = app_state.get_profesores()
         asignados  = set(act["profesores"])
 
@@ -334,14 +371,29 @@ class ActividadesView:
         )
 
         def alternar(e):
-            # TODO: POST/DELETE /api/actividades/{id}/profesores/{id_profesor}
-            nuevo = estado.value == "Asignar"
-            estado.value = "Asignado" if nuevo else "Asignar"
-            estado.color = Colors.PRIMARY_VOLT if nuevo else Colors.TEXT_MUTED
-            fila.bgcolor = alpha(Colors.PRIMARY_VOLT, 0.08) if nuevo else None
+            """
+            Asigna o quita al profesor, y recién después pinta.
+
+            El orden importa: si la fila se pintara primero y el pedido
+            fallara, quedaría marcada como asignada sin estarlo — y como este
+            diálogo no tiene botón de guardar, nadie se enteraría hasta que
+            alguien programara un turno con un profesor que no dicta esa
+            actividad. Se escribe, se chequea, y sólo entonces se refleja.
+            """
+            asignar = estado.value == "Asignar"
+            resultado = (app_state.asignar_profesor(act["id"], prof["id"]) if asignar
+                         else app_state.desasignar_profesor(act["id"], prof["id"]))
+
+            if not resultado["ok"]:
+                show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+                return
+
+            estado.value = "Asignado" if asignar else "Asignar"
+            estado.color = Colors.PRIMARY_VOLT if asignar else Colors.TEXT_MUTED
+            fila.bgcolor = alpha(Colors.PRIMARY_VOLT, 0.08) if asignar else None
             fila.border = ft.Border.all(
-                1, Colors.PRIMARY_VOLT if nuevo else Colors.BORDER_IDLE)
-            fila.content.controls[0].color = (Colors.PRIMARY_VOLT if nuevo
+                1, Colors.PRIMARY_VOLT if asignar else Colors.BORDER_IDLE)
+            fila.content.controls[0].color = (Colors.PRIMARY_VOLT if asignar
                                               else Colors.TEXT_MUTED)
             fila.update()
 
