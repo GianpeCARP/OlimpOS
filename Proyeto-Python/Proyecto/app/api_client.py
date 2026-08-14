@@ -448,3 +448,35 @@ def obtener_actividad_reciente() -> dict:
 
 def obtener_socios_recientes() -> dict:
     return _get("/dashboard/socios-recientes")
+
+
+# =============================================================================
+# PANEL DE RECEPCIÓN
+# =============================================================================
+
+def obtener_panel_recepcion() -> dict:
+    return _get("/recepcion/panel")
+
+
+def obtener_turno_detalle(id_turno: int) -> dict:
+    return _get(f"/recepcion/turnos/{id_turno}")
+
+
+def buscar_por_dni(dni: str) -> dict:
+    return _get(f"/recepcion/buscar?dni={dni}")
+
+
+def obtener_horarios() -> dict:
+    return _get("/actividades/horarios")
+
+
+def crear_horario(datos: dict) -> dict:
+    return _post("/actividades/horarios", datos)
+
+
+def cambiar_estado_horario(id_horario: int, activo: bool) -> dict:
+    return _post(f"/actividades/horarios/{id_horario}/estado?activo={str(activo).lower()}")
+
+
+def generar_turnos() -> dict:
+    return _post("/actividades/turnos/generar")

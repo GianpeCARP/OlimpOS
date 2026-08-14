@@ -48,6 +48,7 @@ class Routes:
     puede desincronizarse en silencio.
     """
     DASHBOARD = "dashboard"
+    RECEPCION = "recepcion"
     SOCIOS = "socios"
     COBROS = "cobros"
     ASISTENCIA = "asistencia"
@@ -153,6 +154,7 @@ def _todas_en(valor: bool) -> dict[str, bool]:
 # ninguna pantalla de gestión.
 _SIN_ACCESO = {
     Routes.DASHBOARD: Acceso.NINGUNO,
+    Routes.RECEPCION: Acceso.NINGUNO,
     Routes.SOCIOS: Acceso.NINGUNO,
     Routes.PERSONAL: Acceso.NINGUNO,
     Routes.RUTINAS: Acceso.NINGUNO,
@@ -175,6 +177,7 @@ PERMISOS: dict[str, dict] = {
     Rol.DUENO: {
         "secciones": {
             Routes.DASHBOARD: Acceso.TOTAL,
+            Routes.RECEPCION: Acceso.TOTAL,
             Routes.SOCIOS: Acceso.TOTAL,
             Routes.PERSONAL: Acceso.TOTAL,
             Routes.RUTINAS: Acceso.TOTAL,
@@ -202,6 +205,7 @@ PERMISOS: dict[str, dict] = {
     Rol.RECEPCIONISTA: {
         "secciones": {
             Routes.DASHBOARD: Acceso.TOTAL,
+            Routes.RECEPCION: Acceso.TOTAL,
             Routes.SOCIOS: Acceso.TOTAL,
             Routes.PERSONAL: Acceso.LECTURA,
             Routes.RUTINAS: Acceso.TOTAL,
@@ -231,6 +235,7 @@ PERMISOS: dict[str, dict] = {
     Rol.ENTRENADOR: {
         "secciones": {
             Routes.DASHBOARD: Acceso.NINGUNO,
+            Routes.RECEPCION: Acceso.NINGUNO,
             Routes.SOCIOS: Acceso.LECTURA,
             Routes.PERSONAL: Acceso.NINGUNO,
             Routes.RUTINAS: Acceso.TOTAL,
@@ -250,6 +255,7 @@ PERMISOS: dict[str, dict] = {
     Rol.NUTRICIONISTA: {
         "secciones": {
             Routes.DASHBOARD: Acceso.NINGUNO,
+            Routes.RECEPCION: Acceso.NINGUNO,
             Routes.SOCIOS: Acceso.LECTURA,
             Routes.PERSONAL: Acceso.NINGUNO,
             Routes.RUTINAS: Acceso.LECTURA,

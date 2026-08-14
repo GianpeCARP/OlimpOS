@@ -40,8 +40,21 @@ import sys
 
 from permisos import PERMISOS as PY_PERMISOS
 
+_RANGO = {"ninguno": 0, "lectura": 1, "total": 2}
+
 CONFIG_TS = pathlib.Path("../Proyecto/src/frontend/src/config.ts")
 FLET_DIR = pathlib.Path("../Proyeto-Python/Proyecto")
+
+# Secciones que existen SOLO en la app de escritorio, mapeadas a la seccion
+# del backend que en realidad protege sus endpoints.
+#
+# "recepcion" es el panel del mostrador: una VISTA sobre datos de asistencia,
+# no un area nueva de permisos. Sus endpoints (/recepcion/*) estan protegidos
+# con Seccion.ASISTENCIA. Por eso no figura en el backend ni en la PWA, y por
+# eso lo que se verifica no es que exista alla, sino que su nivel en Flet
+# nunca supere al de la seccion que realmente la protege: si lo superara, un
+# rol veria el panel en el menu y recibiria 403 al abrirlo.
+SOLO_FLET = {"recepcion": "asistencia"}
 
 
 def matriz_de_flet() -> dict[str, dict] | None:
@@ -220,6 +233,8 @@ def main() -> int:
             # socio no están ahí a propósito — son pantallas de la PWA.
             py_sec, fl_sec = PY_PERMISOS[rol]["secciones"], flet[rol]["secciones"]
             for seccion in sorted(fl_sec):
+                if seccion in SOLO_FLET:
+                    continue
                 celdas += 1
                 a, b = py_sec.get(seccion, "<falta>"), fl_sec[seccion]
                 if a != b:
@@ -235,6 +250,20 @@ def main() -> int:
                     diferencias.append(f"{rol}.acciones.{accion}:  backend={a!r}  Flet={b!r}")
 
         print(f"backend vs Flet: {len(flet)} roles, {celdas} celdas comparadas.")
+
+        # Las pantallas que solo existen en Flet: se controla que no prometan
+        # mas acceso del que da la seccion del backend que las protege.
+        for rol in sorted(set(PY_PERMISOS) & set(flet)):
+            for seccion, respaldo in SOLO_FLET.items():
+                nivel_flet = flet[rol]["secciones"].get(seccion, "ninguno")
+                nivel_real = PY_PERMISOS[rol]["secciones"].get(respaldo, "ninguno")
+                if _RANGO[nivel_flet] > _RANGO[nivel_real]:
+                    diferencias.append(
+                        f"{rol}: Flet da '{nivel_flet}' en {seccion}, pero el "
+                        f"backend solo da '{nivel_real}' en {respaldo} — la "
+                        f"pantalla apareceria en el menu y contestaria 403"
+                    )
+        print(f"Flet-only: {len(SOLO_FLET)} pantalla(s) contrastadas contra su seccion real.")
 
         # Y que los nombres de sección que usa la matriz de Flet sigan siendo
         # los de su config.py. Sin esto, renombrar una ruta dejaría la matriz

@@ -217,16 +217,42 @@ class AppState:
         return [item["route"] for item in NAV_ITEMS
                 if permisos.puede_ver(self.get_user_roles(), item["route"])]
 
+    # A qué pantalla mandar a cada rol al entrar, cuando la primera del menú no
+    # es la que esa persona realmente usa.
+    #
+    # El Recepcionista tiene acceso al Dashboard, así que sin esto aterrizaría
+    # ahí: un resumen de métricas del negocio que no le sirve para trabajar.
+    # Lo que necesita ver apenas abre la app es quién está por llegar. Es la
+    # diferencia entre una pantalla que se mira una vez por día y la que se
+    # mira todo el día.
+    #
+    # El Dueño NO está en este mapa a propósito: para él el Dashboard sí es la
+    # pantalla correcta — mira el negocio, no el mostrador.
+    ATERRIZAJE = {
+        permisos.Rol.RECEPCIONISTA: permisos.Routes.RECEPCION,
+    }
+
     def primera_seccion(self) -> str | None:
         """
         A dónde mandar a alguien recién logueado.
 
         No siempre es el Dashboard: un Entrenador lo tiene en NINGUNO, así que
-        aterrizaría en una pantalla que no puede ver. Se lo lleva a la primera
-        que sí, respetando el orden del menú.
+        aterrizaría en una pantalla que no puede ver. Y un Recepcionista sí lo
+        tiene, pero no es donde trabaja — ver ATERRIZAJE.
         """
         visibles = self.secciones_visibles()
-        return visibles[0] if visibles else None
+        if not visibles:
+            return None
+
+        # Si alguno de sus roles tiene un aterrizaje propio y puede verlo,
+        # gana ese. Se recorre en el orden de ATERRIZAJE y no en el de los
+        # roles: alguien que sea recepcionista Y otra cosa tiene que caer
+        # igual en el mostrador.
+        for rol, destino in self.ATERRIZAJE.items():
+            if rol in self.get_user_roles() and destino in visibles:
+                return destino
+
+        return visibles[0]
 
     # ── Traductores de formato ────────────────────────────────────────────────
     # El backend habla ISO (2026-08-11) porque es lo que ordena y compara bien.
@@ -930,6 +956,143 @@ class AppState:
             api_client.cambiar_estado_usuario(id_usuario, activo),
             "Cuenta activada." if activo else "Cuenta desactivada.",
         )
+
+
+    # ── Panel de recepción ────────────────────────────────────────────────────
+    #
+    # Lo que ve el mostrador. Todo viene ya resuelto del backend —el estado de
+    # cada persona, los minutos que faltan, la advertencia de cuota— porque
+    # las tres apps tienen que decir exactamente lo mismo: si la pantalla dice
+    # que una reserva sigue viva y el molinete dice que venció, el mostrador
+    # deja de confiar en la pantalla.
+
+    def get_panel_recepcion(self) -> dict:
+        """
+        Próximos turnos con sus inscriptos, en un solo pedido.
+
+        Devuelve la forma vacía y no None si falla: el panel se refresca solo
+        cada pocos segundos y una pantalla en blanco es preferible a que la
+        app se caiga porque el backend se reinició justo en ese instante.
+        """
+        datos = self._datos(api_client.obtener_panel_recepcion(), {})
+        if not datos:
+            return {"turnos": [], "vencidos": [], "anotados": 0, "presentes": 0,
+                     "hay_datos": False}
+        return {
+            "turnos": [self._turno_panel(t) for t in datos.get("turnos", [])],
+            "vencidos": [self._turno_panel(t) for t in datos.get("vencidos_recientes", [])],
+            "anotados": datos.get("total_anotados_hoy", 0),
+            "presentes": datos.get("total_presentes_hoy", 0),
+            "hay_datos": True,
+        }
+
+    def _turno_panel(self, t: dict) -> dict:
+        """Un turno del panel, con lo que la vista necesita para pintarlo."""
+        faltan = t.get("minutos_para_empezar", 0)
+        return {
+            "id": t["id_turno"],
+            "actividad": t.get("actividad", "—"),
+            "hora": str(t.get("hora", ""))[:5],
+            "faltan": faltan,
+            # El texto ya armado, para que la vista no repita la lógica de
+            # pluralizar y de distinguir "en 5 min" de "empezó hace 5 min".
+            "cuando": self._cuando(faltan),
+            "vence": str(t.get("vence_a", ""))[11:16],
+            "cupo": t.get("cupo_maximo", 0),
+            "ocupados": t.get("ocupados", 0),
+            "en_espera": t.get("en_espera", 0),
+            "profesor": t.get("profesor") or "—",
+            "sala_abierta": t.get("es_sala_abierta", False),
+            "inscriptos": [
+                {
+                    "id_reserva": i["id_reserva"],
+                    "id_socio": i["id_socio"],
+                    "nombre": i.get("nombre", "—"),
+                    "dni": i.get("dni", "—"),
+                    "estado": i.get("estado", "pendiente"),
+                    "suelta": i.get("es_clase_suelta", False),
+                    "alerta": i.get("alerta"),
+                }
+                for i in t.get("inscriptos", [])
+            ],
+        }
+
+    @staticmethod
+    def _cuando(minutos: int) -> str:
+        """'en 12 min' / 'empieza ahora' / 'empezó hace 8 min'."""
+        if minutos > 60:
+            horas, resto = divmod(minutos, 60)
+            return f"en {horas} h {resto} min" if resto else f"en {horas} h"
+        if minutos > 1:
+            return f"en {minutos} min"
+        if minutos >= -1:
+            return "empieza ahora"
+        return f"empezó hace {abs(minutos)} min"
+
+    def buscar_socio_por_dni(self, dni: str) -> list[dict]:
+        """
+        Busca en el mostrador por DNI.
+
+        Por DNI y no por nombre porque la persona tiene el documento en la
+        mano: se tipea sin ambigüedad, no tiene acentos y no hay dos socios
+        con el mismo. Trae de una la membresía, la deuda y el próximo turno,
+        para que una sola búsqueda cierre la conversación.
+        """
+        datos = self._datos(api_client.buscar_por_dni(dni.strip()), [])
+        return [
+            {
+                "id": s["id_socio"],
+                "nombre": s.get("nombre", "—"),
+                "dni": s.get("dni", "—"),
+                "numero_socio": s.get("numero_socio") or "—",
+                "tiene_rfid": s.get("tiene_rfid", False),
+                "activo": s.get("activo", True),
+                "membresia": s.get("estado_membresia", "—"),
+                "vence": self._fecha(s.get("vencimiento")),
+                "deuda": s.get("deuda_total", 0),
+                "alerta": s.get("alerta"),
+                "proximo": (self._turno_panel(s["proximo_turno"])
+                            if s.get("proximo_turno") else None),
+            }
+            for s in datos
+        ]
+
+    # ── Horarios semanales ────────────────────────────────────────────────────
+
+    def get_horarios(self) -> list[dict]:
+        datos = self._datos(api_client.obtener_horarios(), [])
+        return [
+            {
+                "id": h["id_horario_actividad"],
+                "actividad": h.get("actividad", "—"),
+                "id_actividad": h.get("id_actividad"),
+                "dia": h.get("dia_nombre", "—"),
+                "dia_num": h.get("dia_semana", 1),
+                "hora": str(h.get("hora", ""))[:5],
+                "cupo": h.get("cupo", 0),
+                "profesor": h.get("profesor") or "—",
+                "activo": h.get("activo", True),
+                "turnos_futuros": h.get("turnos_futuros", 0),
+            }
+            for h in datos
+        ]
+
+    def crear_horario(self, datos: dict) -> dict:
+        return self._resultado(api_client.crear_horario(datos),
+                                "Horario creado. Los turnos ya se generaron.")
+
+    def cambiar_estado_horario(self, id_horario: int, activo: bool) -> dict:
+        return self._resultado(
+            api_client.cambiar_estado_horario(id_horario, activo),
+            "Horario reactivado." if activo else
+            "Horario dado de baja. Los turnos ya generados con gente anotada se mantienen.",
+        )
+
+    def generar_turnos(self) -> dict:
+        respuesta = api_client.generar_turnos()
+        if not respuesta.get("ok"):
+            return {"ok": False, "mensaje": respuesta.get("error", "No se pudieron generar.")}
+        return {"ok": True, "mensaje": respuesta["data"].get("mensaje", "Listo.")}
 
 
 # ── Instancia global única ─────────────────────────────────────────────────────

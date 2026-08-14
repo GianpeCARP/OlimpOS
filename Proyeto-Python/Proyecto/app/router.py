@@ -58,6 +58,7 @@ class Router:
         sus dependencias estén disponibles.
         """
         from app.views.dashboard    import DashboardView
+        from app.views.recepcion    import RecepcionView
         from app.views.socios       import SociosView
         from app.views.cobros       import CobrosView
         from app.views.asistencia   import AsistenciaView
@@ -71,6 +72,7 @@ class Router:
         # el personal del gimnasio (los socios usan la web, no esta app).
         self._view_map = {
             Routes.DASHBOARD:   DashboardView,
+            Routes.RECEPCION:   RecepcionView,
             Routes.SOCIOS:      SociosView,
             Routes.COBROS:      CobrosView,
             Routes.ASISTENCIA:  AsistenciaView,

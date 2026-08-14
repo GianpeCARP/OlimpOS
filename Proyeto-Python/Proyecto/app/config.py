@@ -128,6 +128,7 @@ class Radius:
 class Routes:
     LOGIN       = "login"
     DASHBOARD   = "dashboard"
+    RECEPCION   = "recepcion"
     SOCIOS      = "socios"
     COBROS      = "cobros"
     ASISTENCIA  = "asistencia"
@@ -146,6 +147,9 @@ class Routes:
 #   Apple→RESTAURANT_MENU, CalendarCheck→EVENT_AVAILABLE, ShieldCheck→VERIFIED_USER
 NAV_ITEMS = [
     {"label": "Dashboard",   "icon": ft.Icons.DASHBOARD,                 "route": Routes.DASHBOARD},
+    # Va segundo, arriba de todo lo demas: es la pantalla que el recepcionista
+    # mira todo el dia. Para el Dueno es una mas; para el mostrador es LA vista.
+    {"label": "Recepción",   "icon": ft.Icons.SUPPORT_AGENT_ROUNDED,     "route": Routes.RECEPCION},
     {"label": "Socios",      "icon": ft.Icons.GROUP,                     "route": Routes.SOCIOS},
     {"label": "Cobros",      "icon": ft.Icons.ACCOUNT_BALANCE_WALLET,    "route": Routes.COBROS},
     {"label": "Asistencia",  "icon": ft.Icons.FINGERPRINT,               "route": Routes.ASISTENCIA},
