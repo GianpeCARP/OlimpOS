@@ -1085,7 +1085,13 @@ class AppState:
         return self._resultado(
             api_client.cambiar_estado_horario(id_horario, activo),
             "Horario reactivado." if activo else
-            "Horario dado de baja. Los turnos ya generados con gente anotada se mantienen.",
+            # El mensaje decía que los turnos vacíos se cancelaban. NO es
+            # cierto con esta llamada: el backend sólo los cancela si se le
+            # pide explícitamente (borrar_turnos_futuros), y desde acá no se
+            # le pide. Dar de baja un horario significa "no generes más", y
+            # los turnos que ya existen siguen en pie — pueden tener gente.
+            "Horario dado de baja. Deja de generar turnos nuevos; "
+            "los ya generados siguen en pie.",
         )
 
     def generar_turnos(self) -> dict:

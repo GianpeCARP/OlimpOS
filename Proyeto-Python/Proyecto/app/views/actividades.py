@@ -62,10 +62,14 @@ class ActividadesView:
         # baja para poder reactivarlas. El backend devuelve todas.
         actividades = app_state.get_actividades()
 
+        horarios = app_state.get_horarios()
+
         topbar = build_topbar(
             "Actividades",
-            f"{len(actividades)} actividades en el catálogo",
+            f"{len(actividades)} actividades · {len(horarios)} horarios semanales",
             actions=[
+                primary_button("Nuevo horario", ft.Icons.CALENDAR_MONTH_ROUNDED,
+                               on_click=lambda e: self._form_horario(actividades)),
                 primary_button("Nueva actividad", ft.Icons.ADD_ROUNDED,
                                on_click=lambda e: self._form_actividad()),
             ],
@@ -82,6 +86,19 @@ class ActividadesView:
                 spacing=16, run_spacing=16,
             )
 
+        # La grilla semanal va ARRIBA del catálogo a propósito. El catálogo
+        # dice qué actividades existen; la grilla dice cuándo pasan, que es lo
+        # que hace que existan turnos y que alguien pueda reservar. Una
+        # actividad sin horario no la ve nadie.
+        cuerpo = ft.Column([
+            self._grilla_semanal(horarios),
+            ft.Container(height=24),
+            ft.Text("Catálogo", color=Colors.TEXT_PRIMARY, size=16,
+                    weight=ft.FontWeight.BOLD),
+            ft.Container(height=12),
+            cuerpo,
+        ], spacing=0)
+
         # Topbar fijo arriba, sólo el contenido scrollea (ver dashboard.py).
         return ft.Column([
             topbar,
@@ -92,6 +109,254 @@ class ActividadesView:
                 expand=True,
             ),
         ], spacing=0, expand=True)
+
+    # ── Horario semanal ───────────────────────────────────────────────────────
+    #
+    # De acá salen los turnos. Antes cada Turno se cargaba a mano: si Yoga era
+    # lunes y miércoles 19:00, alguien creaba dos filas por semana para
+    # siempre, y el día que se olvidaba la clase directamente no existía —
+    # nadie podía reservarla y el recepcionista se enteraba cuando llegaba la
+    # gente. Acá se declara una vez y el sistema genera las próximas 4 semanas.
+
+    DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+
+    def _grilla_semanal(self, horarios: list[dict]) -> ft.Container:
+        """
+        La semana como una grilla de 7 columnas.
+
+        Se muestra así y no como una lista porque el horario de un gimnasio se
+        piensa en semana: lo que uno quiere ver de un vistazo es qué días
+        están vacíos y a qué hora se pisan dos clases. Una lista ordenada por
+        actividad esconde exactamente eso.
+        """
+        activos = [h for h in horarios if h["activo"]]
+        turnos_generados = sum(h["turnos_futuros"] for h in activos)
+
+        encabezado = ft.Row([
+            ft.Column([
+                ft.Text("Horario semanal", color=Colors.TEXT_PRIMARY, size=16,
+                        weight=ft.FontWeight.BOLD),
+                ft.Text(
+                    f"{turnos_generados} turnos generados hacia adelante"
+                    if turnos_generados else
+                    "Sin horarios no hay turnos, y sin turnos nadie puede reservar.",
+                    color=Colors.TEXT_MUTED, size=12,
+                ),
+            ], spacing=2, tight=True, expand=True),
+            ft.TextButton(
+                "Regenerar turnos",
+                icon=ft.Icons.AUTORENEW_ROUNDED,
+                style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                on_click=lambda e: self._regenerar(),
+            ),
+        ], vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+        if not activos:
+            return section_card(ft.Column([
+                encabezado,
+                ft.Container(height=16),
+                empty_state(
+                    "Todavía no hay ningún horario cargado. Mientras no haya "
+                    "uno, el panel de Recepción va a estar vacío.",
+                    ft.Icons.CALENDAR_MONTH_ROUNDED,
+                ),
+            ], spacing=0))
+
+        columnas = []
+        for indice, dia in enumerate(self.DIAS, start=1):
+            # isoweekday: 1 = lunes ... 7 = domingo. Mismo criterio que guarda
+            # la base, así que no hay conversión en el medio.
+            del_dia = sorted((h for h in activos if h["dia_num"] == indice),
+                             key=lambda h: h["hora"])
+            columnas.append(ft.Container(
+                content=ft.Column([
+                    ft.Text(dia.upper(), color=Colors.TEXT_MUTED, size=10,
+                            weight=ft.FontWeight.W_600),
+                    ft.Container(height=8),
+                    *([self._chip_horario(h) for h in del_dia] or [
+                        ft.Text("—", color=Colors.TEXT_MUTED, size=12)
+                    ]),
+                ], spacing=6),
+                col={"xs": 12, "sm": 6, "md": 3, "lg": 12 / 7},
+                padding=ft.Padding.all(8),
+            ))
+
+        return section_card(ft.Column([
+            encabezado,
+            ft.Container(height=16),
+            ft.ResponsiveRow(columnas, spacing=4, run_spacing=8),
+        ], spacing=0))
+
+    def _chip_horario(self, h: dict) -> ft.Container:
+        """
+        Un horario dentro de su día. Click = darlo de baja.
+
+        Muestra cuántos turnos futuros generó: es la única forma de ver de un
+        vistazo que la generación automática está corriendo. Un horario activo
+        con 0 turnos futuros significa que algo no está funcionando.
+        """
+        sin_turnos = h["turnos_futuros"] == 0
+        color = Colors.STATUS_WARN if sin_turnos else Colors.PRIMARY_VOLT
+
+        return ft.Container(
+            content=ft.Column([
+                ft.Row([
+                    ft.Text(h["hora"], color=color, size=13,
+                            weight=ft.FontWeight.BOLD, font_family=Fonts.MONO),
+                    ft.Container(expand=True),
+                    ft.IconButton(
+                        ft.Icons.CLOSE_ROUNDED, icon_color=Colors.TEXT_MUTED,
+                        icon_size=14, tooltip="Dar de baja este horario",
+                        on_click=lambda e, x=h: self._baja_horario(x),
+                    ),
+                ], spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ft.Text(h["actividad"], color=Colors.TEXT_PRIMARY, size=12),
+                ft.Text(f"cupo {h['cupo']} · {h['profesor']}",
+                        color=Colors.TEXT_MUTED, size=10),
+                ft.Text(
+                    "sin turnos generados" if sin_turnos
+                    else f"{h['turnos_futuros']} turnos",
+                    color=Colors.STATUS_WARN if sin_turnos else Colors.TEXT_MUTED,
+                    size=10,
+                ),
+            ], spacing=2, tight=True),
+            bgcolor=alpha(color, 0.08),
+            border=ft.Border.all(1, alpha(color, 0.3)),
+            border_radius=Radius.SM,
+            padding=ft.Padding.symmetric(horizontal=8, vertical=6),
+        )
+
+    def _form_horario(self, actividades: list[dict]):
+        """
+        Alta de un horario semanal.
+
+        Al guardar, el backend genera los turnos en el acto. Es deliberado que
+        no espere al próximo arranque: quien acaba de cargar "Yoga los lunes
+        19:00" espera ver los turnos, y si aparecieran recién mañana pensaría
+        que no se guardó y lo cargaría de nuevo.
+        """
+        vigentes = [a for a in actividades if a["activa"]]
+        if not vigentes:
+            show_snack(self.page,
+                       "Primero cargá una actividad: el horario es de una actividad.",
+                       Colors.STATUS_WARN)
+            return
+
+        act_ref = ft.Ref[ft.Dropdown]()
+        dia_ref = ft.Ref[ft.Dropdown]()
+        hora_ref = ft.Ref[ft.TextField]()
+        cupo_ref = ft.Ref[ft.TextField]()
+
+        def guardar():
+            hora = (hora_ref.current.value or "").strip() if hora_ref.current else ""
+            # Se valida acá antes de salir a la red: "19" o "7:5" son errores
+            # que se ven mirando el campo, y no vale gastar un viaje y un
+            # mensaje genérico del backend en algo tan evidente.
+            partes = hora.split(":")
+            if len(partes) != 2 or not all(p.strip().isdigit() for p in partes):
+                show_snack(self.page, "La hora va como HH:MM. Ej: 19:00",
+                           Colors.STATUS_DANGER)
+                return
+            h, m = int(partes[0]), int(partes[1])
+            if not (0 <= h <= 23 and 0 <= m <= 59):
+                show_snack(self.page, f"«{hora}» no es una hora válida.",
+                           Colors.STATUS_DANGER)
+                return
+
+            cupo = self._entero(cupo_ref.current.value if cupo_ref.current else "", 0)
+            if cupo <= 0:
+                show_snack(self.page, "El cupo tiene que ser mayor que cero: "
+                                      "una clase de cupo 0 no la puede tomar nadie.",
+                           Colors.STATUS_DANGER)
+                return
+
+            resultado = app_state.crear_horario({
+                "id_actividad": int(act_ref.current.value),
+                "id_sede": 1,
+                "dia_semana": int(dia_ref.current.value),
+                "hora": f"{h:02d}:{m:02d}:00",
+                "cupo": cupo,
+            })
+            self._resolver(resultado)
+
+        dlg = form_dialog(
+            self.page,
+            "Nuevo horario semanal",
+            [
+                ft.Text("Se van a generar los turnos de las próximas 4 semanas, "
+                        "y se renuevan solos.",
+                        color=Colors.TEXT_MUTED, size=12),
+                ft.Container(height=12),
+                ft.Dropdown(
+                    ref=act_ref, label="Actividad",
+                    options=[ft.dropdown.Option(key=str(a["id"]), text=a["nombre"])
+                             for a in vigentes],
+                    value=str(vigentes[0]["id"]),
+                    color=Colors.TEXT_PRIMARY, bgcolor=Colors.BG_INPUT,
+                    border_color=Colors.BORDER, focused_border_color=Colors.ACCENT,
+                    border_radius=Radius.MD,
+                ),
+                ft.Container(height=12),
+                ft.Dropdown(
+                    ref=dia_ref, label="Día",
+                    options=[ft.dropdown.Option(key=str(i), text=d)
+                             for i, d in enumerate(self.DIAS, start=1)],
+                    value="1",
+                    color=Colors.TEXT_PRIMARY, bgcolor=Colors.BG_INPUT,
+                    border_color=Colors.BORDER, focused_border_color=Colors.ACCENT,
+                    border_radius=Radius.MD,
+                ),
+                ft.Container(height=12),
+                input_field("Hora (HH:MM)", "Ej: 19:00", ref=hora_ref,
+                            icon=ft.Icons.SCHEDULE_ROUNDED),
+                ft.Container(height=12),
+                input_field("Cupo", "Ej: 20", ref=cupo_ref,
+                            icon=ft.Icons.GROUP_ROUNDED),
+            ],
+            on_save=guardar,
+            texto_guardar="Crear y generar turnos",
+        )
+        open_dialog(self.page, dlg)
+
+    def _baja_horario(self, h: dict):
+        """
+        Da de baja un horario.
+
+        Dar de baja significa "no generes más", NO "borrá lo que ya existe".
+        Los turnos futuros ya generados se mantienen TODOS: pueden tener gente
+        anotada, y hacerlos desaparecer dejaría reservas apuntando a la nada y
+        socios que creen tener clase.
+
+        El backend sabe cancelar los que quedaron vacíos, pero hay que
+        pedírselo explícitamente y desde acá no se le pide. Cancelar clases
+        futuras es una decisión de quien maneja el gimnasio, no un efecto
+        secundario de editar un horario — si quiere sacarlas, las cancela una
+        por una y ve cuáles.
+        """
+        def confirmar():
+            self._resolver(app_state.cambiar_estado_horario(h["id"], False))
+
+        dlg = confirm_dialog(
+            self.page,
+            "Dar de baja el horario",
+            f"{h['actividad']} — {h['dia']} {h['hora']}\n\n"
+            f"Deja de generar turnos nuevos. Los {h['turnos_futuros']} que ya "
+            f"están generados NO se tocan: si querés sacarlos, cancelalos "
+            f"desde la grilla de turnos.",
+            on_confirm=confirmar,
+        )
+        open_dialog(self.page, dlg)
+
+    def _regenerar(self):
+        """
+        Fuerza la generación de turnos.
+
+        El backend ya la corre sola al arrancar y es idempotente, así que este
+        botón no puede romper nada. Está para el caso de quien acaba de cargar
+        varios horarios y quiere ver el resultado sin reiniciar el servidor.
+        """
+        resultado = app_state.generar_turnos()
+        self._resolver(resultado)
 
     # ── Tarjeta de actividad ─────────────────────────────────────────────────
 

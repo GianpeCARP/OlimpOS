@@ -1303,9 +1303,13 @@ _DIAS = {1: "Lunes", 2: "Martes", 3: "Miércoles", 4: "Jueves",
 
 
 def _a_horario_out(db: Session, h: HorarioActividad) -> HorarioActividadOut:
+    # Sólo los HABILITADOS. Contar también los cancelados haría que la grilla
+    # dijera "4 turnos" de un horario cuyos cuatro turnos están cancelados —
+    # justo lo contrario de lo que ese número existe para avisar.
     futuros = (db.query(func.count(Turno.id_turno))
                .filter(Turno.id_horario_actividad == h.id_horario_actividad,
-                       Turno.fecha >= date.today())
+                       Turno.fecha >= date.today(),
+                       Turno.estado == "HABILITADO")
                .scalar()) or 0
     return HorarioActividadOut(
         id_horario_actividad=h.id_horario_actividad,
