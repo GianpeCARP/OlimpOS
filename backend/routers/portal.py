@@ -39,24 +39,22 @@ socio —incluso uno dado de baja— entraba y veía el DNI de todos los demás
 socios y el legajo del personal.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models import (
-    AsignacionDieta, AsignacionRutina, Asistencia, Deuda, Membresia, Pago,
-    Persona, RegistroSalud, Reserva, Socio, Telefono, Turno,
+    Actividad, AsignacionDieta, AsignacionRutina, Asistencia, Deuda, Membresia, Pago, Persona, RegistroSalud, Reserva, Socio, Telefono, Turno,
 )
 from permisos import Seccion
 from schemas import (
-    AsignacionDietaOut, AsignacionRutinaOut, AsistenciaOut, DietaOut,
-    MedicionCrear, MedicionOut, MiComidaOut, MiCuotaOut, MiDeudaOut,
-    MiDiaDeDietaOut, MiDietaOut, MiRutinaOut,
-    MiPerfilEditarRequest, MiPerfilOut,
-    MiProgresoOut, PagoOut, ReservaOut, RutinaOut,
+    AsignacionDietaOut, AsignacionRutinaOut, AsistenciaOut, DietaOut, MedicionCrear, MedicionOut, MiComidaOut, MiCuotaOut, MiDeudaOut, MiDiaDeDietaOut, MiDietaOut, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRutinaOut, PagoOut, ReservaOut, RutinaOut, TurnoDisponibleOut,
 )
+from notificaciones import notificar_promocion_lista_espera
+from turnos import ocupacion, promover_de_lista_de_espera
 from security import Sesion, requiere_seccion
 
 router = APIRouter(prefix="/portal", tags=["Portal del socio"])
@@ -690,3 +688,266 @@ def cargar_medicion(
     db.commit()
     db.refresh(medicion)
     return MedicionOut.model_validate(medicion)
+
+
+def _a_reserva_out(reserva, turno) -> ReservaOut:
+    """
+    Arma la respuesta de una reserva del socio.
+
+    Existe acá y no se reusa la de /actividades porque aquella arma el nombre
+    del socio para que el mostrador sepa a quién anotó. Acá el socio ES quien
+    pide: repetirle su propio nombre no aporta nada, y armarlo obliga a
+    navegar Reserva -> Socio -> Persona en cada respuesta.
+    """
+    actividad = turno.actividad
+    return ReservaOut(
+        id_reserva=reserva.id_reserva,
+        id_turno=turno.id_turno,
+        id_socio=reserva.id_socio,
+        socio=reserva.socio.persona.nombre_completo,
+        actividad=actividad.nombre if actividad else "—",
+        fecha=turno.fecha,
+        hora=turno.hora,
+        estado=reserva.estado,
+        es_clase_suelta=bool(reserva.es_clase_suelta),
+        clases_restantes=(reserva.inscripcion.clases_restantes
+                          if reserva.inscripcion else None),
+    )
+
+# =============================================================================
+# AUTOGESTIÓN DE TURNOS
+# =============================================================================
+#
+# El socio se anota y se baja solo. Es lo que más veces por semana le evitaba
+# ir al mostrador: reservar una clase no requiere que nadie lo atienda.
+#
+# LA REGLA DE ORO DE TODO ESTE ARCHIVO, que acá importa más que en ningún otro
+# lado: `id_socio` NUNCA viene del cuerpo del pedido. Sale de `sesion.id_socio`,
+# que viaja firmado dentro del token. Los endpoints equivalentes de
+# /actividades sí lo reciben —los usa el personal para operar sobre terceros—
+# y por eso están protegidos con acciones que un socio no tiene. Si acá se
+# aceptara un id, cualquier socio podría anotar o bajar a otro.
+
+@router.post("/mis-turnos/{id_turno}/reservar", response_model=ReservaOut,
+             status_code=status.HTTP_201_CREATED)
+def reservar_mi_turno(
+    id_turno: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MIS_TURNOS)),
+):
+    """
+    Anota al socio de la sesión en una clase.
+
+    Si el turno está completo NO falla: queda en lista de espera, y cuando
+    alguien cancele el sistema lo promueve solo y le avisa. Esa es toda la
+    diferencia entre tener que estar mirando la app por las dudas y no tener
+    que hacer nada.
+    """
+    socio = _mi_socio(db, sesion)
+
+    # with_for_update(): mismo lock que el endpoint del personal. Sin esto,
+    # dos socios reservando el último lugar al mismo tiempo no se ven entre sí
+    # —bajo READ COMMITTED cada uno ve la base como estaba al empezar— y los
+    # dos entran. Acá importa más que en el mostrador: en el mostrador reserva
+    # una persona por vez; en la app, veinte a la vez apenas se abre el cupo.
+    turno = (db.query(Turno)
+             .filter(Turno.id_turno == id_turno)
+             .with_for_update()
+             .first())
+    if turno is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Esa clase no existe.")
+    if turno.estado == "CANCELADO":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Esa clase está cancelada.")
+
+    inicio = datetime.combine(turno.fecha, turno.hora)
+    if inicio < datetime.now():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Esa clase ya empezó. Buscá una de las próximas.",
+        )
+
+    # Una sola reserva por socio y turno. El índice único de la base también lo
+    # impide, pero un IntegrityError le llegaría al socio como un error genérico
+    # de servidor en vez de explicarle que ya estaba anotado.
+    ya = (db.query(Reserva)
+          .filter(Reserva.id_turno == id_turno,
+                  Reserva.id_socio == socio.id_socio,
+                  Reserva.estado.in_(["RESERVADA", "EN_ESPERA"]))
+          .first())
+    if ya:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=("Ya estás anotado en esa clase."
+                    if ya.estado == "RESERVADA"
+                    else "Ya estás en la lista de espera de esa clase."),
+        )
+
+    # Cuota al día. Se valida acá y no sólo al entrar al gimnasio porque
+    # ocupar un lugar es tomar algo que otro socio podría usar: si después no
+    # puede entrar, el lugar se desperdició.
+    membresia = (db.query(Membresia)
+                 .filter(Membresia.id_socio == socio.id_socio,
+                         Membresia.estado == "ACTIVA")
+                 .order_by(Membresia.fecha_vencimiento.desc())
+                 .first())
+    if membresia is None:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="No tenés una membresía activa. Renovala para poder reservar.",
+        )
+    if membresia.fecha_vencimiento and membresia.fecha_vencimiento < turno.fecha:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=(f"Tu cuota vence el "
+                    f"{membresia.fecha_vencimiento.strftime('%d/%m/%Y')} y esa "
+                    f"clase es después. Renovala y reservá de nuevo."),
+        )
+
+    en_espera = ocupacion(db, id_turno) >= turno.cupo_maximo
+
+    reserva = Reserva(
+        id_turno=id_turno,
+        id_socio=socio.id_socio,
+        es_clase_suelta=False,
+        fecha_reserva=datetime.now(),
+        estado="EN_ESPERA" if en_espera else "RESERVADA",
+    )
+    db.add(reserva)
+    db.commit()
+    db.refresh(reserva)
+
+    return _a_reserva_out(reserva, turno)
+
+
+@router.post("/mis-turnos/{id_reserva}/cancelar", response_model=ReservaOut)
+def cancelar_mi_turno(
+    id_reserva: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MIS_TURNOS)),
+):
+    """
+    Baja al socio de una clase.
+
+    Se verifica que la reserva SEA SUYA. Sin ese chequeo, cambiar el número en
+    la URL bajaría a cualquier otro socio de su clase — el mismo agujero que
+    la auditoría del 2026-08-03 cerró para las lecturas, que acá sería peor
+    porque además modifica.
+
+    Cancelar libera el lugar y dispara la promoción de la lista de espera en
+    la misma transacción: el que estaba primero entra sin que nadie haga nada.
+    """
+    reserva = db.get(Reserva, id_reserva)
+    if reserva is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Esa reserva no existe.")
+
+    socio = _mi_socio(db, sesion)
+    if reserva.id_socio != socio.id_socio:
+        # 404 y no 403: un 403 confirmaría que esa reserva existe y es de otro.
+        # No hay motivo para que un socio pueda averiguar eso probando números.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Esa reserva no existe.")
+
+    if reserva.estado not in ("RESERVADA", "EN_ESPERA"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Esa reserva ya estaba cancelada.")
+
+    estaba_en_espera = reserva.estado == "EN_ESPERA"
+    turno = reserva.turno
+    actividad = turno.actividad
+
+    # La anticipación que exige la actividad. Cancelar sobre la hora deja un
+    # lugar que ya nadie va a poder usar, así que si tenía abono pierde la
+    # clase igual. La regla es de la actividad y no global: avisar con 2 horas
+    # puede estar bien para spinning y ser poco para una clase personalizada.
+    horas_de_aviso = (datetime.combine(turno.fecha, turno.hora)
+                      - datetime.now()).total_seconds() / 3600
+    a_tiempo = horas_de_aviso >= (actividad.horas_anticipacion_cancelacion or 0)
+
+    reserva.estado = "CANCELADA_SOCIO"
+    reserva.fecha_cancelacion = datetime.now()
+
+    if reserva.inscripcion and reserva.inscripcion.clases_restantes is not None and a_tiempo:
+        reserva.inscripcion.clases_restantes += 1
+
+    promovido = None
+    if not estaba_en_espera:
+        promovido = promover_de_lista_de_espera(db, turno.id_turno)
+
+    db.commit()
+    db.refresh(reserva)
+
+    if promovido is not None:
+        db.refresh(promovido)
+        notificar_promocion_lista_espera(promovido, turno, actividad)
+
+    return _a_reserva_out(reserva, turno)
+
+
+@router.get("/mis-turnos/disponibles", response_model=list[TurnoDisponibleOut])
+def turnos_disponibles(
+    dias: int = 14,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MIS_TURNOS)),
+):
+    """
+    Las clases a las que el socio se puede anotar.
+
+    Devuelve también las LLENAS, marcadas como tales y con cuántos hay
+    esperando. Esconderlas sería peor: el socio no sabría que existe la clase,
+    y la lista de espera —que es justamente para eso— no la usaría nadie.
+
+    Se marca `ya_anotado` para que la app pueda mostrar "cancelar" en vez de
+    "reservar" sin tener que cruzar dos listas del lado del cliente.
+    """
+    socio = _mi_socio(db, sesion)
+    ahora = datetime.now()
+    hasta = ahora.date() + timedelta(days=dias)
+
+    filas = (db.query(Turno, Actividad)
+             .join(Actividad, Actividad.id_actividad == Turno.id_actividad)
+             .filter(Turno.fecha >= ahora.date(),
+                     Turno.fecha <= hasta,
+                     Turno.estado == "HABILITADO")
+             .order_by(Turno.fecha, Turno.hora)
+             .all())
+
+    # Las reservas propias, de una sola consulta: preguntarlo por turno serían
+    # tantas consultas como clases haya en dos semanas.
+    mias = {
+        r.id_turno: r
+        for r in db.query(Reserva).filter(
+            Reserva.id_socio == socio.id_socio,
+            Reserva.estado.in_(["RESERVADA", "EN_ESPERA"]),
+        ).all()
+    }
+
+    salida = []
+    for turno, actividad in filas:
+        if datetime.combine(turno.fecha, turno.hora) < ahora:
+            continue
+        ocupados = ocupacion(db, turno.id_turno)
+        propia = mias.get(turno.id_turno)
+        salida.append(TurnoDisponibleOut(
+            id_turno=turno.id_turno,
+            actividad=actividad.nombre,
+            fecha=turno.fecha,
+            hora=turno.hora,
+            cupo_maximo=turno.cupo_maximo,
+            ocupados=ocupados,
+            lugares_libres=max(0, turno.cupo_maximo - ocupados),
+            en_espera=(db.query(func.count(Reserva.id_reserva))
+                       .filter(Reserva.id_turno == turno.id_turno,
+                               Reserva.estado == "EN_ESPERA")
+                       .scalar()) or 0,
+            profesor=(turno.profesor.empleado.persona.nombre_completo
+                      if turno.profesor else None),
+            minutos_tolerancia=actividad.minutos_tolerancia,
+            horas_anticipacion_cancelacion=actividad.horas_anticipacion_cancelacion,
+            ya_anotado=propia is not None,
+            mi_estado=(propia.estado if propia else None),
+            id_mi_reserva=(propia.id_reserva if propia else None),
+        ))
+    return salida

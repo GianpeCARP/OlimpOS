@@ -1391,3 +1391,36 @@ class GeneracionTurnosOut(BaseModel):
     desde: date
     hasta: date
     mensaje: str
+
+
+class TurnoDisponibleOut(BaseModel):
+    """
+    Una clase a la que el socio se puede anotar, vista desde su app.
+
+    Incluye las LLENAS: esconderlas haría que el socio ni supiera que existe
+    la clase, y la lista de espera no la usaría nadie. `lugares_libres` en 0
+    con `en_espera` mayor a 0 es exactamente la información que necesita para
+    decidir si vale la pena ponerse en la cola.
+
+    `ya_anotado` y `id_mi_reserva` vienen resueltos del servidor para que la
+    app pueda mostrar "cancelar" en vez de "reservar" sin cruzar dos listas
+    del lado del cliente.
+    """
+    id_turno: int
+    actividad: str
+    fecha: date
+    hora: time
+    cupo_maximo: int
+    ocupados: int
+    lugares_libres: int
+    en_espera: int
+    profesor: str | None = None
+    # Las dos reglas que el socio necesita saber ANTES de anotarse: cuánto
+    # puede llegar tarde y con cuánta anticipación tiene que avisar si no va.
+    # Mostrarlas recién cuando ya es tarde es la forma más segura de que
+    # alguien pierda una clase y venga a reclamar al mostrador.
+    minutos_tolerancia: int = 15
+    horas_anticipacion_cancelacion: int = 0
+    ya_anotado: bool = False
+    mi_estado: str | None = None
+    id_mi_reserva: int | None = None
