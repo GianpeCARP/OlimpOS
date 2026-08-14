@@ -273,13 +273,25 @@ class RecepcionView:
             filas.append(ft.Text("Sin turnos reservados.",
                                  color=Colors.TEXT_MUTED, size=12))
 
-        # Fichar desde acá y no desde otra pantalla: la persona ya está
-        # identificada, pedirle que el operador la busque de nuevo en Asistencia
-        # sería hacerle repetir el trabajo que acaba de hacer.
-        filas.append(ft.Row([
+        # Fichar y cobrar desde acá, no desde otra pantalla: la persona ya
+        # está identificada, y pedirle al operador que la busque de nuevo en
+        # Asistencia o en Cobros sería hacerle repetir el trabajo que acaba de
+        # hacer. Sobre todo el cobro: este es el momento en que se tiene a la
+        # persona enfrente. Cobrarle acá es un click; perseguirla después, una
+        # llamada.
+        acciones = [
             primary_button("Registrar ingreso", ft.Icons.LOGIN_ROUNDED,
                            on_click=lambda e, x=s: self._fichar(x)),
-        ]))
+            # Aparece SIEMPRE, no sólo cuando debe. Alguien que está al día
+            # también puede querer pagar el mes que viene, y esconderlo
+            # obligaría a ir hasta Cobros justo en el caso más fácil de todos.
+            ft.TextButton(
+                "Cobrar cuota", icon=ft.Icons.PAYMENTS_ROUNDED,
+                style=ft.ButtonStyle(color=Colors.PRIMARY_VOLT),
+                on_click=lambda e, x=s: self._cobrar(x["id"], x["nombre"]),
+            ),
+        ]
+        filas.append(ft.Row(acciones, spacing=8, wrap=True))
 
         return ft.Container(
             content=ft.Column(filas, spacing=8),
@@ -308,6 +320,99 @@ class RecepcionView:
         color = Colors.SUCCESS if r.get("permitido", True) else Colors.STATUS_WARN
         show_snack(self.page, r["mensaje"], color)
         self.router.navigate(Routes.RECEPCION)
+
+    def _cobrar(self, id_socio: int, nombre: str):
+        """
+        Cobra una cuota sin salir del panel.
+
+        El monto NO se elige ni se escribe: sale del plan, y el backend lo
+        vuelve a calcular del lado del servidor. Si viniera de esta pantalla,
+        cualquiera con la app abierta podría cobrar $1 una membresía de
+        $30.000 y en la base quedaría un pago perfectamente válido.
+
+        Por eso acá sólo se elige QUÉ plan y CÓMO paga.
+        """
+        planes = app_state.get_tipos_membresia()
+        if not planes:
+            show_snack(self.page,
+                       "No hay planes de membresía cargados todavía.",
+                       Colors.STATUS_WARN)
+            return
+
+        plan_ref = ft.Ref[ft.Dropdown]()
+        metodo_ref = ft.Ref[ft.Dropdown]()
+        metodos = app_state.get_metodos_pago()
+
+        def confirmar(e=None):
+            resultado = app_state.cobrar_membresia(
+                id_socio,
+                int(plan_ref.current.value),
+                metodo_ref.current.value,
+            )
+            if not resultado["ok"]:
+                show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+                return
+            close_dialog(self.page, dlg)
+            show_snack(self.page, resultado["mensaje"], Colors.SUCCESS)
+            # Se rearma la vista entera y no sólo la parte viva: cobrar cambia
+            # la alerta de esa persona, y esa alerta también aparece en el
+            # resultado de la búsqueda, que queda fuera del refresco automático.
+            self.router.navigate(Routes.RECEPCION)
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f"Cobrar a {nombre}", color=Colors.TEXT_PRIMARY,
+                          weight=ft.FontWeight.BOLD),
+            bgcolor=Colors.BG_CARD,
+            content=ft.Container(
+                width=400,
+                content=ft.Column([
+                    ft.Dropdown(
+                        ref=plan_ref, label="Plan",
+                        # El precio va en la etiqueta: es lo que el operador
+                        # necesita leerle en voz alta a quien tiene enfrente, y
+                        # tenerlo acá evita abrir otra pantalla a mirarlo.
+                        options=[
+                            ft.dropdown.Option(
+                                key=str(p["id"]),
+                                text=f"{p['nombre']} - ${p['precio']:,.0f} ({p['dias']} dias)",
+                            )
+                            for p in planes
+                        ],
+                        value=str(planes[0]["id"]),
+                        color=Colors.TEXT_PRIMARY, bgcolor=Colors.BG_INPUT,
+                        border_color=Colors.BORDER, focused_border_color=Colors.ACCENT,
+                        border_radius=Radius.MD,
+                    ),
+                    ft.Container(height=12),
+                    ft.Dropdown(
+                        ref=metodo_ref, label="Método de pago",
+                        options=[ft.dropdown.Option(m) for m in metodos],
+                        value=metodos[0] if metodos else None,
+                        color=Colors.TEXT_PRIMARY, bgcolor=Colors.BG_INPUT,
+                        border_color=Colors.BORDER, focused_border_color=Colors.ACCENT,
+                        border_radius=Radius.MD,
+                    ),
+                    ft.Container(height=12),
+                    ft.Row([
+                        ft.Icon(ft.Icons.INFO_OUTLINE_ROUNDED,
+                                color=Colors.TEXT_MUTED, size=14),
+                        ft.Text("El monto lo calcula el sistema a partir del plan.",
+                                color=Colors.TEXT_MUTED, size=11),
+                    ], spacing=6),
+                ], spacing=0, tight=True),
+            ),
+            actions=[
+                ft.TextButton("Cancelar",
+                              style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                              on_click=lambda e: close_dialog(self.page, dlg)),
+                ft.TextButton("Cobrar",
+                              style=ft.ButtonStyle(color=Colors.ACCENT),
+                              on_click=confirmar),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        open_dialog(self.page, dlg)
 
     # ── Resumen del día ───────────────────────────────────────────────────────
 
@@ -463,6 +568,15 @@ class RecepcionView:
                     ft.Text(i["alerta"], color=Colors.STATUS_WARN, size=11),
                 ], spacing=4)] if i["alerta"] else []),
                 ft.Text(etiqueta, color=color, size=12, weight=ft.FontWeight.W_500),
+                # Cobrar directo desde la fila del turno. Aparece sólo si hay
+                # algo que decirle —deuda, cuota vencida o por vencer—: es el
+                # aviso y la solución en el mismo lugar. Sin alerta, el botón
+                # sería ruido repetido en una lista de veinte nombres.
+                *([ft.IconButton(
+                    ft.Icons.PAYMENTS_ROUNDED, icon_color=Colors.STATUS_WARN,
+                    icon_size=18, tooltip="Cobrar cuota",
+                    on_click=lambda e, x=i: self._cobrar(x["id_socio"], x["nombre"]),
+                )] if i["alerta"] else []),
                 *([ft.IconButton(
                     ft.Icons.HOW_TO_REG_ROUNDED, icon_color=Colors.PRIMARY_VOLT,
                     icon_size=18, tooltip="Registrar ingreso",
