@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from csrf import middleware_csrf
 from database import Base, SessionLocal, engine
 from seeder import ejecutar_seeder
+from turnos import generar_turnos
 
 # El import de models tiene que estar aunque no se use ninguno de sus nombres
 # acá: es lo que registra las tablas en Base.metadata. Sin él, create_all no
@@ -74,6 +75,22 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         ejecutar_seeder(db)
+
+        # Los turnos de las próximas semanas, a partir de los horarios
+        # semanales de cada actividad.
+        #
+        # Va acá y no en un cron porque el sistema no tiene dónde correr uno,
+        # y porque la operación es idempotente: correrla en cada arranque no
+        # duplica nada. Un gimnasio reinicia su servidor bastante más seguido
+        # que cada cuatro semanas, así que con esto alcanza; y si no, el botón
+        # de "Generar turnos" de la pantalla de Actividades hace lo mismo.
+        #
+        # Lo importante es que nadie tenga que cargar un turno a mano nunca
+        # más: si el horario está declarado, las clases existen.
+        resultado = generar_turnos(db)
+        if resultado["creados"]:
+            print(f"Turnos generados: {resultado['creados']} "
+                  f"(hasta el {resultado['hasta'].strftime('%d/%m/%Y')})")
     finally:
         db.close()
 
@@ -126,7 +143,7 @@ app.middleware("http")(middleware_csrf)
 #
 from routers import (  # noqa: E402  (tras crear `app`)
     actividades, asistencia, auth_router, cobros, dashboard, nutricion,
-    personal, portal, rutinas, socios, usuarios,
+    personal, portal, recepcion, rutinas, socios, usuarios,
 )
 
 app.include_router(auth_router.router)
@@ -137,6 +154,7 @@ app.include_router(rutinas.router)
 app.include_router(nutricion.router)
 app.include_router(cobros.router)
 app.include_router(asistencia.router)
+app.include_router(recepcion.router)
 app.include_router(actividades.router)
 app.include_router(usuarios.router)
 # El portal va último: son las rutas del socio, y tenerlas juntas al final de

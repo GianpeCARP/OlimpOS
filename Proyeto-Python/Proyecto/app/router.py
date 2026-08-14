@@ -7,7 +7,8 @@
 # de contenido principal en lugar de reemplazar toda la página.
 
 import flet as ft
-from app.config import Routes   # Constantes de rutas para evitar strings sueltos
+from app.config import Colors, Routes  # Constantes de rutas y paleta
+from app.components.ui import show_snack
 from app.state import app_state # Estado global — necesario para los guards
 
 
@@ -80,6 +81,17 @@ class Router:
             Routes.USUARIOS:    UsuariosView,
         }
 
+    def view_class(self, route: str):
+        """
+        La clase de vista de una ruta.
+
+        Existe para que el login pueda armar la pantalla inicial sin importar
+        DashboardView a mano: cuál es esa pantalla ahora depende del rol, y
+        con un import fijo un Entrenador seguiría entrando al Dashboard aunque
+        no pueda verlo.
+        """
+        return self._view_map.get(route)
+
     # ── Navegación ────────────────────────────────────────────────────────────
 
     def navigate(self, route: str):
@@ -97,21 +109,29 @@ class Router:
             self._go_login()
             return
 
-        # Guard 2 — Roles  [DESACTIVADO A PROPÓSITO]
+        # Guard 2 — Permisos  [ACTIVO]
         #
-        # Esta app está en etapa de diseño: los permisos se implementan cuando
-        # exista la API. Con el guard activo, cualquier usuario que no fuera
-        # admin no podía ni abrir la sección Usuarios, y la navegación moría en
-        # silencio (ni siquiera avisaba por qué), lo que hacía imposible
-        # revisar el diseño de esa pantalla.
+        # Estuvo apagado mientras la app no tenía backend, y con una razón
+        # concreta anotada en el código: era un `if route == USUARIOS and not
+        # is_admin(): return`, un booleano suelto que además MORÍA EN SILENCIO
+        # — la pantalla no cambiaba y no había forma de saber si el permiso
+        # había fallado o si la app estaba colgada.
         #
-        # Cuando llegue FastAPI, lo que va acá NO es este if suelto sino la
-        # matriz de permisos por rol que ya tiene la PWA en config.ts
-        # (PERMISOS / accesoASeccion), que contempla los 5 roles y tres
-        # niveles de acceso en vez de un booleano is_admin().
+        # Ahora hay una matriz de verdad (app/permisos.py, espejo de config.ts
+        # y de backend/permisos.py) con los 5 roles y tres niveles de acceso,
+        # así que el guard puede decir algo mejor que "no". Y avisa: el
+        # problema no era bloquear, era bloquear sin explicar.
         #
-        # if route == Routes.USUARIOS and not app_state.is_admin():
-        #     return
+        # Esto es UX, no seguridad. Quien decide qué se ejecuta es el backend;
+        # este guard evita que alguien llegue a una pantalla que le va a
+        # contestar 403 apenas cargue.
+        if route != Routes.LOGIN and not app_state.puede_ver(route):
+            show_snack(
+                self.page,
+                "Tu rol no tiene acceso a esa sección.",
+                Colors.STATUS_WARN,
+            )
+            return
 
         # Actualiza la ruta activa en el estado global
         app_state.current_route = route

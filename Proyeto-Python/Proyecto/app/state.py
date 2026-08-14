@@ -17,7 +17,8 @@
 
 from datetime import datetime
 
-from app import api_client
+from app import api_client, permisos
+from app.config import NAV_ITEMS
 
 # Método de pago: el enum del esquema en un lado, la etiqueta que ve el
 # usuario en el otro. Los dos sentidos, porque las pantallas muestran
@@ -85,6 +86,26 @@ class AppState:
             self.username_pendiente_cambio = username
             return {"ok": True, "requiere_cambio": True}
 
+        roles = datos.get("roles", [])
+
+        # Las credenciales son válidas, pero esta app es la del PERSONAL.
+        #
+        # Un socio se autentica perfectamente —su cuenta existe y la
+        # contraseña es correcta— y sin este corte entraría a un sidebar vacío
+        # y una pantalla en blanco, sin ninguna explicación. Se lo frena acá y
+        # se le dice dónde tiene que ir.
+        #
+        # El token NO se guarda en este caso: si se guardara, la sesión
+        # quedaría abierta en el cliente aunque la pantalla dijera que no
+        # entró.
+        if not permisos.tiene_acceso_a_la_app(roles):
+            return {
+                "ok": False,
+                "mensaje": "Esta aplicación es para el personal del gimnasio. "
+                           "Si sos socio, entrá desde la web con estas mismas "
+                           "credenciales.",
+            }
+
         api_client.guardar_token(datos["token"])
 
         persona = datos.get("persona") or {}
@@ -96,7 +117,7 @@ class AppState:
             "name": nombre or datos["usuario"]["username"],
             # Lista, no string: los roles se acumulan (el dueño que además es
             # socio del gimnasio tiene los dos).
-            "roles": datos.get("roles", []),
+            "roles": roles,
             "avatar": (nombre or "U")[0].upper(),
             "id_socio": datos.get("idSocio"),
         }
@@ -167,18 +188,45 @@ class AppState:
             return self.current_user.get("avatar", "U")
         return "U"
 
-    def is_admin(self) -> bool:
-        """
-        True si la sesión puede administrar el sistema.
+    # ── Permisos ──────────────────────────────────────────────────────────────
+    #
+    # Reemplazan al viejo is_admin(), que era un booleano provisorio: devolvía
+    # True para dueño y recepcionista y False para todos los demás. Con eso no
+    # se podía expresar lo que la matriz sí expresa — que un Entrenador LEE
+    # Nutrición pero no la gestiona, o que un Recepcionista ve Personal sin
+    # poder dar de alta a nadie. Un booleano no tiene forma de decir "puede
+    # mirar pero no tocar", así que la app terminaba mostrando todo o nada.
+    #
+    # Estos métodos son sólo la puerta de entrada a app/permisos.py; la tabla
+    # vive ahí y es el espejo de config.ts y de backend/permisos.py.
 
-        Provisorio: es el reemplazo mínimo del chequeo anterior contra el rol
-        'admin', que ya no existe — los roles ahora son los cinco reales
-        ('dueno', 'recepcionista', 'entrenador', 'nutricionista', 'socio').
-        Lo correcto es evaluar la matriz de permisos por sección, igual que
-        hace la PWA con PERMISOS de config.ts y el backend con permisos.py.
-        TODO: portar esa matriz a Flet y reemplazar este método.
+    def puede_ver(self, seccion: str) -> bool:
+        """¿La sesión puede abrir esta sección, aunque sea para mirar?"""
+        return permisos.puede_ver(self.get_user_roles(), seccion)
+
+    def puede_editar(self, seccion: str) -> bool:
+        """¿Puede además modificar lo que hay adentro?"""
+        return permisos.puede_editar(self.get_user_roles(), seccion)
+
+    def puede(self, accion: str) -> bool:
+        """¿Puede ejecutar esta acción puntual? (dar de alta, cobrar, ...)"""
+        return permisos.puede_accion(self.get_user_roles(), accion)
+
+    def secciones_visibles(self) -> list[str]:
+        """Las rutas que esta sesión puede abrir. La usa el sidebar."""
+        return [item["route"] for item in NAV_ITEMS
+                if permisos.puede_ver(self.get_user_roles(), item["route"])]
+
+    def primera_seccion(self) -> str | None:
         """
-        return any(rol in ("dueno", "recepcionista") for rol in self.get_user_roles())
+        A dónde mandar a alguien recién logueado.
+
+        No siempre es el Dashboard: un Entrenador lo tiene en NINGUNO, así que
+        aterrizaría en una pantalla que no puede ver. Se lo lleva a la primera
+        que sí, respetando el orden del menú.
+        """
+        visibles = self.secciones_visibles()
+        return visibles[0] if visibles else None
 
     # ── Traductores de formato ────────────────────────────────────────────────
     # El backend habla ISO (2026-08-11) porque es lo que ordena y compara bien.

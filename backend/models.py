@@ -271,7 +271,13 @@ class Socio(Base):
     id_socio = Column(Integer, primary_key=True)
     id_persona = Column(Integer, ForeignKey("Persona.id_persona"), unique=True, nullable=False)
     id_sede = Column(Integer, ForeignKey("Sede.id_sede"), nullable=False)
-    id_entrenador_a_cargo = Column(Integer, ForeignKey("Entrenador.id_entrenador"))
+    # NO hay `id_entrenador_a_cargo`. La tenía, y era el mismo error que
+    # Telefono ya evitaba para los teléfonos: meter en una columna de valor
+    # único un hecho que en la realidad es múltiple (un socio puede tener a la
+    # vez uno de musculación y otro de funcional) y cambiante (reasignarlo
+    # pisaba el valor anterior y el historial se perdía). Ahora vive en
+    # Asignacion_Entrenador, igual que las rutinas y las dietas. Ver la
+    # migración 003.
     numero_socio = Column(String(20), unique=True)
     # Nullable a propósito: no todo gimnasio usa tarjeta RFID — la asistencia
     # también se puede registrar a mano (ver Asistencia.metodo_registro).
@@ -283,7 +289,10 @@ class Socio(Base):
 
     persona = relationship("Persona", back_populates="socio")
     sede = relationship("Sede")
-    entrenador_a_cargo = relationship("Entrenador")
+    # Los entrenadores a cargo se consultan por Asignacion_Entrenador, que
+    # además dice desde cuándo y permite más de uno a la vez. No hay atajo
+    # `socio.entrenador_a_cargo` porque ya no hay UN entrenador que devolver.
+    entrenadores = relationship("AsignacionEntrenador", viewonly=True)
 
 
 class RegistroSalud(Base):
@@ -572,6 +581,32 @@ class AsignacionRutina(Base):
     entrenador = relationship("Entrenador")
 
 
+class AsignacionEntrenador(Base):
+    """
+    Qué entrenador está a cargo de qué socio, con historial.
+
+    Reemplaza a la vieja columna Socio.id_entrenador_a_cargo. Mismo patrón que
+    AsignacionRutina y AsignacionDieta, con UNA diferencia deliberada: acá sí
+    se admiten varias filas ACTIVA por socio al mismo tiempo. Un socio puede
+    tener a la vez un entrenador de musculación y otro de funcional, y eso es
+    normal, no un error de datos — por eso el índice único es por
+    (socio, entrenador, fecha_inicio) y no por socio.
+    """
+    __tablename__ = "Asignacion_Entrenador"
+
+    id_asignacion_entrenador = Column(Integer, primary_key=True)
+    id_socio = Column(Integer, ForeignKey("Socio.id_socio"), nullable=False)
+    id_entrenador = Column(Integer, ForeignKey("Entrenador.id_entrenador"), nullable=False)
+    fecha_inicio = Column(Date, nullable=False)
+    fecha_fin = Column(Date)
+    estado = Column(ENUM("ACTIVA", "FINALIZADA", "CANCELADA",
+                          name="estado_asignacion", create_type=False),
+                     server_default=text("'ACTIVA'"))
+
+    socio = relationship("Socio")
+    entrenador = relationship("Entrenador")
+
+
 # =============================================================================
 # NUTRICIÓN — espejo estructural de Rutinas
 # =============================================================================
@@ -649,6 +684,12 @@ class Actividad(Base):
     cupo_default = Column(Integer, nullable=False)
     precio_clase_suelta = Column(Numeric(10, 2), nullable=False)
     horas_anticipacion_cancelacion = Column(Integer, nullable=False, server_default=text("0"))
+    # Minutos después de la hora del turno en que todavía se acepta la llegada.
+    # Pasado ese margen la reserva cuenta como ausente y la tarjeta no valida
+    # ese turno. Por actividad y no como constante: a una clase de Yoga llegar
+    # 20 tarde es no ir; a la sala de musculación, que está abierta toda la
+    # tarde, casi no aplica.
+    minutos_tolerancia = Column(Integer, nullable=False, server_default=text("15"))
     activo = Column(Boolean, server_default=text("true"))
 
     planes = relationship("PlanActividad", back_populates="actividad")
@@ -724,6 +765,46 @@ class ProfesorActividad(Base):
     actividad = relationship("Actividad")
 
 
+class HorarioActividad(Base):
+    """
+    El horario semanal de una actividad: 'Yoga, los lunes a las 19:00'.
+
+    Existe para que nadie cargue turnos a mano. Antes Turno era la única
+    forma de decir que había clase, y como es una fila POR FECHA, alguien
+    tenía que crear dos filas por semana para siempre; el día que se olvidaba,
+    la clase no existía y nadie podía reservarla.
+
+    Ahora la actividad declara su horario y el backend genera los turnos de
+    las próximas semanas a partir de esto. Los turnos siguen siendo filas
+    reales y editables: se puede cancelar el del lunes que viene por feriado
+    sin tocar el horario.
+
+    `vigente_hasta` en None significa indefinido. Está para poder decir "Yoga
+    pasa a las 20:00 desde marzo" sin borrar el horario viejo ni perder los
+    turnos ya generados con el anterior.
+    """
+    __tablename__ = "Horario_Actividad"
+
+    id_horario_actividad = Column(Integer, primary_key=True)
+    id_sede = Column(Integer, ForeignKey("Sede.id_sede"), nullable=False)
+    id_actividad = Column(Integer, ForeignKey("Actividad.id_actividad"), nullable=False)
+    # ISO: 1 = lunes ... 7 = domingo. ISO y no el DOW nativo de Postgres
+    # (0 = domingo) porque acá la semana empieza el lunes, y porque
+    # date.isoweekday() de Python devuelve exactamente esto — la generación
+    # compara sin convertir nada.
+    dia_semana = Column(Integer, nullable=False)
+    hora = Column(Time, nullable=False)
+    cupo = Column(Integer, nullable=False)
+    id_profesor = Column(Integer, ForeignKey("Profesor.id_profesor"))
+    vigente_desde = Column(Date, nullable=False)
+    vigente_hasta = Column(Date)
+    activo = Column(Boolean, server_default=text("true"))
+
+    sede = relationship("Sede")
+    actividad = relationship("Actividad")
+    profesor = relationship("Profesor")
+
+
 class Turno(Base):
     """
     Una clase concreta: 'Yoga, el martes 12 a las 18:00'.
@@ -731,6 +812,10 @@ class Turno(Base):
     Es una fila POR FECHA, no un horario recurrente. Eso permite cancelar una
     clase puntual (con su motivo), cambiarle el profesor o ampliarle el cupo
     sin afectar al resto de las semanas.
+
+    La mayoría los genera el sistema a partir de HorarioActividad. Los que
+    tienen `id_horario_actividad` en None son los cargados a mano —una clase
+    extra, un recuperatorio— y la generación automática no los toca nunca.
     """
     __tablename__ = "Turno"
 
@@ -744,12 +829,15 @@ class Turno(Base):
                           create_type=False), server_default=text("'HABILITADO'"))
     id_entrenador_a_cargo = Column(Integer, ForeignKey("Entrenador.id_entrenador"))
     id_profesor = Column(Integer, ForeignKey("Profesor.id_profesor"))
+    id_horario_actividad = Column(
+        Integer, ForeignKey("Horario_Actividad.id_horario_actividad"))
     motivo_cancelacion = Column(String(200))
     observaciones = Column(String(200))
 
     sede = relationship("Sede")
     actividad = relationship("Actividad")
     profesor = relationship("Profesor")
+    horario = relationship("HorarioActividad")
     reservas = relationship("Reserva", back_populates="turno")
 
 
@@ -774,7 +862,12 @@ class Reserva(Base):
     es_clase_suelta = Column(Boolean, server_default=text("false"))
     id_pago = Column(Integer, ForeignKey("Pago.id_pago"))
     fecha_reserva = Column(DateTime, server_default=func.now())
-    estado = Column(ENUM("RESERVADA", "CANCELADA_SOCIO", "CANCELADA_GIMNASIO",
+    # EN_ESPERA va en la lista aunque el resto del código lo trate aparte: si
+    # falta acá, SQLAlchemy no puede LEER las filas que ya lo tienen y
+    # cualquier consulta que las toque revienta con un LookupError. Se
+    # descubrió así, no leyendo el código.
+    estado = Column(ENUM("RESERVADA", "EN_ESPERA",
+                          "CANCELADA_SOCIO", "CANCELADA_GIMNASIO",
                           name="estado_reserva", create_type=False),
                      server_default=text("'RESERVADA'"))
     fecha_cancelacion = Column(DateTime)

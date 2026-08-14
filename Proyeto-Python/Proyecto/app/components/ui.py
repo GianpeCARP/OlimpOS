@@ -41,8 +41,16 @@ def build_sidebar(page: ft.Page, router, active_route: str) -> ft.Container:
     """
     _todos_los_botones.clear()
 
+    # Sólo las secciones que el rol puede abrir.
+    #
+    # Antes se dibujaban las nueve siempre. Con el backend real eso significa
+    # que un Entrenador ve nueve ítems de los cuales siete le contestan que no
+    # tiene acceso — la app se siente rota aunque esté haciendo exactamente lo
+    # que debe. Esconderlas no es seguridad (el archivo está en el disco del
+    # cliente y el que decide es el backend): es no ofrecer puertas cerradas.
+    visibles = app_state.secciones_visibles()
     nav_items = [_nav_item(item, item["route"] == active_route, router)
-                 for item in NAV_ITEMS]
+                 for item in NAV_ITEMS if item["route"] in visibles]
 
     # ── Encabezado: nombre de la app ─────────────────────────────────────────
     # La PWA sólo pone el nombre en tipografía de título; acá se le suma el

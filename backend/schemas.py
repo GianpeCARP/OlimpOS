@@ -340,6 +340,15 @@ class FicharResponse(BaseModel):
     permitido: bool
     advertencia: str | None = None
     mensaje: str
+    # Qué clase se le acreditó con este mismo ingreso, si tenía una reservada
+    # y llegó a tiempo. El recepcionista no tildó nada: pasó la tarjeta y el
+    # sistema resolvió a qué turno correspondía.
+    clase_acreditada: str | None = None
+    # Tenía reserva pero se pasó de la tolerancia. Va aparte de `advertencia`
+    # —que es sobre la cuota y la deuda— porque son dos conversaciones
+    # distintas en el mostrador: una es "andá a pagar", la otra "perdiste la
+    # clase". Mezclarlas hace que se lea una sola y se ignore la otra.
+    turno_perdido: str | None = None
 
 
 # =============================================================================
@@ -502,6 +511,11 @@ class EstadoTurno(str, Enum):
 
 class EstadoReserva(str, Enum):
     RESERVADA = "RESERVADA"
+    # Anotado sin lugar. NO ocupa cupo: todo conteo de ocupación filtra por
+    # RESERVADA. Si falta este valor acá, la reserva se crea bien en la base
+    # pero la RESPUESTA falla al validarse — el socio queda anotado y la
+    # pantalla muestra un error. Se descubrió así.
+    EN_ESPERA = "EN_ESPERA"
     CANCELADA_SOCIO = "CANCELADA_SOCIO"
     CANCELADA_GIMNASIO = "CANCELADA_GIMNASIO"
 
@@ -525,6 +539,10 @@ class ActividadOut(BaseModel):
     cupo_default: int
     precio_clase_suelta: float
     horas_anticipacion_cancelacion: int
+    # Minutos de gracia para llegar. Sale en la respuesta porque el panel del
+    # mostrador lo muestra ("vence a las 19:15") y la pantalla de Actividades
+    # lo edita.
+    minutos_tolerancia: int = 15
     activo: bool
     planes: list[PlanActividadOut] = []
 
@@ -532,6 +550,9 @@ class ActividadOut(BaseModel):
 class ActividadCrear(BaseModel):
     nombre: str = Field(min_length=1, max_length=80)
     descripcion: str | None = None
+    # Tope de 180 igual que el CHECK de la base: existe para atajar el dedo
+    # que escribe 1500 queriendo 15, no para discutir cuanto es razonable.
+    minutos_tolerancia: int = Field(default=15, ge=0, le=180)
     # gt=0 y no ge=0: una clase con cupo cero no la puede tomar nadie.
     cupo_default: int = Field(ge=1)
     # El precio SÍ puede ser 0 — una actividad incluida en la cuota.
@@ -1231,3 +1252,142 @@ class MiRutinaOut(BaseModel):
     rutina_de_baja: bool = False
     fecha_inicio: date
     ejercicios: list[RutinaEjercicioOut] = []
+
+
+# =============================================================================
+# PANEL DE RECEPCIÓN
+# =============================================================================
+#
+# Lo que ve el recepcionista apenas abre el sistema. El criterio de todo lo de
+# abajo es el mismo: que no tenga que buscar nada. La información llega
+# ordenada por urgencia y con la acción al lado.
+
+class InscriptoEnTurno(BaseModel):
+    """Una persona anotada en un turno, tal como la muestra el panel."""
+    id_reserva: int
+    id_socio: int
+    nombre: str
+    dni: str
+    # Derivado, no guardado: pendiente / asistio / ausente / en_espera /
+    # cancelada. Ver el docstring de turnos.py.
+    estado: str
+    es_clase_suelta: bool = False
+    # Para que el mostrador sepa si además le tiene que cobrar algo cuando
+    # esta persona aparezca. Se resuelve del lado del servidor porque implica
+    # mirar membresía y deudas, y hacerlo por fila en el cliente serían dos
+    # consultas por persona anotada.
+    alerta: str | None = None
+
+
+class TurnoDePanel(BaseModel):
+    """
+    Un turno en el panel de próximos.
+
+    `minutos_para_empezar` viene calculado del servidor y no del cliente: es
+    lo que ordena la lista, y si cada app lo calculara con su propio reloj,
+    dos pantallas del mismo mostrador podrían mostrar órdenes distintas.
+    Negativo significa que ya empezó.
+    """
+    id_turno: int
+    actividad: str
+    fecha: date
+    hora: time
+    minutos_para_empezar: int
+    vence_a: datetime
+    cupo_maximo: int
+    ocupados: int
+    en_espera: int
+    profesor: str | None = None
+    estado_turno: str
+    # True cuando es la sala abierta (sin profesor y de cupo grande). El panel
+    # las colapsa en una línea con el contador en vez de listar 40 nombres que
+    # taparían las clases de 15, donde el cupo importa de verdad.
+    es_sala_abierta: bool = False
+    inscriptos: list[InscriptoEnTurno] = []
+
+
+class PanelRecepcion(BaseModel):
+    """
+    La pantalla completa, en un solo pedido.
+
+    Va todo junto y no en cuatro endpoints porque el panel se refresca solo
+    cada pocos segundos: cuatro pedidos serían cuatro veces la latencia y
+    cuatro oportunidades de que una parte quede desfasada de la otra.
+    """
+    ahora: datetime
+    turnos: list[TurnoDePanel]
+    # Turnos cuya tolerancia ya venció pero que empezaron hace poco. Se
+    # muestran aparte para que el mostrador entienda por qué alguien reclama
+    # una clase que ya no figura arriba.
+    vencidos_recientes: list[TurnoDePanel] = []
+    total_anotados_hoy: int = 0
+    total_presentes_hoy: int = 0
+
+
+class ResultadoBusqueda(BaseModel):
+    """
+    Lo que devuelve buscar a alguien por DNI en el mostrador.
+
+    Trae de una todo lo que el recepcionista iba a preguntar después: si está
+    al día, cuánto debe y cuál es su próximo turno. La idea es que una sola
+    búsqueda cierre la conversación en vez de abrir tres pantallas más.
+    """
+    id_socio: int
+    nombre: str
+    dni: str
+    numero_socio: str | None = None
+    tiene_rfid: bool = False
+    activo: bool
+    estado_membresia: str
+    vencimiento: date | None = None
+    deuda_total: float = 0
+    proximo_turno: TurnoDePanel | None = None
+    alerta: str | None = None
+
+
+# =============================================================================
+# HORARIOS DE ACTIVIDAD
+# =============================================================================
+
+class HorarioActividadRequest(BaseModel):
+    """
+    El horario semanal de una actividad. De acá salen los turnos.
+
+    `dia_semana` es ISO: 1 = lunes ... 7 = domingo. Coincide con
+    date.isoweekday() de Python, así que la generación no convierte nada.
+    """
+    id_actividad: int
+    id_sede: int = 1
+    dia_semana: int = Field(ge=1, le=7)
+    hora: time
+    cupo: int = Field(gt=0)
+    id_profesor: int | None = None
+    vigente_desde: date | None = None   # por defecto, hoy
+    vigente_hasta: date | None = None   # None = indefinido
+
+
+class HorarioActividadOut(BaseModel):
+    id_horario_actividad: int
+    id_actividad: int
+    actividad: str
+    id_sede: int
+    dia_semana: int
+    dia_nombre: str
+    hora: time
+    cupo: int
+    id_profesor: int | None = None
+    profesor: str | None = None
+    vigente_desde: date
+    vigente_hasta: date | None = None
+    activo: bool
+    # Cuántos turnos generó este horario y siguen por venir. Es la forma de
+    # ver de un vistazo si la generación automática está corriendo.
+    turnos_futuros: int = 0
+
+
+class GeneracionTurnosOut(BaseModel):
+    creados: int
+    horarios: int
+    desde: date
+    hasta: date
+    mensaje: str

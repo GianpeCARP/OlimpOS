@@ -244,20 +244,27 @@ def show_cambiar_password(page: ft.Page, router):
 
 def _load_main_app(page: ft.Page, router):
     """
-    Arma el shell (sidebar + contenido) después de un login exitoso y deja el
-    Dashboard como pantalla inicial.
+    Arma el shell (sidebar + contenido) después de un login exitoso.
+
+    La pantalla inicial NO es siempre el Dashboard. Un Entrenador lo tiene en
+    NINGUNO según la matriz de permisos, así que aterrizaba en una sección
+    que no puede ver: el guard del router la rechazaba y quedaba mirando una
+    pantalla en blanco apenas entraba. Se lo lleva a la primera sección que sí
+    puede abrir, respetando el orden del menú.
     """
     from app.config import Routes
-    from app.views.dashboard import DashboardView
     from app.components.ui import build_sidebar
 
     content_ref = ft.Ref[ft.Container]()
 
-    # La ruta activa se fija ANTES de construir el sidebar: así el ítem
-    # Dashboard ya nace resaltado y el hover sabe cuál no debe apagar.
-    app_state.current_route = Routes.DASHBOARD
+    inicial = app_state.primera_seccion() or Routes.DASHBOARD
 
-    initial_content = DashboardView(page=page, router=router).build()
+    # La ruta activa se fija ANTES de construir el sidebar: así el ítem ya
+    # nace resaltado y el hover sabe cuál no debe apagar.
+    app_state.current_route = inicial
+
+    vista_inicial = router.view_class(inicial)
+    initial_content = vista_inicial(page=page, router=router).build()
 
     content_container = ft.Container(
         ref=content_ref,
@@ -266,7 +273,7 @@ def _load_main_app(page: ft.Page, router):
         bgcolor=Colors.SURFACE_BASE,
     )
 
-    sidebar = build_sidebar(page, router, Routes.DASHBOARD)
+    sidebar = build_sidebar(page, router, inicial)
 
     shell = ft.Row([sidebar, content_container], spacing=0, expand=True)
 

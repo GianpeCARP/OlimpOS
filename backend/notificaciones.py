@@ -160,3 +160,73 @@ def enviar_credenciales(
         detalle=f"Credenciales enviadas por mail a {email_destino}.",
         texto=texto,
     )
+
+
+def _enviar(email_destino: str | None, asunto: str, texto: str) -> ResultadoEnvio:
+    """
+    El envío en crudo, sin armar el cuerpo. Nunca lanza.
+
+    Se extrajo de enviar_credenciales cuando apareció el segundo tipo de
+    aviso: el cuerpo cambia según el caso, pero abrir el SMTP, elegir entre
+    STARTTLS y SSL y tragarse los errores es siempre igual.
+    """
+    if not email_destino:
+        return ResultadoEnvio(False, "La persona no tiene email cargado.", texto)
+    if not smtp_configurado():
+        return ResultadoEnvio(
+            False,
+            "No hay servidor de correo configurado (falta SMTP_HOST en el .env).",
+            texto,
+        )
+
+    mensaje = EmailMessage()
+    mensaje["Subject"] = asunto
+    mensaje["From"] = SMTP_DESDE
+    mensaje["To"] = email_destino
+    mensaje.set_content(texto)
+
+    try:
+        if SMTP_PORT == 465:
+            contexto = ssl.create_default_context()
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=SMTP_TIMEOUT,
+                                   context=contexto) as servidor:
+                if SMTP_USUARIO:
+                    servidor.login(SMTP_USUARIO, SMTP_PASSWORD)
+                servidor.send_message(mensaje)
+        else:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=SMTP_TIMEOUT) as servidor:
+                servidor.starttls(context=ssl.create_default_context())
+                if SMTP_USUARIO:
+                    servidor.login(SMTP_USUARIO, SMTP_PASSWORD)
+                servidor.send_message(mensaje)
+    except Exception as e:  # noqa: BLE001
+        # Se traga TODO a propósito: ver el docstring del módulo. Que no salga
+        # un mail no puede tumbar la operación que lo disparó.
+        return ResultadoEnvio(False, f"No se pudo enviar el mail: {e}", texto)
+
+    return ResultadoEnvio(True, f"Mensaje enviado a {email_destino}.", texto)
+
+
+def notificar_promocion_lista_espera(reserva, turno, actividad) -> ResultadoEnvio:
+    """
+    Le avisa a quien estaba en lista de espera que le quedó lugar.
+
+    Es la mitad del valor de la lista de espera: un lugar que se libera y
+    nadie sabe es un lugar que sigue vacío. Sin este aviso, el socio tendría
+    que estar mirando la app por las dudas — justo lo que la lista de espera
+    venía a evitar.
+
+    Como todo en este módulo, nunca lanza: si el mail no sale, la promoción ya
+    quedó hecha igual y el texto vuelve para poder mandarlo por WhatsApp.
+    """
+    persona = reserva.socio.persona
+    texto = (
+        f"Hola {persona.nombre},\n\n"
+        f"Se liberó un lugar en {actividad.nombre} del "
+        f"{turno.fecha.strftime('%d/%m/%Y')} a las {turno.hora.strftime('%H:%M')}, "
+        f"y como estabas en lista de espera, tu lugar ya está confirmado.\n\n"
+        f"No hace falta que hagas nada. Si no vas a poder ir, cancelá desde la "
+        f"app así el lugar queda para otra persona.\n\n"
+        f"Nos vemos,\n{NOMBRE_GIMNASIO}"
+    )
+    return _enviar(persona.email, f"Te quedó lugar en {actividad.nombre}", texto)

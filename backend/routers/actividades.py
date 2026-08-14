@@ -39,21 +39,22 @@ LAS TRES REGLAS QUE VIVEN ACÁ
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models import (
-    Actividad, Deuda, Empleado, InscripcionActividad, Membresia, Pago, PlanActividad,
-    Profesor, ProfesorActividad, Reserva, Sede, Socio, Turno,
+    Actividad, Deuda, Empleado, HorarioActividad, InscripcionActividad, Membresia, Pago, PlanActividad, Profesor, ProfesorActividad, Reserva, Sede, Socio, Turno,
 )
 from permisos import Acceso, Accion, Seccion
 from schemas import (
-    ActividadCrear, ActividadOut, ComprarPlanRequest, ComprarPlanResponse,
-    InscripcionOut, PagoOut, PlanActividadCrear, PlanActividadOut,
-    ProfesorActividadOut, PuedeComprarOut, ReservaOut, ReservarRequest,
-    TurnoCrear, TurnoOut, ClaseSueltaResponse, ComprarClaseSueltaRequest,
+    ActividadCrear, ActividadOut, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarPlanRequest, ComprarPlanResponse, GeneracionTurnosOut, HorarioActividadOut, HorarioActividadRequest, InscripcionOut, PagoOut, PlanActividadCrear, PlanActividadOut, ProfesorActividadOut, PuedeComprarOut, ReservaOut, ReservarRequest, TurnoCrear, TurnoOut,
 )
 from security import Sesion, requiere_accion, requiere_seccion
+from notificaciones import notificar_promocion_lista_espera
+from turnos import (
+    DIAS_A_GENERAR, generar_turnos, promover_de_lista_de_espera,
+)
 
 router = APIRouter(prefix="/actividades", tags=["Actividades"])
 
@@ -122,6 +123,7 @@ def _a_actividad_out(a: Actividad) -> ActividadOut:
         cupo_default=a.cupo_default,
         precio_clase_suelta=float(a.precio_clase_suelta),
         horas_anticipacion_cancelacion=a.horas_anticipacion_cancelacion,
+        minutos_tolerancia=a.minutos_tolerancia,
         activo=bool(a.activo),
         planes=[
             PlanActividadOut(
@@ -195,6 +197,7 @@ def crear_actividad(
         cupo_default=datos.cupo_default,
         precio_clase_suelta=datos.precio_clase_suelta,
         horas_anticipacion_cancelacion=datos.horas_anticipacion_cancelacion,
+        minutos_tolerancia=datos.minutos_tolerancia,
         activo=True,
     )
     db.add(actividad)
@@ -350,12 +353,17 @@ def reservar(
         )
 
     # --- Regla 1: el cupo ---------------------------------------------------
-    if _reservas_activas(turno) >= turno.cupo_maximo:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(f"La clase de {turno.actividad.nombre} del {turno.fecha} "
-                    f"ya está completa ({turno.cupo_maximo} lugares)."),
-        )
+    #
+    # Estar completa ya NO es un rechazo: se anota en lista de espera. El
+    # rechazo obligaba al socio a estar mirando la pantalla por si alguien
+    # cancelaba, y al lugar liberado a quedar vacío si nadie miraba. Ahora la
+    # cancelación promueve sola al primero de la fila.
+    #
+    # EN_ESPERA no ocupa cupo — por eso _reservas_activas cuenta sólo
+    # RESERVADA — y comparte tabla con las reservas normales para que el
+    # índice único (id_turno, id_socio) impida por construcción estar anotado
+    # y en espera a la vez.
+    en_espera = _reservas_activas(turno) >= turno.cupo_maximo
 
     # --- Regla 2: el saldo --------------------------------------------------
     inscripcion = None
@@ -382,7 +390,7 @@ def reservar(
         id_inscripcion=inscripcion.id_inscripcion if inscripcion else None,
         es_clase_suelta=datos.es_clase_suelta,
         fecha_reserva=datetime.now(),
-        estado="RESERVADA",
+        estado="EN_ESPERA" if en_espera else "RESERVADA",
     )
     db.add(reserva)
     db.commit()
@@ -420,9 +428,15 @@ def cancelar_reserva(
     if reserva is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="La reserva no existe.")
-    if reserva.estado != "RESERVADA":
+    # Se admite cancelar también estando en lista de espera: quien se anotó
+    # esperando un lugar tiene todo el derecho a bajarse antes de que le toque,
+    # y si no pudiera, seguiría subiendo en la fila hasta ocupar un lugar que
+    # ya no quiere.
+    if reserva.estado not in ("RESERVADA", "EN_ESPERA"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Esa reserva ya estaba cancelada.")
+
+    estaba_en_espera = reserva.estado == "EN_ESPERA"
 
     turno = reserva.turno
     actividad = turno.actividad
@@ -440,8 +454,27 @@ def cancelar_reserva(
             reserva.inscripcion.clases_restantes += 1
         restantes = reserva.inscripcion.clases_restantes
 
+    # El lugar que se liberó va para el primero de la lista de espera.
+    #
+    # Sólo si esta reserva OCUPABA un lugar: cancelar una que ya estaba en
+    # espera no libera nada, y promover ahí correría la fila sin motivo.
+    #
+    # Va dentro de la misma transacción que la cancelación a propósito. Si
+    # fueran dos, un fallo entre medio dejaría a alguien promovido a un lugar
+    # que nunca se liberó — o el lugar libre sin nadie que lo tome.
+    promovido = None
+    if not estaba_en_espera:
+        promovido = promover_de_lista_de_espera(db, turno.id_turno)
+
     db.commit()
     db.refresh(reserva)
+
+    if promovido is not None:
+        # Avisarle es la mitad del valor: un lugar que se libera y nadie sabe
+        # es un lugar que sigue vacío. notificar() nunca levanta excepción, así
+        # que si el mail no sale la cancelación igual queda hecha.
+        db.refresh(promovido)
+        notificar_promocion_lista_espera(promovido, turno, actividad)
 
     return ReservaOut(
         id_reserva=reserva.id_reserva,
@@ -579,6 +612,7 @@ def actualizar_actividad(
     actividad.cupo_default = datos.cupo_default
     actividad.precio_clase_suelta = datos.precio_clase_suelta
     actividad.horas_anticipacion_cancelacion = datos.horas_anticipacion_cancelacion
+    actividad.minutos_tolerancia = datos.minutos_tolerancia
     db.commit()
     db.refresh(actividad)
     return _a_actividad_out(actividad)
@@ -1231,3 +1265,188 @@ def comprar_clase_suelta(
         mensaje=(f"{socio.persona.nombre_completo} compró una clase suelta de "
                  f"{turno.actividad.nombre if turno.actividad else '?'} por ${precio:,.2f}."),
     )
+
+
+# =============================================================================
+# HORARIOS SEMANALES Y GENERACIÓN AUTOMÁTICA DE TURNOS
+# =============================================================================
+#
+# Antes de esto, cada Turno se cargaba a mano. Si Yoga era lunes y miércoles
+# 19:00, alguien creaba dos filas por semana para siempre, y el día que se
+# olvidaba la clase directamente no existía: nadie podía reservarla y el
+# recepcionista se enteraba cuando llegaba la gente.
+#
+# Ahora la actividad declara su horario y el sistema genera los turnos.
+
+_DIAS = {1: "Lunes", 2: "Martes", 3: "Miércoles", 4: "Jueves",
+         5: "Viernes", 6: "Sábado", 7: "Domingo"}
+
+
+def _a_horario_out(db: Session, h: HorarioActividad) -> HorarioActividadOut:
+    futuros = (db.query(func.count(Turno.id_turno))
+               .filter(Turno.id_horario_actividad == h.id_horario_actividad,
+                       Turno.fecha >= date.today())
+               .scalar()) or 0
+    return HorarioActividadOut(
+        id_horario_actividad=h.id_horario_actividad,
+        id_actividad=h.id_actividad,
+        actividad=h.actividad.nombre if h.actividad else "—",
+        id_sede=h.id_sede,
+        dia_semana=h.dia_semana,
+        dia_nombre=_DIAS.get(h.dia_semana, "?"),
+        hora=h.hora,
+        cupo=h.cupo,
+        id_profesor=h.id_profesor,
+        profesor=(h.profesor.empleado.persona.nombre_completo
+                  if h.profesor else None),
+        vigente_desde=h.vigente_desde,
+        vigente_hasta=h.vigente_hasta,
+        activo=bool(h.activo),
+        turnos_futuros=futuros,
+    )
+
+
+@router.get("/horarios", response_model=list[HorarioActividadOut])
+def listar_horarios(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES)),
+):
+    """
+    Todos los horarios semanales, ordenados como una grilla de la semana.
+
+    Declarado ANTES que cualquier ruta con /{id_actividad}: si fuera al revés,
+    FastAPI intentaría interpretar "horarios" como un id y devolvería 422.
+    Ya pasó tres veces en este archivo.
+    """
+    horarios = (db.query(HorarioActividad)
+                .order_by(HorarioActividad.dia_semana, HorarioActividad.hora)
+                .all())
+    return [_a_horario_out(db, h) for h in horarios]
+
+
+@router.post("/horarios", response_model=HorarioActividadOut,
+             status_code=status.HTTP_201_CREATED)
+def crear_horario(
+    datos: HorarioActividadRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.GESTION_TURNOS)),
+):
+    """
+    Da de alta un horario y genera sus turnos en el acto.
+
+    Generar acá mismo y no esperar al próximo arranque es deliberado: quien
+    acaba de cargar "Yoga los lunes 19:00" espera ver los turnos, y si
+    aparecieran recién mañana pensaría que no se guardó y lo cargaría de
+    nuevo.
+    """
+    actividad = db.get(Actividad, datos.id_actividad)
+    if actividad is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="La actividad no existe.")
+
+    choca = (db.query(HorarioActividad)
+             .filter(HorarioActividad.id_sede == datos.id_sede,
+                     HorarioActividad.id_actividad == datos.id_actividad,
+                     HorarioActividad.dia_semana == datos.dia_semana,
+                     HorarioActividad.hora == datos.hora,
+                     HorarioActividad.activo.is_(True))
+             .first())
+    if choca:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(f"{actividad.nombre} ya tiene un horario los "
+                    f"{_DIAS.get(datos.dia_semana, '?').lower()} a las "
+                    f"{datos.hora.strftime('%H:%M')}."),
+        )
+
+    horario = HorarioActividad(
+        id_sede=datos.id_sede,
+        id_actividad=datos.id_actividad,
+        dia_semana=datos.dia_semana,
+        hora=datos.hora,
+        cupo=datos.cupo,
+        id_profesor=datos.id_profesor,
+        vigente_desde=datos.vigente_desde or date.today(),
+        vigente_hasta=datos.vigente_hasta,
+        activo=True,
+    )
+    db.add(horario)
+    db.commit()
+    db.refresh(horario)
+
+    generar_turnos(db)
+    return _a_horario_out(db, horario)
+
+
+@router.post("/horarios/{id_horario}/estado", response_model=HorarioActividadOut)
+def cambiar_estado_horario(
+    id_horario: int,
+    activo: bool,
+    borrar_turnos_futuros: bool = False,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.GESTION_TURNOS)),
+):
+    """
+    Activa o desactiva un horario.
+
+    `activo` es OBLIGATORIO y no un toggle: desactivar un horario deja de
+    generar clases, y con un toggle dos pantallas desactualizadas podrían
+    reactivarlo sin que nadie lo pida.
+
+    `borrar_turnos_futuros` está apagado por defecto, y esa es la parte
+    importante. Dar de baja el horario significa "no generes más", NO "borrá
+    lo que ya existe": esos turnos futuros pueden tener gente anotada, y
+    hacerlos desaparecer dejaría reservas apuntando a la nada y socios que
+    creen tener clase. Cuando se pide explícitamente, se cancelan (no se
+    borran) y sólo los que no tienen NADIE anotado.
+    """
+    horario = db.get(HorarioActividad, id_horario)
+    if horario is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="El horario no existe.")
+
+    horario.activo = activo
+
+    if not activo and borrar_turnos_futuros:
+        futuros = (db.query(Turno)
+                   .filter(Turno.id_horario_actividad == id_horario,
+                           Turno.fecha >= date.today(),
+                           Turno.estado == "HABILITADO")
+                   .all())
+        for t in futuros:
+            tiene_gente = (db.query(func.count(Reserva.id_reserva))
+                           .filter(Reserva.id_turno == t.id_turno,
+                                   Reserva.estado.in_(["RESERVADA", "EN_ESPERA"]))
+                           .scalar()) or 0
+            if tiene_gente == 0:
+                t.estado = "CANCELADO"
+                t.motivo_cancelacion = "Se dio de baja el horario."
+
+    db.commit()
+    db.refresh(horario)
+    return _a_horario_out(db, horario)
+
+
+@router.post("/turnos/generar", response_model=GeneracionTurnosOut)
+def generar(
+    dias: int = DIAS_A_GENERAR,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.GESTION_TURNOS)),
+):
+    """
+    Genera los turnos que falten según los horarios.
+
+    Es idempotente: correrla dos veces no duplica nada. Existe como endpoint
+    aunque el backend ya la corra al arrancar, porque alguien que acaba de
+    cargar varios horarios quiere ver el resultado sin reiniciar nada.
+    """
+    r = generar_turnos(db, dias=dias)
+    if r["creados"]:
+        mensaje = (f"Se crearon {r['creados']} turno(s) a partir de "
+                   f"{r['horarios']} horario(s), hasta el "
+                   f"{r['hasta'].strftime('%d/%m/%Y')}.")
+    elif r["horarios"] == 0:
+        mensaje = "No hay horarios cargados todavía, así que no hay turnos que generar."
+    else:
+        mensaje = "Ya estaban todos los turnos generados. No hizo falta crear ninguno."
+    return GeneracionTurnosOut(**r, mensaje=mensaje)

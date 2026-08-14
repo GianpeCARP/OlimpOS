@@ -38,6 +38,7 @@ from schemas import (
     AsistenciaOut, FicharRequest, FicharResponse, MetodoRegistro,
 )
 from security import Sesion, requiere_seccion
+from turnos import reserva_a_acreditar
 
 router = APIRouter(prefix="/asistencia", tags=["Asistencia"])
 
@@ -156,9 +157,22 @@ def fichar(
 
     advertencia = _revisar_situacion(db, socio)
 
+    # A qué clase corresponde este ingreso. Lo resuelve el sistema: el
+    # recepcionista no busca a la persona ni tilda nada, pasa la tarjeta y
+    # listo. Si llegó tarde, `turno_perdido` explica qué se perdió.
+    #
+    # Que haya perdido el turno NO impide el ingreso: su cuota le paga el
+    # gimnasio igual. Rechazarlo haría que haber reservado lo dejara peor que
+    # no haber reservado.
+    reserva, turno_perdido = reserva_a_acreditar(db, socio.id_socio, ahora)
+
     asistencia = Asistencia(
         id_socio=socio.id_socio,
         id_sede=socio.id_sede,
+        # Acá se guarda la acreditación de la clase. Es lo único que hace
+        # falta: "asistió" no es un estado guardado en Reserva, se deriva de
+        # que exista esta fila apuntándole. Ver el docstring de turnos.py.
+        id_reserva=reserva.id_reserva if reserva else None,
         fecha_hora_ingreso=ahora,
         metodo_registro=metodo.value,
         # Queda registrado QUIÉN cargó el ingreso. Con RFID no hay una persona
@@ -169,16 +183,28 @@ def fichar(
     db.commit()
     db.refresh(asistencia)
 
+    clase = None
+    if reserva is not None:
+        turno = reserva.turno
+        clase = f"{turno.actividad.nombre} {turno.hora.strftime('%H:%M')}"
+
     nombre = socio.persona.nombre_completo
-    mensaje = f"Ingreso registrado: {nombre}."
+    if clase:
+        mensaje = f"Ingreso registrado: {nombre}. Acreditado a {clase}."
+    else:
+        mensaje = f"Ingreso registrado: {nombre}."
+    if turno_perdido:
+        mensaje = f"{mensaje} {turno_perdido}"
     if advertencia:
-        mensaje = f"Ingreso registrado con observaciones: {nombre}. {advertencia}"
+        mensaje = f"{mensaje} {advertencia}"
 
     return FicharResponse(
         asistencia=_a_asistencia_out(asistencia),
         permitido=advertencia is None,
         advertencia=advertencia,
         mensaje=mensaje,
+        clase_acreditada=clase,
+        turno_perdido=turno_perdido,
     )
 
 

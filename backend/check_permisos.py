@@ -1,8 +1,11 @@
 """
 check_permisos.py
 -----------------
-Compara la matriz de permisos de `permisos.py` (backend) contra la de
-`Proyecto/src/frontend/src/config.ts` (PWA) y falla si difieren.
+Compara las TRES copias de la matriz de permisos y falla si difieren:
+
+    backend  ->  backend/permisos.py           (este directorio)
+    PWA      ->  Proyecto/src/frontend/src/config.ts
+    Flet     ->  Proyeto-Python/Proyecto/app/permisos.py
 
 POR QUÉ EXISTE:
 permisos.py documenta que es un espejo de config.ts y que desincronizarse es
@@ -14,6 +17,12 @@ Los dos modos de falla que detecta son asimétricos y los dos son malos:
   - El backend es MÁS restrictivo -> el botón aparece y la API responde 403.
   - El backend es MÁS permisivo   -> la API deja pasar algo que el frontend
                                      creía prohibido. Este es el grave.
+
+La copia de Flet tiene una diferencia LEGÍTIMA que este script contempla: no
+declara las siete secciones del portal del socio (mi-perfil, mi-rutina, ...)
+porque esas pantallas son de la PWA y la app de escritorio no las tiene. Se
+comparan sólo las secciones que Flet sí declara; lo que se exige es que donde
+las tres hablen de lo mismo, digan lo mismo.
 
 Uso:
     cd backend
@@ -32,6 +41,43 @@ import sys
 from permisos import PERMISOS as PY_PERMISOS
 
 CONFIG_TS = pathlib.Path("../Proyecto/src/frontend/src/config.ts")
+FLET_DIR = pathlib.Path("../Proyeto-Python/Proyecto")
+
+
+def matriz_de_flet() -> dict[str, dict] | None:
+    """
+    Importa app/permisos.py del proyecto Flet.
+
+    Se importa de verdad en vez de parsearlo —como sí hay que hacer con
+    config.ts— porque es Python: si el archivo tiene un error de sintaxis o
+    una constante mal escrita, el import lo dice con precisión y este script
+    no tiene que adivinar nada.
+    """
+    if not (FLET_DIR / "app" / "permisos.py").exists():
+        return None
+    sys.path.insert(0, str(FLET_DIR.resolve()))
+    try:
+        from app.permisos import PERMISOS as FLET_PERMISOS
+        return FLET_PERMISOS
+    finally:
+        sys.path.pop(0)
+
+
+def rutas_de_config_py() -> dict[str, str]:
+    """
+    Los valores de `Routes` en el config.py de Flet.
+
+    app/permisos.py repite esos strings en vez de importarlos (config.py hace
+    `import flet` y esto correría sin Flet instalado). Se leen textualmente
+    para confirmar que la copia sigue coincidiendo: si alguien renombra una
+    ruta y no toca la matriz, los permisos quedarían apuntando a secciones que
+    ya no existen y TODO caería en "sin acceso", en silencio.
+    """
+    texto = (FLET_DIR / "app" / "config.py").read_text(encoding="utf-8")
+    m = re.search(r"class Routes:(.*?)(?:\n\n|\nclass )", texto, re.DOTALL)
+    if not m:
+        return {}
+    return dict(re.findall(r"(\w+)\s*=\s*\"([^\"]*)\"", m.group(1)))
 
 
 # =============================================================================
@@ -153,7 +199,64 @@ def main() -> int:
     roles_ts = len(ts)
     secciones = len(next(iter(ts.values()))["secciones"]) if ts else 0
     acciones = len(next(iter(ts.values()))["acciones"]) if ts else 0
-    print(f"Comparadas {roles_ts} roles × {secciones} secciones × {acciones} acciones.\n")
+    print(f"backend vs PWA:  {roles_ts} roles x {secciones} secciones x {acciones} acciones.")
+
+    # ── Tercer espejo: la app de escritorio ──────────────────────────────────
+    flet = matriz_de_flet()
+    if flet is None:
+        diferencias.append(
+            "no encontré app/permisos.py del proyecto Flet — "
+            "si se movió, actualizá FLET_DIR en este script"
+        )
+    else:
+        for rol in sorted(set(flet) - set(PY_PERMISOS)):
+            diferencias.append(f"rol '{rol}' está en el permisos.py de Flet pero no en el del backend")
+        for rol in sorted(set(PY_PERMISOS) - set(flet)):
+            diferencias.append(f"rol '{rol}' está en el backend pero no en el permisos.py de Flet")
+
+        celdas = 0
+        for rol in sorted(set(PY_PERMISOS) & set(flet)):
+            # Secciones: sólo las que Flet declara. Las siete del portal del
+            # socio no están ahí a propósito — son pantallas de la PWA.
+            py_sec, fl_sec = PY_PERMISOS[rol]["secciones"], flet[rol]["secciones"]
+            for seccion in sorted(fl_sec):
+                celdas += 1
+                a, b = py_sec.get(seccion, "<falta>"), fl_sec[seccion]
+                if a != b:
+                    diferencias.append(f"{rol}.secciones.{seccion}:  backend={a!r}  Flet={b!r}")
+
+            # Acciones: acá sí se exigen todas. Una acción que Flet no conozca
+            # es una que sus vistas nunca van a chequear.
+            py_acc, fl_acc = PY_PERMISOS[rol]["acciones"], flet[rol]["acciones"]
+            for accion in sorted(set(py_acc) | set(fl_acc)):
+                celdas += 1
+                a, b = py_acc.get(accion, "<falta>"), fl_acc.get(accion, "<falta>")
+                if a != b:
+                    diferencias.append(f"{rol}.acciones.{accion}:  backend={a!r}  Flet={b!r}")
+
+        print(f"backend vs Flet: {len(flet)} roles, {celdas} celdas comparadas.")
+
+        # Y que los nombres de sección que usa la matriz de Flet sigan siendo
+        # los de su config.py. Sin esto, renombrar una ruta dejaría la matriz
+        # apuntando a secciones inexistentes y TODO caería en "sin acceso".
+        rutas = rutas_de_config_py()
+        if not rutas:
+            diferencias.append("no pude leer `class Routes` de app/config.py del Flet")
+        else:
+            valores = set(rutas.values())
+            usadas = set()
+            for permisos_rol in flet.values():
+                usadas |= set(permisos_rol["secciones"])
+            huerfanas = usadas - valores
+            if huerfanas:
+                diferencias.append(
+                    f"la matriz de Flet usa secciones que no están en su "
+                    f"Routes: {sorted(huerfanas)}"
+                )
+            else:
+                print(f"Flet: las {len(usadas)} secciones de la matriz existen en Routes.")
+
+    print()
 
     if diferencias:
         print(f"[X] {len(diferencias)} diferencia(s):\n")
@@ -162,9 +265,17 @@ def main() -> int:
         print("\n    Corregí el archivo que esté mal y volvé a correr esto.")
         return 1
 
-    print("[OK] permisos.py y config.ts dicen exactamente lo mismo.")
+    print("[OK] las tres copias dicen exactamente lo mismo.")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # El try NO es decorativo: sin él, una excepción acá adentro imprimía el
+    # traceback y el proceso terminaba con código 0 igual, así que el script
+    # "pasaba" sin haber comparado nada. Un verificador que falla en silencio
+    # es peor que no tenerlo.
+    try:
+        sys.exit(main())
+    except Exception as e:  # noqa: BLE001
+        print(f"\n[X] El verificador no pudo correr: {type(e).__name__}: {e}")
+        sys.exit(2)
