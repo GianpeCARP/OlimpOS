@@ -954,6 +954,73 @@ def turnos_disponibles(
 
 
 # =============================================================================
+# LOS MENSAJES, SEGÚN QUIÉN LOS LEE
+# =============================================================================
+#
+# Los endpoints de /actividades redactan para el MOSTRADOR: hablan del socio
+# en tercera persona ("Ana Test compró 2 por semana") y le dan órdenes al
+# operador ("Renovale la cuota primero"). Está bien: ahí quien lee es alguien
+# que opera sobre la ficha de otra persona.
+#
+# Cuando el que lee es el socio, esos mismos textos se leen mal. Ve su propio
+# nombre en tercera persona, como si el sistema le estuviera hablando a
+# alguien más, y recibe instrucciones dirigidas a otro. Es chico y es
+# exactamente lo que hace que una app se sienta ajena.
+#
+# Se resuelve traduciendo ACÁ y no cambiando los endpoints originales: las
+# REGLAS se comparten (esa fue la decisión al delegar), los TEXTOS no tienen
+# por qué. Y así el mostrador sigue leyendo lo suyo sin enterarse.
+#
+# La traducción es una lista explícita y no una regex general sobre el nombre:
+# reemplazar el nombre a ciegas produce frases rotas ("de Ana Test" -> "de
+# vos"), y una lista corta que cubre los casos reales es más honesta que un
+# reemplazo mágico que a veces acierta.
+
+def _para_el_socio(texto: str, nombre: str) -> str:
+    """
+    Reescribe en segunda persona un mensaje redactado para el mostrador.
+
+    Si no reconoce el patrón devuelve el texto tal cual. Es deliberado: un
+    mensaje en tercera persona se lee raro, pero un mensaje mutilado por una
+    sustitución que salió mal se lee peor — y podría cambiarle el sentido.
+    """
+    if not texto:
+        return texto
+
+    reemplazos = [
+        (f"La membresía de {nombre} vence", "Tu cuota vence"),
+        (f"La membresía de {nombre}", "Tu cuota"),
+        (f"{nombre} ya tiene", "Ya tenés"),
+        (f"{nombre} no tiene", "No tenés"),
+        (f"{nombre} tiene", "Tenés"),
+        (f"{nombre} compró", "Compraste"),
+        (f"{nombre} ya está", "Ya estás"),
+        (f"{nombre} está", "Estás"),
+        (f"a {nombre}", "a vos"),
+        # Va antes que el genérico: después de "Tu cuota vence el X", decir
+        # "Renová tu cuota" repite el sujeto. "Renovala" ya se entiende.
+        ("Renovale la cuota primero", "Renovala primero"),
+        ("Renovale la cuota", "Renová tu cuota"),
+        ("Renovale", "Renová"),
+        ("Cobrale", "Pagá"),
+        ("Regularizá su deuda", "Regularizá tu deuda"),
+        ("su deuda", "tu deuda"),
+        ("su cuota", "tu cuota"),
+        ("Extendele", "Extendé"),
+    ]
+    for viejo, nuevo in reemplazos:
+        texto = texto.replace(viejo, nuevo)
+    return texto
+
+
+def _traducir_error(e: HTTPException, nombre: str) -> HTTPException:
+    """El mismo rechazo, redactado para quien lo va a leer."""
+    if isinstance(e.detail, str):
+        return HTTPException(status_code=e.status_code,
+                             detail=_para_el_socio(e.detail, nombre))
+    return e
+
+# =============================================================================
 # COMPRAS DEL SOCIO
 # =============================================================================
 #
@@ -995,12 +1062,19 @@ def comprar_mi_plan(
     from routers.actividades import comprar_plan
 
     socio = _mi_socio(db, sesion)
-    return comprar_plan(
-        id_plan=id_plan,
-        datos=ComprarPlanRequest(id_socio=socio.id_socio, metodo=datos.metodo),
-        db=db,
-        sesion=sesion,
-    )
+    nombre = socio.persona.nombre_completo
+    try:
+        salida = comprar_plan(
+            id_plan=id_plan,
+            datos=ComprarPlanRequest(id_socio=socio.id_socio, metodo=datos.metodo),
+            db=db,
+            sesion=sesion,
+        )
+    except HTTPException as e:
+        raise _traducir_error(e, nombre) from e
+
+    salida.mensaje = _para_el_socio(salida.mensaje, nombre)
+    return salida
 
 
 @router.post("/mis-turnos/{id_turno}/clase-suelta",
@@ -1022,12 +1096,20 @@ def comprar_mi_clase_suelta(
     from routers.actividades import comprar_clase_suelta
 
     socio = _mi_socio(db, sesion)
-    return comprar_clase_suelta(
-        id_turno=id_turno,
-        datos=ComprarClaseSueltaRequest(id_socio=socio.id_socio, metodo=datos.metodo),
-        db=db,
-        sesion=sesion,
-    )
+    nombre = socio.persona.nombre_completo
+    try:
+        salida = comprar_clase_suelta(
+            id_turno=id_turno,
+            datos=ComprarClaseSueltaRequest(id_socio=socio.id_socio,
+                                            metodo=datos.metodo),
+            db=db,
+            sesion=sesion,
+        )
+    except HTTPException as e:
+        raise _traducir_error(e, nombre) from e
+
+    salida.mensaje = _para_el_socio(salida.mensaje, nombre)
+    return salida
 
 
 @router.get("/mis-actividades/catalogo", response_model=list[ActividadOut])
