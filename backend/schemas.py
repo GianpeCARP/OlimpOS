@@ -1438,3 +1438,42 @@ class ComprarMiPlanRequest(BaseModel):
     Tampoco lleva el monto: lo calcula el backend a partir del plan.
     """
     metodo: MetodoPago
+
+
+# =============================================================================
+# CONGELAMIENTO Y BAJA PROPIA
+# =============================================================================
+
+class CongelarRequest(BaseModel):
+    """
+    Pedido de pausa. `fecha_inicio` en None significa hoy.
+
+    `fecha_fin` es un TOPE, no una promesa: el socio puede reanudar antes y
+    sólo se le suman los días que realmente estuvo pausado.
+    """
+    fecha_inicio: date | None = None
+    fecha_fin: date
+    motivo: str | None = None
+
+
+class CongelamientoOut(BaseModel):
+    id_congelamiento: int
+    fecha_inicio: date
+    fecha_fin: date
+    fecha_reanudacion: date | None = None
+    # Los días que efectivamente se sumaron al vencimiento. None mientras la
+    # pausa sigue activa: todavía no se sabe cuántos van a ser.
+    dias_aplicados: int | None = None
+    dias_pedidos: int
+    motivo: str | None = None
+    estado: str
+    mensaje: str | None = None
+
+
+class BajaPropiaRequest(BaseModel):
+    """
+    No lleva `tipo`: una baja que pide el socio es VOLUNTARIA por definición.
+    Dejarlo elegir permitiría que alguien se marque como baja por MORA, que es
+    una calificación del gimnasio sobre él y no al revés.
+    """
+    motivo: str | None = None

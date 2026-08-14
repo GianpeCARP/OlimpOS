@@ -47,11 +47,11 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import (
-    Actividad, AsignacionDieta, AsignacionRutina, Asistencia, Deuda, Membresia, Pago, Persona, RegistroSalud, Reserva, Socio, Telefono, Turno,
+    Actividad, AsignacionDieta, AsignacionRutina, Asistencia, Baja, Congelamiento, Deuda, Membresia, Pago, Persona, RegistroSalud, Reserva, Socio, Telefono, Turno,
 )
 from permisos import Seccion
 from schemas import (
-    ActividadOut, AsignacionDietaOut, AsignacionRutinaOut, AsistenciaOut, ComprarClaseSueltaRequest, ClaseSueltaResponse, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, DietaOut, MedicionCrear, MedicionOut, MiComidaOut, MiCuotaOut, MiDeudaOut, MiDiaDeDietaOut, MiDietaOut, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRutinaOut, PagoOut, ReservaOut, RutinaOut, TurnoDisponibleOut,
+    ActividadOut, AsignacionDietaOut, AsignacionRutinaOut, AsistenciaOut, BajaPropiaRequest, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, CongelamientoOut, CongelarRequest, DietaOut, MedicionCrear, MedicionOut, MensajeResponse, MiComidaOut, MiCuotaOut, MiDeudaOut, MiDiaDeDietaOut, MiDietaOut, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRutinaOut, PagoOut, ReservaOut, RutinaOut, TurnoDisponibleOut,
 )
 from notificaciones import notificar_promocion_lista_espera
 from turnos import ocupacion, promover_de_lista_de_espera
@@ -1137,3 +1137,307 @@ def catalogo_para_el_socio(
         out.planes = [p for p in out.planes if p.activo]
         salida.append(out)
     return salida
+
+
+def _a_congelamiento_out(c) -> CongelamientoOut:
+    """`dias_pedidos` va calculado: es lo que el socio pidió, no lo que usó."""
+    return CongelamientoOut(
+        id_congelamiento=c.id_congelamiento,
+        fecha_inicio=c.fecha_inicio,
+        fecha_fin=c.fecha_fin,
+        fecha_reanudacion=c.fecha_reanudacion,
+        dias_aplicados=c.dias_aplicados,
+        dias_pedidos=(c.fecha_fin - c.fecha_inicio).days,
+        motivo=c.motivo,
+        estado=c.estado,
+    )
+
+# =============================================================================
+# MI MEMBRESÍA — congelar, reanudar, darse de baja
+# =============================================================================
+
+# Los topes del congelamiento. Están acá y no en la base porque son política
+# comercial, no integridad: el día que el dueño quiera permitir 120 días al
+# año, esto es lo que cambia. Ponerlos como CHECK obligaría a una migración
+# para una decisión de negocio.
+DIAS_MINIMO_CONGELAMIENTO = 7      # menos que una semana no vale la burocracia
+DIAS_MAXIMO_POR_VEZ = 90
+DIAS_MAXIMO_POR_ANIO = 90          # sumando todos los del año
+
+
+def _congelamiento_vigente(db: Session, id_socio: int) -> Congelamiento | None:
+    """
+    El congelamiento activo, si lo hay — y lo cierra si ya se le pasó la fecha.
+
+    Un congelamiento que llega a su fecha_fin sin que nadie lo reanude se
+    cierra SOLO, acá, al leerlo. Es la misma idea que el estado derivado de
+    las reservas: si hiciera falta un proceso corriendo aparte para cerrarlos,
+    ese proceso se cae o se atrasa y el socio queda congelado para siempre sin
+    que nadie se entere.
+    """
+    activo = (db.query(Congelamiento)
+              .filter(Congelamiento.id_socio == id_socio,
+                      Congelamiento.estado == "ACTIVO")
+              .first())
+    if activo is None:
+        return None
+
+    if activo.fecha_fin < date.today():
+        _reanudar(db, activo, hasta=activo.fecha_fin)
+        db.commit()
+        return None
+    return activo
+
+
+def _reanudar(db: Session, congelamiento: Congelamiento, hasta: date) -> int:
+    """
+    Cierra el congelamiento y le suma los días a la membresía.
+
+    Devuelve los días aplicados. NO hace commit: quien llama decide cuándo,
+    porque la extensión del vencimiento y el cierre del congelamiento tienen
+    que pasar juntos o ninguno — si se separaran, un fallo en el medio dejaría
+    días regalados o días perdidos.
+    """
+    dias = (hasta - congelamiento.fecha_inicio).days
+    dias = max(0, dias)
+
+    membresia = congelamiento.membresia
+    if membresia is not None and membresia.fecha_vencimiento and dias:
+        membresia.fecha_vencimiento = membresia.fecha_vencimiento + timedelta(days=dias)
+    if membresia is not None and membresia.estado == "SUSPENDIDA":
+        membresia.estado = "ACTIVA"
+
+    congelamiento.estado = "FINALIZADO"
+    congelamiento.fecha_reanudacion = hasta
+    congelamiento.dias_aplicados = dias
+    return dias
+
+
+@router.get("/mi-membresia/congelamientos", response_model=list[CongelamientoOut])
+def mis_congelamientos(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_CUOTA)),
+):
+    """
+    El historial de pausas, y cuántos días le quedan disponibles este año.
+
+    Se devuelve el saldo y no sólo la lista porque es lo que el socio quiere
+    saber antes de pedir: "¿me alcanza para el viaje?". Que lo calcule la app
+    sumando la lista sería repetir la regla del tope en el cliente.
+    """
+    socio = _mi_socio(db, sesion)
+    _congelamiento_vigente(db, socio.id_socio)   # cierra el vencido, si hay
+
+    congelamientos = (db.query(Congelamiento)
+                      .filter(Congelamiento.id_socio == socio.id_socio)
+                      .order_by(Congelamiento.fecha_inicio.desc())
+                      .all())
+    return [_a_congelamiento_out(c) for c in congelamientos]
+
+
+@router.post("/mi-membresia/congelar", response_model=CongelamientoOut,
+             status_code=status.HTTP_201_CREATED)
+def congelar_mi_membresia(
+    datos: CongelarRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_CUOTA)),
+):
+    """
+    Pausa la membresía. Los días pagados no se pierden: se corren.
+
+    El socio pagó un mes y tiene que recibir un mes de gimnasio. Si se va tres
+    semanas de viaje, esas tres semanas se le suman al vencimiento cuando
+    vuelve — no cuando se va, porque hasta que no vuelve no se sabe cuántas
+    fueron en serio.
+    """
+    socio = _mi_socio(db, sesion)
+    hoy = date.today()
+
+    if _congelamiento_vigente(db, socio.id_socio) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Tu membresía ya está congelada. Reanudala antes de pedir otra pausa.",
+        )
+
+    membresia = (db.query(Membresia)
+                 .filter(Membresia.id_socio == socio.id_socio,
+                         Membresia.estado == "ACTIVA")
+                 .order_by(Membresia.fecha_vencimiento.desc())
+                 .first())
+    if membresia is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No tenés una membresía activa para congelar.",
+        )
+    if membresia.fecha_vencimiento and membresia.fecha_vencimiento < hoy:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=("Tu cuota está vencida. Congelar sirve para no perder días "
+                    "pagados, y no te quedan: renovala primero."),
+        )
+
+    inicio = datos.fecha_inicio or hoy
+    if inicio < hoy:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No se puede congelar hacia atrás. Elegí desde hoy en adelante.",
+        )
+
+    dias = (datos.fecha_fin - inicio).days
+    if dias < DIAS_MINIMO_CONGELAMIENTO:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"La pausa mínima es de {DIAS_MINIMO_CONGELAMIENTO} días.",
+        )
+    if dias > DIAS_MAXIMO_POR_VEZ:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"La pausa máxima es de {DIAS_MAXIMO_POR_VEZ} días por vez.",
+        )
+
+    # El tope anual mira los días ya USADOS (los aplicados) más los pedidos.
+    # Se cuentan por año calendario de la fecha de inicio, que es lo que
+    # entiende cualquiera: "este año ya congelaste X días".
+    usados = (db.query(func.coalesce(func.sum(Congelamiento.dias_aplicados), 0))
+              .filter(Congelamiento.id_socio == socio.id_socio,
+                      Congelamiento.estado == "FINALIZADO",
+                      Congelamiento.fecha_inicio >= date(hoy.year, 1, 1))
+              .scalar()) or 0
+    if usados + dias > DIAS_MAXIMO_POR_ANIO:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(f"Este año ya congelaste {usados} días y el máximo son "
+                    f"{DIAS_MAXIMO_POR_ANIO}. Te quedan "
+                    f"{max(0, DIAS_MAXIMO_POR_ANIO - usados)}."),
+        )
+
+    congelamiento = Congelamiento(
+        id_socio=socio.id_socio,
+        id_membresia=membresia.id_membresia,
+        fecha_inicio=inicio,
+        fecha_fin=datos.fecha_fin,
+        motivo=datos.motivo,
+        estado="ACTIVO",
+    )
+    db.add(congelamiento)
+
+    # La membresía queda SUSPENDIDA, no cancelada. La diferencia importa: el
+    # panel de recepción y el fichaje miran `estado == 'ACTIVA'`, así que
+    # mientras esté congelada no va a poder reservar ni se le va a acreditar
+    # una clase — que es exactamente lo que significa estar de pausa.
+    if inicio <= hoy:
+        membresia.estado = "SUSPENDIDA"
+
+    db.commit()
+    db.refresh(congelamiento)
+    return _a_congelamiento_out(congelamiento)
+
+
+@router.post("/mi-membresia/reanudar", response_model=CongelamientoOut)
+def reanudar_mi_membresia(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_CUOTA)),
+):
+    """
+    Vuelve antes de tiempo. Se le suman SOLO los días que estuvo pausado.
+
+    Alguien que pidió 30 días y vuelve a los 10 recupera 10, no 30. Por eso la
+    extensión se calcula acá y no al congelar.
+    """
+    socio = _mi_socio(db, sesion)
+    congelamiento = _congelamiento_vigente(db, socio.id_socio)
+    if congelamiento is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="No tenés ninguna pausa activa.")
+
+    dias = _reanudar(db, congelamiento, hasta=date.today())
+    db.commit()
+    db.refresh(congelamiento)
+
+    salida = _a_congelamiento_out(congelamiento)
+    salida.mensaje = (f"Listo, tu membresía vuelve a estar activa. Se te "
+                      f"sumaron {dias} día(s) al vencimiento.")
+    return salida
+
+
+@router.post("/mi-membresia/baja", response_model=MensajeResponse)
+def darme_de_baja(
+    datos: BajaPropiaRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_CUOTA)),
+):
+    """
+    El socio se da de baja solo.
+
+    NO se reusa el endpoint del personal, y es la única vez en este archivo
+    que no se delega. El motivo es concreto: /socios/{id}/baja DESACTIVA LA
+    CUENTA DE ACCESO. Para el mostrador tiene sentido —dar de baja a alguien
+    incluye cortarle el acceso— pero aplicado a uno mismo es una trampa: el
+    socio apretaría "darme de baja", perdería la sesión en el acto, y no
+    podría volver a entrar ni para ver su historial de pagos o para
+    reinscribirse. Quedaría dependiendo del mostrador justamente en el momento
+    en que decidió dejar de depender del mostrador.
+    (Es el mismo agujero que el Dueño desactivándose a sí mismo, que ya
+    apareció una vez en este proyecto y hubo que arreglar entrando a la base.)
+
+    Así que acá: se da de baja la ficha, se cancela la membresía, se registra
+    el motivo — y la CUENTA QUEDA VIVA.
+    """
+    socio = _mi_socio(db, sesion)
+
+    if not socio.activo:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Ya estás dado de baja.")
+
+    hoy = date.today()
+
+    # Si estaba congelada, se cierra la pausa primero. Dejar un congelamiento
+    # ACTIVO colgando de una membresía cancelada haría que el índice único de
+    # "un solo activo por socio" bloquee una futura reinscripción.
+    vigente = _congelamiento_vigente(db, socio.id_socio)
+    if vigente is not None:
+        vigente.estado = "CANCELADO"
+        vigente.fecha_reanudacion = hoy
+        vigente.dias_aplicados = 0
+
+    socio.activo = False
+    db.add(Baja(
+        id_socio=socio.id_socio,
+        fecha_baja=hoy,
+        tipo="VOLUNTARIA",
+        motivo=datos.motivo,
+    ))
+
+    membresia = (db.query(Membresia)
+                 .filter(Membresia.id_socio == socio.id_socio,
+                         Membresia.estado.in_(["ACTIVA", "SUSPENDIDA"]))
+                 .first())
+    if membresia is not None:
+        membresia.estado = "CANCELADA"
+
+    # Las reservas futuras se cancelan y liberan su lugar. Dejarlas ocupando
+    # cupo de clases a las que ya no va sería quitarle el lugar a otro socio.
+    futuras = (db.query(Reserva)
+               .join(Turno, Turno.id_turno == Reserva.id_turno)
+               .filter(Reserva.id_socio == socio.id_socio,
+                       Reserva.estado.in_(["RESERVADA", "EN_ESPERA"]),
+                       Turno.fecha >= hoy)
+               .all())
+    turnos_liberados = []
+    for r in futuras:
+        if r.estado == "RESERVADA":
+            turnos_liberados.append(r.id_turno)
+        r.estado = "CANCELADA_SOCIO"
+        r.fecha_cancelacion = datetime.now()
+
+    db.flush()
+    for id_turno in turnos_liberados:
+        promover_de_lista_de_espera(db, id_turno)
+
+    db.commit()
+
+    return MensajeResponse(mensaje=(
+        "Listo, ya estás dado de baja. Tu cuenta sigue activa: podés entrar "
+        "cuando quieras a ver tu historial, y si volvés no hace falta que "
+        "te den de alta de nuevo."
+    ))

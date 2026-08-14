@@ -956,3 +956,37 @@ def roles_de_persona(persona: Persona) -> list[str]:
         # empleado.profesor no suma rol: ver el docstring de Profesor.
 
     return roles
+
+
+class Congelamiento(Base):
+    """
+    Una pausa de la membresía: viaje, lesión, lo que sea.
+
+    Es una tabla y no dos columnas en Membresia por lo mismo que Baja es una
+    tabla: un socio congela más de una vez a lo largo del tiempo, cada
+    congelamiento tiene su motivo y sus fechas, y con dos columnas el segundo
+    pisaría al primero. Ese historial es justamente lo que permite aplicar un
+    tope anual.
+
+    `fecha_fin` es un TOPE y no una promesa: se puede reanudar antes, y sólo
+    se extiende el vencimiento por los días realmente congelados. Por eso la
+    extensión se aplica al REANUDAR y no al congelar — al congelar todavía no
+    se sabe cuántos días van a ser en serio.
+    """
+    __tablename__ = "Congelamiento"
+
+    id_congelamiento = Column(Integer, primary_key=True)
+    id_socio = Column(Integer, ForeignKey("Socio.id_socio"), nullable=False)
+    id_membresia = Column(Integer, ForeignKey("Membresia.id_membresia"), nullable=False)
+    fecha_inicio = Column(Date, nullable=False)
+    fecha_fin = Column(Date, nullable=False)
+    fecha_reanudacion = Column(Date)
+    dias_aplicados = Column(Integer)
+    motivo = Column(String(200))
+    estado = Column(ENUM("ACTIVO", "FINALIZADO", "CANCELADO",
+                          name="estado_congelamiento", create_type=False),
+                     nullable=False, server_default=text("'ACTIVO'"))
+    fecha_solicitud = Column(DateTime, nullable=False, server_default=func.now())
+
+    socio = relationship("Socio")
+    membresia = relationship("Membresia")
