@@ -1424,3 +1424,17 @@ class TurnoDisponibleOut(BaseModel):
     ya_anotado: bool = False
     mi_estado: str | None = None
     id_mi_reserva: int | None = None
+
+
+class ComprarMiPlanRequest(BaseModel):
+    """
+    Lo que manda el socio al comprar. SOLO el método de pago.
+
+    No lleva id_socio, y esa ausencia es la protección: el endpoint del
+    personal sí lo recibe porque opera sobre terceros, y si este lo aceptara
+    —aunque fuera opcional— un socio podría comprarle un abono a otro, o peor,
+    cargarle el pago a otro. El id sale del token firmado.
+
+    Tampoco lleva el monto: lo calcula el backend a partir del plan.
+    """
+    metodo: MetodoPago

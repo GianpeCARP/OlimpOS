@@ -51,7 +51,7 @@ from models import (
 )
 from permisos import Seccion
 from schemas import (
-    AsignacionDietaOut, AsignacionRutinaOut, AsistenciaOut, DietaOut, MedicionCrear, MedicionOut, MiComidaOut, MiCuotaOut, MiDeudaOut, MiDiaDeDietaOut, MiDietaOut, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRutinaOut, PagoOut, ReservaOut, RutinaOut, TurnoDisponibleOut,
+    ActividadOut, AsignacionDietaOut, AsignacionRutinaOut, AsistenciaOut, ComprarClaseSueltaRequest, ClaseSueltaResponse, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, DietaOut, MedicionCrear, MedicionOut, MiComidaOut, MiCuotaOut, MiDeudaOut, MiDiaDeDietaOut, MiDietaOut, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRutinaOut, PagoOut, ReservaOut, RutinaOut, TurnoDisponibleOut,
 )
 from notificaciones import notificar_promocion_lista_espera
 from turnos import ocupacion, promover_de_lista_de_espera
@@ -950,4 +950,108 @@ def turnos_disponibles(
             mi_estado=(propia.estado if propia else None),
             id_mi_reserva=(propia.id_reserva if propia else None),
         ))
+    return salida
+
+
+# =============================================================================
+# COMPRAS DEL SOCIO
+# =============================================================================
+#
+# Comprar un abono o una clase suelta sin pasar por el mostrador.
+#
+# ESTOS ENDPOINTS NO REIMPLEMENTAN LAS REGLAS: llaman a los del personal.
+#
+# Comprar un abono valida cosas que costaron trabajo y que están documentadas
+# en /actividades: que la membresía cubra el mes entero del abono (REGLA 1),
+# que el socio no tenga deudas (REGLA 8), que el plan esté activo, y el cálculo
+# de vencimiento con meses calendario y no de 30 días. Copiar todo eso acá
+# significaría dos versiones de las mismas reglas, y en algún momento una de
+# las dos se corrige y la otra no — con el resultado de que el socio puede
+# comprar desde la app algo que el mostrador le rechazaría, o al revés.
+#
+# Lo único que cambia entre las dos puertas es DE DÓNDE SALE EL id_socio: del
+# cuerpo cuando lo opera el personal (que actúa sobre terceros), del token
+# firmado cuando lo hace el socio. Esa diferencia es exactamente la que
+# justifica que sean dos endpoints y no uno con un parámetro opcional: un
+# id_socio opcional en el endpoint del personal sería un id_socio que un socio
+# podría mandar.
+
+@router.post("/mis-actividades/planes/{id_plan}/comprar",
+             response_model=ComprarPlanResponse,
+             status_code=status.HTTP_201_CREATED)
+def comprar_mi_plan(
+    id_plan: int,
+    datos: ComprarMiPlanRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MIS_ACTIVIDADES)),
+):
+    """
+    El socio compra un abono para sí mismo.
+
+    Si el backend rechaza —cuota que no cubre el mes, una deuda—, el mensaje
+    de error ya explica cuál de las reglas falló y qué hacer. Ese texto está
+    escrito para que lo lea el socio, no para que un programador lo depure.
+    """
+    from routers.actividades import comprar_plan
+
+    socio = _mi_socio(db, sesion)
+    return comprar_plan(
+        id_plan=id_plan,
+        datos=ComprarPlanRequest(id_socio=socio.id_socio, metodo=datos.metodo),
+        db=db,
+        sesion=sesion,
+    )
+
+
+@router.post("/mis-turnos/{id_turno}/clase-suelta",
+             response_model=ClaseSueltaResponse,
+             status_code=status.HTTP_201_CREATED)
+def comprar_mi_clase_suelta(
+    id_turno: int,
+    datos: ComprarMiPlanRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MIS_TURNOS)),
+):
+    """
+    El socio paga una clase suelta y queda reservado en ese turno.
+
+    Es la salida para quien no quiere un abono: viene una vez, paga esa vez.
+    Sin esto, alguien que quiere probar una clase de Boxeo tiene que ir al
+    mostrador — que es justo lo que este portal viene a evitar.
+    """
+    from routers.actividades import comprar_clase_suelta
+
+    socio = _mi_socio(db, sesion)
+    return comprar_clase_suelta(
+        id_turno=id_turno,
+        datos=ComprarClaseSueltaRequest(id_socio=socio.id_socio, metodo=datos.metodo),
+        db=db,
+        sesion=sesion,
+    )
+
+
+@router.get("/mis-actividades/catalogo", response_model=list[ActividadOut])
+def catalogo_para_el_socio(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MIS_ACTIVIDADES)),
+):
+    """
+    Las actividades con sus planes y precios, para que el socio elija.
+
+    Sólo las ACTIVAS y sólo con sus planes activos: el catálogo del personal
+    muestra también las dadas de baja para poder reactivarlas, y ofrecerle al
+    socio comprar un plan discontinuado terminaría en un rechazo que no
+    entendería.
+    """
+    actividades = (db.query(Actividad)
+                   .filter(Actividad.activo.is_(True))
+                   .order_by(Actividad.nombre)
+                   .all())
+
+    from routers.actividades import _a_actividad_out
+    salida = []
+    for a in actividades:
+        out = _a_actividad_out(a)
+        out.planes = [p for p in out.planes if p.activo]
+        salida.append(out)
     return salida
