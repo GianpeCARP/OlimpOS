@@ -12,11 +12,21 @@
 # No tiene gemelo en la PWA: es una pantalla del personal, y los socios no la
 # ven. Es la única vista de esta app que no espeja un .tsx.
 
+import threading
+import time
+
 import flet as ft
 from app.config import Colors, Fonts, Radius, Routes, alpha
 from app.state import app_state
 from app.components.ui import (build_topbar, input_field, primary_button,
                                 show_snack, open_dialog, close_dialog)
+
+# Cada cuánto se vuelve a pedir el panel.
+#
+# Diez segundos: suficiente para que un ingreso aparezca antes de que la
+# persona termine de guardar la tarjeta, y lo bastante espaciado como para que
+# sean seis pedidos por minuto desde una sola máquina — nada.
+SEGUNDOS_REFRESCO = 10
 
 # estado derivado → (etiqueta, color, ícono)
 #
@@ -34,11 +44,24 @@ ESTADO_CONFIG = {
 
 
 class RecepcionView:
+    # Cada refresco que arranca se queda con este número. Si el recepcionista
+    # entra y sale de la sección varias veces quedarían varios hilos vivos
+    # pisándose entre sí; con el contador, sólo el último tiene la posta y los
+    # anteriores se dan cuenta de que ya no son y terminan solos.
+    #
+    # Es de CLASE y no de instancia a propósito: el router crea una vista nueva
+    # en cada navegación, así que un contador por instancia siempre valdría lo
+    # mismo y no distinguiría nada.
+    _generacion = 0
+
     def __init__(self, page: ft.Page, router):
         self.page = page
         self.router = router
         self.resultados_ref = ft.Ref[ft.Column]()
         self.dni_ref = ft.Ref[ft.TextField]()
+        # Sólo esta parte se rearma en cada refresco. El buscador NO: si se
+        # redibujara, borraría el DNI a medio tipear cada diez segundos.
+        self.vivo_ref = ft.Ref[ft.Column]()
 
     # ── Armado ────────────────────────────────────────────────────────────────
 
@@ -65,10 +88,13 @@ class RecepcionView:
             cuerpo = ft.Column([
                 self._buscador(),
                 ft.Container(height=20),
-                self._resumen(panel),
-                ft.Container(height=20),
-                self._lista_de_turnos(panel),
+                # Lo único que se rearma solo. Queda en su propia Column con
+                # ref para poder reemplazar sus hijos sin tocar el buscador ni
+                # perder la posición del scroll.
+                ft.Column(ref=self.vivo_ref, controls=self._contenido_vivo(panel),
+                          spacing=0),
             ], spacing=0, scroll=ft.ScrollMode.AUTO, expand=True)
+            self._arrancar_refresco()
 
         # El scroll va en la Column INTERNA, nunca en esta de afuera: con
         # expand=True y scroll en la exterior, Flet centra todo verticalmente y
@@ -77,6 +103,68 @@ class RecepcionView:
             topbar,
             ft.Container(content=cuerpo, padding=ft.Padding.all(24), expand=True),
         ], spacing=0, expand=True)
+
+    def _contenido_vivo(self, panel: dict) -> list:
+        """El resumen y los turnos: lo que cambia solo."""
+        return [
+            self._resumen(panel),
+            ft.Container(height=20),
+            self._lista_de_turnos(panel),
+        ]
+
+    # ── Refresco automático ───────────────────────────────────────────────────
+
+    def _arrancar_refresco(self):
+        """
+        Vuelve a pedir el panel cada pocos segundos, en un hilo aparte.
+
+        Por qué polling y no WebSocket: esta pantalla cambia sola CON EL RELOJ.
+        "en 9 min" pasa a "en 8 min" sin que ocurra nada en el servidor, así
+        que hace falta un timer exista o no una conexión push. Y si el timer
+        va a estar corriendo igual, volver a pedir el panel cuesta un GET. Un
+        WebSocket sumaría ciclo de vida de conexión, reconexión y broadcast en
+        el backend para ganar unos segundos que en un mostrador nadie percibe.
+
+        El hilo es daemon: si alguien cierra la ventana, no queda vivo
+        impidiendo que el proceso termine.
+        """
+        RecepcionView._generacion += 1
+        mia = RecepcionView._generacion
+
+        def bucle():
+            while True:
+                time.sleep(SEGUNDOS_REFRESCO)
+
+                # Tres motivos para terminar, y los tres importan:
+                #   - se navegó a otra sección (el panel ya no está en pantalla)
+                #   - se cerró la sesión
+                #   - arrancó un refresco más nuevo y este quedó viejo
+                if (RecepcionView._generacion != mia
+                        or not app_state.logged_in
+                        or app_state.current_route != Routes.RECEPCION):
+                    return
+
+                try:
+                    panel = app_state.get_panel_recepcion()
+                    if not panel["hay_datos"]:
+                        # El backend se cayó. Se deja lo último que se mostró
+                        # en vez de vaciar la pantalla: datos de hace diez
+                        # segundos son más útiles que una pantalla en blanco,
+                        # y el mostrador sigue trabajando.
+                        continue
+                    destino = self.vivo_ref.current
+                    if destino is None:
+                        return
+                    destino.controls = self._contenido_vivo(panel)
+                    destino.update()
+                except Exception:  # noqa: BLE001
+                    # Nunca dejar que este hilo tire la app: corre de fondo y
+                    # nadie lo está mirando. Si algo falla, se espera al
+                    # próximo ciclo — el de arriba ya cubre el caso normal
+                    # (backend caído) y esto es la red por si acaso.
+                    continue
+
+        threading.Thread(target=bucle, daemon=True).start()
 
     # ── Buscador por DNI ──────────────────────────────────────────────────────
 
