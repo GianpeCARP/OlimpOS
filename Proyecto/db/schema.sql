@@ -433,6 +433,8 @@ CREATE TABLE "Horario_Actividad" (
   "hora" time NOT NULL,
   "cupo" int NOT NULL,
   "id_profesor" int,
+  -- Excluyente con id_profesor, igual que en Turno. Ambos NULL = sala abierta.
+  "id_entrenador_a_cargo" int,
   -- vigente_hasta NULL = indefinido. Permite decir "Yoga pasa a las 20:00 a
   -- partir del 1 de marzo" sin borrar el horario viejo ni perder los turnos
   -- ya generados con el anterior.
@@ -442,7 +444,9 @@ CREATE TABLE "Horario_Actividad" (
   CONSTRAINT chk_horario_dia_semana CHECK ("dia_semana" BETWEEN 1 AND 7),
   CONSTRAINT chk_horario_cupo CHECK ("cupo" > 0),
   CONSTRAINT chk_horario_vigencia
-    CHECK ("vigente_hasta" IS NULL OR "vigente_hasta" >= "vigente_desde")
+    CHECK ("vigente_hasta" IS NULL OR "vigente_hasta" >= "vigente_desde"),
+  CONSTRAINT chk_horario_un_solo_staff
+    CHECK (NOT ("id_entrenador_a_cargo" IS NOT NULL AND "id_profesor" IS NOT NULL))
 );
 
 CREATE TABLE "Turno" (
@@ -891,6 +895,7 @@ COMMENT ON CONSTRAINT fk_turno_profesor_habilitado ON "Turno" IS
 -- -----------------------------------------------------------------------------
 ALTER TABLE "Horario_Actividad" ADD FOREIGN KEY ("id_sede") REFERENCES "Sede" ("id_sede") DEFERRABLE INITIALLY IMMEDIATE;
 ALTER TABLE "Horario_Actividad" ADD FOREIGN KEY ("id_actividad") REFERENCES "Actividad" ("id_actividad") DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE "Horario_Actividad" ADD FOREIGN KEY ("id_entrenador_a_cargo") REFERENCES "Entrenador" ("id_entrenador") DEFERRABLE INITIALLY IMMEDIATE;
 
 -- Misma regla que Turno: si hay profesor, tiene que estar habilitado para esa
 -- actividad. Se valida tambien aca porque si el horario guarda un profesor no

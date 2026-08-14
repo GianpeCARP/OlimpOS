@@ -796,6 +796,9 @@ class HorarioActividad(Base):
     hora = Column(Time, nullable=False)
     cupo = Column(Integer, nullable=False)
     id_profesor = Column(Integer, ForeignKey("Profesor.id_profesor"))
+    # Excluyente con id_profesor, igual que en Turno (CHECK en la base). Que
+    # los dos sean None es válido: es la sala abierta, sin nadie a cargo.
+    id_entrenador_a_cargo = Column(Integer, ForeignKey("Entrenador.id_entrenador"))
     vigente_desde = Column(Date, nullable=False)
     vigente_hasta = Column(Date)
     activo = Column(Boolean, server_default=text("true"))

@@ -332,7 +332,27 @@ def reservar(
     solo en el frontend (deshabilitando el botón cuando está lleno), bastaría
     con llamar a este endpoint directamente para meter un socio de más.
     """
-    turno = db.get(Turno, id_turno)
+    # with_for_update(): se toma un lock sobre la fila del turno y se lo
+    # mantiene hasta el final de la transacción.
+    #
+    # No es paranoia. Sin esto, dos personas reservando el último lugar al
+    # mismo tiempo NO se ven una a la otra —bajo READ COMMITTED, que es el
+    # default de Postgres, cada transacción ve la base como estaba cuando
+    # empezó— así que las dos cuentan 19 sobre 20 y las dos entran. El turno
+    # termina con 21 y la lista de espera, que existe justamente para eso,
+    # nunca se usa.
+    #
+    # Con el lock, la segunda espera a que la primera confirme y recién ahí
+    # cuenta: ve 20, y va a la cola como corresponde.
+    #
+    # El CONSTRAINT TRIGGER de la migración 006 cubre lo otro —un INSERT a
+    # mano, un bug, un script de importación— pero NO esta carrera, porque
+    # también cuenta y también contaría 19 en las dos transacciones. Cada uno
+    # tapa un agujero distinto; por eso están los dos.
+    turno = (db.query(Turno)
+             .filter(Turno.id_turno == id_turno)
+             .with_for_update()
+             .first())
     if turno is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="El turno no existe.")
     if turno.estado == "CANCELADO":

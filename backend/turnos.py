@@ -174,7 +174,14 @@ def promover_de_lista_de_espera(db: Session, id_turno: int) -> Reserva | None:
     # avanza. Se descubrió probándolo contra la base, no leyendo el código.
     db.flush()
 
-    turno = db.get(Turno, id_turno)
+    # Mismo lock que el endpoint de reservar, y por el mismo motivo: dos
+    # cancelaciones simultáneas sobre el mismo turno liberarían un lugar cada
+    # una, y sin lock las dos promoverían contando el mismo hueco. Con el
+    # lock, la segunda espera y ve el estado real.
+    turno = (db.query(Turno)
+             .filter(Turno.id_turno == id_turno)
+             .with_for_update()
+             .first())
     if turno is None or turno.estado == "CANCELADO":
         return None
     if not hay_lugar(db, turno):
@@ -330,6 +337,7 @@ def generar_turnos(db: Session, dias: int = DIAS_A_GENERAR,
                     cupo_maximo=horario.cupo,
                     estado="HABILITADO",
                     id_profesor=horario.id_profesor,
+                    id_entrenador_a_cargo=horario.id_entrenador_a_cargo,
                     id_horario_actividad=horario.id_horario_actividad,
                 ))
                 existentes.add(clave)
