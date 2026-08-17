@@ -13,6 +13,7 @@ import {
   TrendingUp,
   CreditCard,
   CalendarCheck,
+  CalendarClock,
   Fingerprint,
   Wallet,
   type LucideIcon,
@@ -774,21 +775,28 @@ export const SOCIO_NAV_ITEMS: NavItem[] = [
   { label: 'Mis actividades', icon: CalendarCheck, route: Routes.MIS_ACTIVIDADES },
   { label: 'Mi progreso', icon: TrendingUp, route: Routes.MI_PROGRESO },
   { label: 'Mi dieta', icon: Apple, route: Routes.MI_DIETA },
+  // "Mis turnos" estuvo FUERA de esta lista un tiempo, y conviene dejar
+  // asentado por qué volvió.
+  //
+  // La nota anterior decía que la vista estaba congelada porque el gimnasio
+  // iba a pasar a un modelo MIXTO —musculación y cardio de acceso libre, más
+  // actividades con horario fijo, cupo y profesional asignado— y no tenía
+  // sentido escribir la pantalla antes de que ese modelo existiera. Era
+  // correcto.
+  //
+  // Ese modelo YA EXISTE: Actividad tiene cupo, profesor y tolerancia,
+  // Horario_Actividad declara el horario semanal y el backend genera los
+  // turnos solo, y la sala abierta se distingue de una clase por su cupo. La
+  // precondición está cumplida, así que la vista se escribió y el ítem
+  // vuelve.
+  //
+  // (El motivo por el que no podía quedar en el menú sin la vista sigue
+  // valiendo si alguna vez se saca de nuevo: sin ruta registrada en App.tsx
+  // caía en el comodín `path="*"` y rebotaba al socio a /mi-perfil, y un link
+  // que no lleva a ningún lado se lee como app rota, no como "todavía no
+  // está".)
+  { label: 'Mis turnos', icon: CalendarClock, route: Routes.MIS_TURNOS },
   { label: 'Mi cuota', icon: CreditCard, route: Routes.MI_CUOTA },
-  // "Mis turnos" NO está en la lista a propósito.
-  //
-  // Routes.MIS_TURNOS y su permiso siguen existiendo (el socio lo tiene en
-  // TOTAL), pero la vista está congelada: el gimnasio va a pasar a un modelo
-  // MIXTO —musculación/cardio de acceso libre, más actividades con horario
-  // fijo, cupo y profesional asignado (boxeo, pilates, yoga, masajes,
-  // estética)— y eso es un cambio de modelo de datos que se define antes de
-  // escribir la vista.
-  //
-  // Mientras tanto el ítem no va acá porque sin ruta registrada en App.tsx
-  // caía en el comodín `path="*"` y rebotaba al socio a /mi-perfil: un link
-  // del menú que no lleva a ningún lado se lee como app rota, no como
-  // "todavía no está". Cuando exista la vista, se agrega de vuelta esta
-  // línea y listo.
 ];
 
 /**

@@ -18,6 +18,7 @@ import { UsuariosView } from './views/usuarios/UsuariosView';
 import { MiPerfilView } from './views/socio/MiPerfilView';
 import { MiRutinaView } from './views/socio/MiRutinaView';
 import { MisActividadesView } from './views/socio/MisActividadesView';
+import { MisTurnosView } from './views/socio/MisTurnosView';
 import { MiProgresoView } from './views/socio/MiProgresoView';
 import { MiDietaView } from './views/socio/MiDietaView';
 import { MiCuotaView } from './views/socio/MiCuotaView';
@@ -125,6 +126,9 @@ export default function App() {
             </Route>
             <Route element={<ProtectedRoute seccion={Routes.MIS_ACTIVIDADES} />}>
               <Route path={`/${Routes.MIS_ACTIVIDADES}`} element={<MisActividadesView />} />
+            </Route>
+            <Route element={<ProtectedRoute seccion={Routes.MIS_TURNOS} />}>
+              <Route path={`/${Routes.MIS_TURNOS}`} element={<MisTurnosView />} />
             </Route>
             <Route element={<ProtectedRoute seccion={Routes.MI_PROGRESO} />}>
               <Route path={`/${Routes.MI_PROGRESO}`} element={<MiProgresoView />} />
