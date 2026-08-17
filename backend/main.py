@@ -143,7 +143,7 @@ app.middleware("http")(middleware_csrf)
 #
 from routers import (  # noqa: E402  (tras crear `app`)
     actividades, asistencia, auth_router, cobros, dashboard, nutricion,
-    personal, portal, recepcion, rutinas, socios, usuarios,
+    pagos_online, personal, portal, recepcion, rutinas, socios, usuarios,
 )
 
 app.include_router(auth_router.router)
@@ -160,6 +160,8 @@ app.include_router(usuarios.router)
 # El portal va último: son las rutas del socio, y tenerlas juntas al final de
 # /docs deja claro que son un grupo aparte del resto (gestión).
 app.include_router(portal.router)
+# Fuera del prefijo /portal: el webhook lo llama Mercado Pago sin sesion.
+app.include_router(pagos_online.router)
 
 
 @app.get("/", tags=["Salud"])

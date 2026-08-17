@@ -8,6 +8,7 @@ import {
   LogOut,
   Pause,
   Play,
+  Wallet,
 } from 'lucide-react';
 import {
   PrimaryButton,
@@ -23,9 +24,13 @@ import {
   darmeDeBaja,
   getMiCuota,
   getMisCongelamientos,
+  getPlanesDisponibles,
+  iniciarPagoDeCuota,
   reanudarMiMembresia,
+  simularAcreditacion,
   type Congelamiento,
   type MiCuota,
+  type PlanDisponible,
 } from '../../services/socioService';
 import { useAuthStore } from '../../store/authStore';
 import { useUiStore } from '../../store/uiStore';
@@ -96,11 +101,12 @@ export function MiCuotaView() {
     let cancelado = false;
     setCuota(null);
     setError(null);
-    Promise.all([getMiCuota(), getMisCongelamientos()])
-      .then(([datos, pausas]) => {
+    Promise.all([getMiCuota(), getMisCongelamientos(), getPlanesDisponibles()])
+      .then(([datos, pausas, listaPlanes]) => {
         if (cancelado) return;
         setCuota(datos);
         setCongelamientos(pausas);
+        setPlanes(listaPlanes);
       })
       .catch((err: unknown) => {
         if (!cancelado) setError(mensajeDeError(err));
@@ -117,6 +123,8 @@ export function MiCuotaView() {
   const [hastaCuando, setHastaCuando] = useState('');
   const [motivoPausa, setMotivoPausa] = useState('');
   const [procesando, setProcesando] = useState(false);
+  const [planes, setPlanes] = useState<PlanDisponible[]>([]);
+  const [pagando, setPagando] = useState<number | null>(null);
 
   const recargar = useCallback(() => setIntento((n) => n + 1), []);
 
@@ -153,6 +161,35 @@ export function MiCuotaView() {
       .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger))
       .finally(() => setProcesando(false));
   }, [showSnack, recargar]);
+
+  const pagar = useCallback(
+    async (plan: PlanDisponible) => {
+      setPagando(plan.idTipoMembresia);
+      try {
+        const r = await iniciarPagoDeCuota(plan.idTipoMembresia);
+        if (r.simulado) {
+          // Modo simulado: no hay Mercado Pago. Se acredita a mano para poder
+          // ver qué pasa después del pago. El backend sólo habilita esto
+          // cuando NO hay un token real cargado.
+          await simularAcreditacion(r.idPago);
+          showSnack(`[Simulado] Se acreditó ${plan.nombre}. No se cobró nada.`, colors.statusWarn);
+          recargar();
+          return;
+        }
+        // Pago real: se sale de la app hacia el checkout de Mercado Pago.
+        // No se abre en pestaña nueva a propósito — los bloqueadores de
+        // popups las frenan y el socio se queda mirando una pantalla que no
+        // hace nada.
+        showSnack(r.mensaje, colors.statusOk);
+        window.location.href = r.urlCheckout;
+      } catch (err) {
+        showSnack(mensajeDeError(err), colors.statusDanger);
+      } finally {
+        setPagando(null);
+      }
+    },
+    [showSnack, recargar],
+  );
 
   const darDeBaja = useCallback(() => {
     confirmDialog(
@@ -344,6 +381,47 @@ export function MiCuotaView() {
                 ni "reanudar" a quien no lo está. Mostrar los dos botones
                 siempre y deshabilitar uno obliga a leer para entender cuál
                 aplica. */}
+            {/* ── Pagar ────────────────────────────────────────────────────
+                Va ARRIBA de la autogestión y de la baja: es lo que la mayoría
+                viene a hacer, y lo que resuelve la deuda que la pantalla
+                acaba de mostrar.
+
+                Si el backend no tiene Mercado Pago configurado, el pedido
+                falla con un 503 cuyo mensaje manda a recepción. No se
+                esconden los botones: que el socio vea el precio y sepa cuánto
+                tiene que llevar es útil igual. */}
+            {planes.length > 0 && (
+              <SectionCard title={tieneDeuda ? 'Regularizar tu cuota' : 'Renovar tu cuota'}>
+                <div className="space-y-2">
+                  {planes.map((plan) => (
+                    <div
+                      key={plan.idTipoMembresia}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border-idle p-3"
+                    >
+                      <div>
+                        <p className="font-body text-sm text-text-main">{plan.nombre}</p>
+                        <p className="font-body text-xs text-text-muted">
+                          {plan.duracionDias} días
+                          {plan.descripcion ? ` · ${plan.descripcion}` : ''}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="font-mono text-sm text-text-main">
+                          {formatearMoneda(plan.precio)}
+                        </span>
+                        <PrimaryButton
+                          label={pagando === plan.idTipoMembresia ? 'Un momento...' : 'Pagar'}
+                          icon={Wallet}
+                          disabled={pagando !== null || procesando}
+                          onClick={() => void pagar(plan)}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </SectionCard>
+            )}
+
             <SectionCard title="Tu membresía, a tu manera">
               {pausaActiva ? (
                 <div className="space-y-4">

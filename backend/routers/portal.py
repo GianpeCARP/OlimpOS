@@ -400,7 +400,18 @@ def mi_cuota(
 
     pagos = (
         db.query(Pago)
-        .filter(Pago.id_socio == socio.id_socio, Pago.estado == "CONFIRMADO")
+        # Los PENDIENTE también, no sólo los confirmados.
+        #
+        # Con pago online un cobro puede quedar pendiente mientras Mercado
+        # Pago lo procesa. Filtrando sólo CONFIRMADO, el socio pagaba con
+        # tarjeta, volvía a la app y su historial no mostraba nada — sin forma
+        # de saber si había salido. Ver un pago "Pendiente" es exactamente la
+        # información que necesita para no pagar dos veces.
+        #
+        # Los CANCELADO quedan afuera a propósito: un pago rechazado no es
+        # historial de nada, es ruido que preocupa sin motivo.
+        .filter(Pago.id_socio == socio.id_socio,
+                Pago.estado.in_(["CONFIRMADO", "PENDIENTE"]))
         .order_by(Pago.fecha_pago.desc())
         .limit(ULTIMOS_PAGOS)
         .all()

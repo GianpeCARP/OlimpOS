@@ -875,3 +875,95 @@ export async function cancelarMiAbono(idInscripcion: number): Promise<void> {
     metodo: 'POST',
   });
 }
+
+// =============================================================================
+// PAGO ONLINE
+// =============================================================================
+
+export interface PagoIniciado {
+  idPago: number;
+  monto: number;
+  plan: string;
+  urlCheckout: string;
+  simulado: boolean;
+  mensaje: string;
+}
+
+interface PagoIniciadoApi {
+  id_pago: number;
+  monto: number;
+  plan: string;
+  url_checkout: string;
+  simulado: boolean;
+  mensaje: string;
+}
+
+/**
+ * Arranca el pago de una cuota y devuelve a dónde mandar al socio.
+ *
+ * NO lleva monto: sale del plan y lo lee el backend. Con un monto en el
+ * cuerpo, cualquiera con la consola abierta pagaría $1 una cuota de $30.000.
+ *
+ * El pago queda PENDIENTE hasta que Mercado Pago confirme. Que el socio haya
+ * apretado el botón no significa que la plata llegó.
+ */
+export async function iniciarPagoDeCuota(idTipoMembresia: number): Promise<PagoIniciado> {
+  const d = await pedir<PagoIniciadoApi>('/portal/mi-cuota/pagar', {
+    metodo: 'POST',
+    cuerpo: { id_tipo_membresia: idTipoMembresia },
+  });
+  return {
+    idPago: d.id_pago,
+    monto: Number(d.monto),
+    plan: d.plan,
+    urlCheckout: d.url_checkout,
+    simulado: d.simulado,
+    mensaje: d.mensaje,
+  };
+}
+
+/**
+ * Acredita un pago a mano. SÓLO existe con el backend en modo simulado.
+ *
+ * Es el reemplazo del webhook mientras no haya URL pública: sin esto el flujo
+ * se corta en "te llevamos a Mercado Pago" y no hay forma de probar la
+ * pantalla después del pago. Con un token real cargado el backend responde
+ * 404 y este llamado falla, que es lo correcto.
+ */
+export async function simularAcreditacion(idPago: number): Promise<{ mensaje: string }> {
+  return pedir<{ mensaje: string }>(`/portal/mi-cuota/pagar/${idPago}/simular`, {
+    metodo: 'POST',
+  });
+}
+
+export interface PlanDisponible {
+  idTipoMembresia: number;
+  nombre: string;
+  descripcion?: string;
+  duracionDias: number;
+  precio: number;
+}
+
+/**
+ * Los planes que el socio puede comprar.
+ *
+ * Endpoint propio y no /cobros/tipos-membresia: ese está protegido con la
+ * sección COBROS, que el socio tiene en NINGUNO. Trae sólo lo necesario para
+ * elegir.
+ */
+export async function getPlanesDisponibles(): Promise<PlanDisponible[]> {
+  const datos = await pedir<Array<{
+    id_tipo_membresia: number;
+    nombre: string;
+    descripcion?: string | null;
+    duracion_dias: number;
+    precio: number;
+  }>>('/portal/mi-cuota/planes');
+  return datos.map((p) => ({
+    idTipoMembresia: p.id_tipo_membresia,
+    nombre: p.nombre,
+    descripcion: p.descripcion ?? undefined,
+    duracionDias: p.duracion_dias,
+    precio: Number(p.precio),
+  }));
+}

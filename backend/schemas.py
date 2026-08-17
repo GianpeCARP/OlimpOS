@@ -1477,3 +1477,49 @@ class BajaPropiaRequest(BaseModel):
     una calificación del gimnasio sobre él y no al revés.
     """
     motivo: str | None = None
+
+
+# =============================================================================
+# PAGO ONLINE
+# =============================================================================
+
+class IniciarPagoRequest(BaseModel):
+    """
+    El socio elige el PLAN, no el monto.
+
+    Que no haya un campo `monto` es la protección: el precio sale de
+    Tipo_Membresia y se lee del lado del servidor. Con un monto en el cuerpo,
+    cualquiera con la consola abierta pagaría $1 una cuota de $30.000 y en la
+    base quedaría un pago perfectamente válido.
+    """
+    id_tipo_membresia: int
+
+
+class IniciarPagoResponse(BaseModel):
+    id_pago: int
+    monto: float
+    plan: str
+    # A dónde mandar al socio. Mercado Pago se encarga del formulario de
+    # tarjeta: nosotros nunca vemos esos datos, y eso es lo que evita que el
+    # sistema tenga que cumplir PCI-DSS.
+    url_checkout: str
+    # True cuando el pago no es real (modo simulado, para desarrollar sin
+    # cuenta). La app lo usa para avisar en pantalla que no se cobró nada.
+    simulado: bool = False
+    mensaje: str
+
+
+class PlanDisponibleOut(BaseModel):
+    """
+    Un plan que el socio puede comprar.
+
+    Es un subconjunto deliberado de lo que devuelve el endpoint del mostrador:
+    sólo lo necesario para elegir. Un schema más chico no es una comodidad,
+    es lo que impide que mañana alguien agregue un campo interno al de gestión
+    y se filtre sin querer al portal.
+    """
+    id_tipo_membresia: int
+    nombre: str
+    descripcion: str | None = None
+    duracion_dias: int
+    precio: float
