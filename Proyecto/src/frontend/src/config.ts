@@ -244,6 +244,16 @@ export interface AccionesRol {
   gestionPromociones: boolean;
   gestionDeudas: boolean;
   gestionTurnos: boolean;
+  /**
+   * Historial medico del socio: patologias, lesiones, condiciones.
+   *
+   * El RECEPCIONISTA no la tiene, y es la unica accion donde queda por debajo
+   * del Entrenador y del Nutricionista. El mostrador maneja plata, turnos e
+   * ingresos; ninguna tarea suya requiere saber quien tiene diabetes o una
+   * lesion de rodilla. Para una emergencia lo que hace falta es el contacto
+   * de emergencia, que vive en Persona y si ve.
+   */
+  verHistorialMedico: boolean;
 }
 
 export interface PermisosRol {
@@ -308,6 +318,7 @@ export const PERMISOS: Record<RolValue, PermisosRol> = {
       gestionPromociones: true,
       gestionDeudas: true,
       gestionTurnos: true,
+      verHistorialMedico: true,
     },
   },
 
@@ -350,6 +361,7 @@ export const PERMISOS: Record<RolValue, PermisosRol> = {
       gestionPromociones: false,
       gestionDeudas: false,
       gestionTurnos: true,
+      verHistorialMedico: false,
     },
   },
 
@@ -381,6 +393,7 @@ export const PERMISOS: Record<RolValue, PermisosRol> = {
       gestionPromociones: false,
       gestionDeudas: false,
       gestionTurnos: false,
+      verHistorialMedico: true,
     },
   },
 
@@ -409,6 +422,7 @@ export const PERMISOS: Record<RolValue, PermisosRol> = {
       gestionPromociones: false,
       gestionDeudas: false,
       gestionTurnos: false,
+      verHistorialMedico: true,
     },
   },
 
@@ -453,6 +467,7 @@ export const PERMISOS: Record<RolValue, PermisosRol> = {
       gestionPromociones: false,
       gestionDeudas: false,
       gestionTurnos: false,
+      verHistorialMedico: false,
     },
   },
 };

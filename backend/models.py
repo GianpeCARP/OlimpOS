@@ -990,3 +990,43 @@ class Congelamiento(Base):
 
     socio = relationship("Socio")
     membresia = relationship("Membresia")
+
+
+class Patologia(Base):
+    """
+    El catálogo de condiciones médicas: asma, diabetes, hernia de disco.
+
+    Es una tabla y no un varchar en Socio por 1FN: "asma, rodilla operada,
+    hipertensión" en un solo campo no se puede consultar ni contar, y cada
+    quien lo escribe distinto ("asma" / "Asma" / "asmatico"). Con el catálogo,
+    preguntar cuántos socios tienen asma es una consulta y no una búsqueda de
+    texto con suerte.
+    """
+    __tablename__ = "Patologia"
+
+    id_patologia = Column(Integer, primary_key=True)
+    nombre = Column(String(100), unique=True, nullable=False)
+    descripcion = Column(Text)
+
+
+class SocioPatologia(Base):
+    """
+    Qué condiciones tiene cada socio.
+
+    Clave primaria COMPUESTA (id_socio, id_patologia): un socio no puede tener
+    la misma patología dos veces, y eso lo impide el esquema, no un `if`.
+
+    `observaciones` es donde va lo que el catálogo no puede saber: "rodilla
+    derecha", "controlada con medicación", "evitar impacto". Es el campo que
+    de verdad le sirve al entrenador cuando arma la rutina.
+    """
+    __tablename__ = "Socio_Patologia"
+
+    id_socio = Column(Integer, ForeignKey("Socio.id_socio"), primary_key=True)
+    id_patologia = Column(Integer, ForeignKey("Patologia.id_patologia"),
+                           primary_key=True)
+    fecha_diagnostico = Column(Date)
+    observaciones = Column(Text)
+
+    socio = relationship("Socio")
+    patologia = relationship("Patologia")

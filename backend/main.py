@@ -157,7 +157,8 @@ app.middleware("http")(middleware_csrf)
 #
 from routers import (  # noqa: E402  (tras crear `app`)
     actividades, asistencia, auth_router, cobros, dashboard, nutricion,
-    pagos_online, personal, portal, recepcion, rutinas, socios, usuarios,
+    pagos_online, patologias, personal, portal, recepcion, rutinas, socios,
+    usuarios,
 )
 
 app.include_router(auth_router.router)
@@ -171,6 +172,9 @@ app.include_router(asistencia.router)
 app.include_router(recepcion.router)
 app.include_router(actividades.router)
 app.include_router(usuarios.router)
+# Aparte de /socios: su guard es VER_HISTORIAL_MEDICO, que el
+# Recepcionista NO tiene. Ver el docstring del modulo.
+app.include_router(patologias.router)
 # El portal va último: son las rutas del socio, y tenerlas juntas al final de
 # /docs deja claro que son un grupo aparte del resto (gestión).
 app.include_router(portal.router)

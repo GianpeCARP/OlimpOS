@@ -133,6 +133,19 @@ class Accion:
     GESTION_PROMOCIONES = "gestionPromociones"
     GESTION_DEUDAS = "gestionDeudas"
     GESTION_TURNOS = "gestionTurnos"
+    # Historial medico del socio: patologias, lesiones, condiciones.
+    #
+    # El RECEPCIONISTA NO la tiene, y es la unica accion donde queda por
+    # debajo del Entrenador y del Nutricionista. El mostrador maneja plata,
+    # turnos e ingresos; no hay ninguna tarea suya que requiera saber quien
+    # tiene diabetes, epilepsia o una lesion de rodilla. Para una emergencia
+    # lo que hace falta es el contacto de emergencia, que vive en Persona y
+    # si ve.
+    #
+    # El Entrenador y el Nutricionista SI: una rodilla operada cambia la
+    # rutina y una celiaquia cambia la dieta. Ese es todo el motivo por el
+    # que el gimnasio guarda este dato.
+    VER_HISTORIAL_MEDICO = "verHistorialMedico"
 
 
 # Todas las acciones declaradas arriba. Se filtra por el NOMBRE del atributo y
@@ -226,6 +239,7 @@ PERMISOS: dict[str, dict] = {
             Accion.GESTION_PROMOCIONES: False,
             Accion.GESTION_DEUDAS: False,
             Accion.GESTION_TURNOS: True,
+            Accion.VER_HISTORIAL_MEDICO: False,
         },
     },
 
@@ -248,6 +262,7 @@ PERMISOS: dict[str, dict] = {
         "acciones": {
             **_todas_en(False),
             Accion.GESTION_RUTINAS: True,
+            Accion.VER_HISTORIAL_MEDICO: True,
         },
     },
 
@@ -268,6 +283,7 @@ PERMISOS: dict[str, dict] = {
         "acciones": {
             **_todas_en(False),
             Accion.GESTION_DIETAS: True,
+            Accion.VER_HISTORIAL_MEDICO: True,
         },
     },
 

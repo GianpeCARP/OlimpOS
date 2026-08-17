@@ -1558,3 +1558,38 @@ class AsignacionEntrenadorOut(BaseModel):
     # ser de la tabla: con la columna vieja, reasignar borraba al anterior.
     fecha_fin: date | None = None
     estado: str
+
+
+# =============================================================================
+# HISTORIAL MÉDICO
+# =============================================================================
+
+class PatologiaCrearRequest(BaseModel):
+    nombre: str = Field(min_length=2, max_length=100)
+    descripcion: str | None = None
+
+
+class PatologiaOut(BaseModel):
+    id_patologia: int
+    nombre: str
+    descripcion: str | None = None
+
+
+class AsignarPatologiaRequest(BaseModel):
+    """
+    `observaciones` es el campo que de verdad le sirve al entrenador y que el
+    catálogo no puede saber: "rodilla derecha", "controlada con medicación",
+    "evitar impacto". El nombre de la patología dice QUÉ tiene; esto dice qué
+    hacer al respecto.
+    """
+    id_patologia: int
+    fecha_diagnostico: date | None = None
+    observaciones: str | None = None
+
+
+class PatologiaDeSocioOut(BaseModel):
+    id_patologia: int
+    nombre: str
+    descripcion: str | None = None
+    fecha_diagnostico: date | None = None
+    observaciones: str | None = None

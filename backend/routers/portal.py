@@ -47,11 +47,11 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import (
-    Actividad, AsignacionDieta, AsignacionEntrenador, AsignacionRutina, Asistencia, Baja, Congelamiento, Deuda, InscripcionActividad, Membresia, Pago, Persona, RegistroSalud, Reserva, Socio, Telefono, Turno,
+    Actividad, AsignacionDieta, AsignacionEntrenador, AsignacionRutina, Asistencia, Baja, Congelamiento, Deuda, InscripcionActividad, Membresia, Pago, Patologia, Persona, RegistroSalud, Reserva, Socio, SocioPatologia, Telefono, Turno,
 )
 from permisos import Seccion
 from schemas import (
-    ActividadOut, AsignacionDietaOut, AsignacionEntrenadorOut, AsignacionRutinaOut, AsistenciaOut, BajaPropiaRequest, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, CongelamientoOut, CongelarRequest, DietaOut, InscripcionOut, MedicionCrear, MedicionOut, MensajeResponse, MiComidaOut, MiCuotaOut, MiDeudaOut, MiDiaDeDietaOut, MiDietaOut, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRutinaOut, PagoOut, ReservaOut, RutinaOut, TurnoDisponibleOut,
+    ActividadOut, AsignacionDietaOut, AsignacionEntrenadorOut, AsignacionRutinaOut, AsignarPatologiaRequest, AsistenciaOut, BajaPropiaRequest, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, CongelamientoOut, CongelarRequest, DietaOut, InscripcionOut, MedicionCrear, MedicionOut, MensajeResponse, MiComidaOut, MiCuotaOut, MiDeudaOut, MiDiaDeDietaOut, MiDietaOut, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRutinaOut, PagoOut, PatologiaDeSocioOut, ReservaOut, RutinaOut, TurnoDisponibleOut,
 )
 from notificaciones import notificar_promocion_lista_espera
 from turnos import ocupacion, promover_de_lista_de_espera
@@ -1573,3 +1573,99 @@ def mis_entrenadores(
                     .order_by(AsignacionEntrenador.fecha_inicio)
                     .all())
     return [_a_asignacion_out(a) for a in asignaciones]
+
+
+# =============================================================================
+# MIS CONDICIONES DE SALUD
+# =============================================================================
+#
+# El socio ve y administra las suyas. NO usa Accion.VER_HISTORIAL_MEDICO —esa
+# es para ver las de OTROS, y el socio no la tiene— sino su propia sección.
+# Es la misma distinción de siempre en este archivo: mirar la ficha ajena y
+# mirar la propia son permisos distintos.
+#
+# Que el socio pueda CARGARLAS es deliberado y va en la dirección de que se
+# maneje solo: "soy asmático" es algo que él sabe y el gimnasio necesita, y
+# obligarlo a ir al mostrador a contarlo —donde además el recepcionista no
+# debería enterarse— sería exactamente al revés.
+
+@router.get("/mis-patologias", response_model=list[PatologiaDeSocioOut])
+def mis_patologias(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_PERFIL)),
+):
+    """Sus condiciones registradas."""
+    socio = _mi_socio(db, sesion)
+    from routers.patologias import _a_salida
+
+    filas = (db.query(SocioPatologia)
+             .filter(SocioPatologia.id_socio == socio.id_socio)
+             .all())
+    return sorted((_a_salida(f) for f in filas), key=lambda x: x.nombre)
+
+
+@router.post("/mis-patologias", response_model=PatologiaDeSocioOut,
+             status_code=status.HTTP_201_CREATED)
+def agregar_mi_patologia(
+    datos: AsignarPatologiaRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_PERFIL)),
+):
+    """
+    Declara una condición propia.
+
+    Sólo del catálogo: no se acepta texto libre. Si alguien tiene algo que no
+    está en la lista, lo carga un entrenador o un nutricionista al catálogo
+    primero. Dejar escribir libremente rompería el catálogo con veinte formas
+    de escribir "asma" y volvería inútil poder contar cuántos socios la
+    tienen — que es todo el motivo de que sea una tabla y no un varchar.
+    """
+    socio = _mi_socio(db, sesion)
+    from routers.patologias import _a_salida
+
+    patologia = db.get(Patologia, datos.id_patologia)
+    if patologia is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=("Esa condición no está en la lista. Pedile a tu entrenador "
+                    "o al nutricionista que la agregue."),
+        )
+
+    if db.get(SocioPatologia, (socio.id_socio, datos.id_patologia)):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Ya tenés «{patologia.nombre}» registrada.",
+        )
+
+    sp = SocioPatologia(
+        id_socio=socio.id_socio,
+        id_patologia=datos.id_patologia,
+        fecha_diagnostico=datos.fecha_diagnostico,
+        observaciones=datos.observaciones,
+    )
+    db.add(sp)
+    db.commit()
+    db.refresh(sp)
+    return _a_salida(sp)
+
+
+@router.delete("/mis-patologias/{id_patologia}", status_code=status.HTTP_204_NO_CONTENT)
+def quitar_mi_patologia(
+    id_patologia: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_PERFIL)),
+):
+    """
+    Se saca una condición.
+
+    Se busca por la clave compuesta CON SU id_socio, así que no hay forma de
+    borrarle una a otro cambiando el número en la URL: la fila (otro_socio,
+    esa_patologia) simplemente no aparece en esta consulta.
+    """
+    socio = _mi_socio(db, sesion)
+    sp = db.get(SocioPatologia, (socio.id_socio, id_patologia))
+    if sp is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="No tenés esa condición registrada.")
+    db.delete(sp)
+    db.commit()
