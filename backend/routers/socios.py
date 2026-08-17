@@ -38,12 +38,15 @@ from sqlalchemy.orm import Session
 
 from auth import generar_password_temporal, generar_username, hashear_password
 from database import get_db
-from models import Baja, Membresia, Persona, Sede, Socio, Telefono, Usuario
+from models import (
+    AsignacionEntrenador, Baja, Entrenador, Membresia, Persona, Sede, Socio,
+    Telefono, Usuario,
+)
 from notificaciones import enviar_credenciales
 from permisos import Accion, Seccion
 from schemas import (
-    BajaRequest, PersonaOut, SocioAltaRequest, SocioAltaResponse,
-    SocioEditarRequest, SocioOut,
+    AsignacionEntrenadorOut, AsignarEntrenadorRequest, BajaRequest, PersonaOut,
+    SocioAltaRequest, SocioAltaResponse, SocioEditarRequest, SocioOut,
 )
 from security import Sesion, requiere_accion, requiere_seccion
 
@@ -492,3 +495,204 @@ def reactivar(
     db.commit()
     db.refresh(socio)
     return _a_socio_out(db, socio)
+
+
+# =============================================================================
+# ENTRENADOR A CARGO
+# =============================================================================
+#
+# Quién entrena a quién. Vive en Asignacion_Entrenador desde la migración 003,
+# que sacó la vieja columna Socio.id_entrenador_a_cargo.
+#
+# Esa columna cometía el mismo error que Telefono ya evitaba: meter en un
+# campo de valor único un hecho que en la realidad es MÚLTIPLE —un socio puede
+# tener a la vez uno de musculación y otro de funcional— y CAMBIANTE, porque
+# reasignarlo pisaba el valor anterior y el historial se perdía.
+#
+# La migración se hizo, la tabla quedó, y hasta ahora ningún router la usaba:
+# no había forma de asignarle un entrenador a un socio desde ninguna de las
+# dos apps. Esto lo cierra.
+#
+# QUIÉN PUEDE: la acción GESTION_RUTINAS, no ALTA_BAJA_SOCIOS. Asignar un
+# entrenador no es un dato administrativo del socio, es una decisión de
+# entrenamiento — y con GESTION_RUTINAS la tienen el Dueño, el Recepcionista
+# y el propio Entrenador, que es quien toma un cliente nuevo. No hay
+# escalación de privilegios en dejárselo al entrenador: ya ve a todos los
+# socios en LECTURA, así que asignarse uno no le muestra nada que no viera.
+
+def _a_asignacion_out(a: AsignacionEntrenador) -> AsignacionEntrenadorOut:
+    entrenador = a.entrenador
+    persona = (entrenador.empleado.persona
+               if entrenador and entrenador.empleado else None)
+    return AsignacionEntrenadorOut(
+        id_asignacion=a.id_asignacion_entrenador,
+        id_socio=a.id_socio,
+        id_entrenador=a.id_entrenador,
+        entrenador=persona.nombre_completo if persona else "?",
+        especialidad=entrenador.especialidad if entrenador else None,
+        fecha_inicio=a.fecha_inicio,
+        fecha_fin=a.fecha_fin,
+        estado=a.estado,
+    )
+
+
+@router.get("/{id_socio}/entrenadores", response_model=list[AsignacionEntrenadorOut])
+def entrenadores_del_socio(
+    id_socio: int,
+    solo_activos: bool = False,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.SOCIOS)),
+):
+    """
+    Los entrenadores de un socio, con historial.
+
+    Por defecto devuelve TODOS, incluidos los que ya no lo entrenan. Ese
+    historial es el motivo por el que existe la tabla: con la columna vieja,
+    reasignar borraba al anterior y nadie podía responder "¿quién lo entrenaba
+    en marzo?".
+
+    `solo_activos` para cuando lo que se quiere es la foto de hoy.
+    """
+    if db.get(Socio, id_socio) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="El socio no existe.")
+
+    consulta = (db.query(AsignacionEntrenador)
+                .filter(AsignacionEntrenador.id_socio == id_socio))
+    if solo_activos:
+        consulta = consulta.filter(AsignacionEntrenador.estado == "ACTIVA")
+
+    asignaciones = consulta.order_by(
+        AsignacionEntrenador.fecha_inicio.desc(),
+        AsignacionEntrenador.id_asignacion_entrenador.desc(),
+    ).all()
+    return [_a_asignacion_out(a) for a in asignaciones]
+
+
+@router.post("/{id_socio}/entrenadores", response_model=AsignacionEntrenadorOut,
+             status_code=status.HTTP_201_CREATED)
+def asignar_entrenador(
+    id_socio: int,
+    datos: AsignarEntrenadorRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.GESTION_RUTINAS)),
+):
+    """
+    Le pone un entrenador a cargo.
+
+    SE PERMITEN VARIOS A LA VEZ, y es la diferencia deliberada con
+    Asignacion_Rutina y Asignacion_Dieta, que admiten una sola activa. Un
+    socio con uno de musculación y otro de funcional es normal, no un error
+    de datos — está documentado en la migración 003 y el índice único de la
+    tabla lo refleja: es por (socio, entrenador, fecha_inicio), no por socio.
+
+    Lo que sí se impide es asignar DOS VECES al mismo entrenador: eso no es
+    "dos entrenadores", es la misma relación duplicada, y después nadie sabría
+    cuál de las dos filas finalizar.
+    """
+    socio = db.get(Socio, id_socio)
+    if socio is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="El socio no existe.")
+    if not socio.activo:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=("Ese socio está dado de baja. Reactivalo antes de "
+                    "asignarle un entrenador."),
+        )
+
+    entrenador = db.get(Entrenador, datos.id_entrenador)
+    if entrenador is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Ese entrenador no existe.")
+    if entrenador.empleado is None or not entrenador.empleado.activo:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=("Ese entrenador ya no trabaja en el gimnasio. "
+                    "Elegí uno activo."),
+        )
+
+    ya = (db.query(AsignacionEntrenador)
+          .filter(AsignacionEntrenador.id_socio == id_socio,
+                  AsignacionEntrenador.id_entrenador == datos.id_entrenador,
+                  AsignacionEntrenador.estado == "ACTIVA")
+          .first())
+    if ya:
+        nombre = (entrenador.empleado.persona.nombre_completo
+                  if entrenador.empleado else "Ese entrenador")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{nombre} ya está a cargo de este socio.",
+        )
+
+    asignacion = AsignacionEntrenador(
+        id_socio=id_socio,
+        id_entrenador=datos.id_entrenador,
+        fecha_inicio=datos.fecha_inicio or date.today(),
+        estado="ACTIVA",
+    )
+    db.add(asignacion)
+    db.commit()
+    db.refresh(asignacion)
+    return _a_asignacion_out(asignacion)
+
+
+@router.post("/entrenadores/asignaciones/{id_asignacion}/finalizar",
+             response_model=AsignacionEntrenadorOut)
+def finalizar_asignacion(
+    id_asignacion: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.GESTION_RUTINAS)),
+):
+    """
+    Termina la relación. NO borra la fila.
+
+    Es el mismo criterio de baja lógica que el resto del sistema: la
+    asignación finalizada queda con su fecha_fin y sigue explicando quién
+    entrenaba a quién en ese período. Borrarla dejaría un hueco en el
+    historial justo donde el historial es el motivo de que la tabla exista.
+
+    La ruta va con el prefijo /entrenadores/asignaciones y no bajo
+    /{id_socio}/... a propósito: el id de la asignación ya identifica al socio,
+    y pedir los dos permitiría mandar una combinación inconsistente.
+    """
+    asignacion = db.get(AsignacionEntrenador, id_asignacion)
+    if asignacion is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Esa asignación no existe.")
+    if asignacion.estado != "ACTIVA":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Esa asignación ya estaba finalizada.")
+
+    asignacion.estado = "FINALIZADA"
+    asignacion.fecha_fin = date.today()
+    db.commit()
+    db.refresh(asignacion)
+    return _a_asignacion_out(asignacion)
+
+
+@router.get("/entrenadores/{id_entrenador}/socios", response_model=list[SocioOut])
+def socios_del_entrenador(
+    id_entrenador: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.SOCIOS)),
+):
+    """
+    A quiénes entrena. Es la vista inversa, y es la que usa el entrenador.
+
+    Existe porque la pregunta que se hace un entrenador al llegar no es "¿quién
+    entrena a Juan?" sino "¿a quiénes tengo yo?". Resolverla desde el otro
+    endpoint obligaría a traerse todos los socios y filtrar en el cliente.
+    """
+    if db.get(Entrenador, id_entrenador) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Ese entrenador no existe.")
+
+    socios = (db.query(Socio)
+              .join(AsignacionEntrenador,
+                    AsignacionEntrenador.id_socio == Socio.id_socio)
+              .filter(AsignacionEntrenador.id_entrenador == id_entrenador,
+                      AsignacionEntrenador.estado == "ACTIVA",
+                      Socio.activo.is_(True))
+              .all())
+    return [_a_socio_out(db, s) for s in socios]

@@ -1530,3 +1530,31 @@ class GeneracionDeudasOut(BaseModel):
     revisadas: int
     monto_total: float
     mensaje: str
+
+
+# =============================================================================
+# ENTRENADOR A CARGO
+# =============================================================================
+
+class AsignarEntrenadorRequest(BaseModel):
+    """
+    `fecha_inicio` en None significa hoy.
+
+    Se permite mandarla para poder cargar una relación que empezó antes —
+    típico al migrar datos o al registrar algo que se acordó la semana pasada.
+    """
+    id_entrenador: int
+    fecha_inicio: date | None = None
+
+
+class AsignacionEntrenadorOut(BaseModel):
+    id_asignacion: int
+    id_socio: int
+    id_entrenador: int
+    entrenador: str
+    especialidad: str | None = None
+    fecha_inicio: date
+    # None mientras sigue entrenándolo. Que exista esta fecha es la razón de
+    # ser de la tabla: con la columna vieja, reasignar borraba al anterior.
+    fecha_fin: date | None = None
+    estado: str

@@ -480,3 +480,20 @@ def cambiar_estado_horario(id_horario: int, activo: bool) -> dict:
 
 def generar_turnos() -> dict:
     return _post("/actividades/turnos/generar")
+
+
+# =============================================================================
+# ENTRENADOR A CARGO
+# =============================================================================
+
+def obtener_entrenadores_de_socio(id_socio: int, solo_activos: bool = False) -> dict:
+    sufijo = "?solo_activos=true" if solo_activos else ""
+    return _get(f"/socios/{id_socio}/entrenadores{sufijo}")
+
+
+def asignar_entrenador(id_socio: int, id_entrenador: int) -> dict:
+    return _post(f"/socios/{id_socio}/entrenadores", {"id_entrenador": id_entrenador})
+
+
+def finalizar_asignacion_entrenador(id_asignacion: int) -> dict:
+    return _post(f"/socios/entrenadores/asignaciones/{id_asignacion}/finalizar")

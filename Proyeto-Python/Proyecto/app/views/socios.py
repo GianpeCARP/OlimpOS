@@ -3,7 +3,7 @@
 # =============================================================================
 
 import flet as ft
-from app.config import Colors, Routes         # Paleta de colores y rutas
+from app.config import Colors, Radius, Routes  # Paleta, radios y rutas
 from app.state import app_state               # Estado global con los datos de socios
 # Componentes reutilizables del sistema de diseño
 from app.components.ui import (build_topbar, status_badge, primary_button,
@@ -245,6 +245,9 @@ class SociosView:
                 ft.Row([
                     ft.IconButton(ft.Icons.EDIT_ROUNDED, icon_color=Colors.INFO, icon_size=18, tooltip="Editar",
                                   on_click=lambda e, x=s: self._open_form(e, x)),
+                    ft.IconButton(ft.Icons.FITNESS_CENTER_ROUNDED, icon_color=Colors.PRIMARY_VOLT,
+                                  icon_size=18, tooltip="Entrenadores a cargo",
+                                  on_click=lambda e, x=s: self._entrenadores(x)),
                     # Baja o reactivación según cómo esté. El botón de "eliminar"
                     # que había acá prometía algo que el sistema no hace: la baja
                     # es LÓGICA —la fila queda, con su historial de pagos y
@@ -538,3 +541,144 @@ class SociosView:
                    Colors.SUCCESS if resultado["ok"] else Colors.STATUS_DANGER)
         if resultado["ok"]:
             self.router.navigate(Routes.SOCIOS)
+
+
+    # ── Entrenadores a cargo ──────────────────────────────────────────────────
+
+    def _entrenadores(self, socio: dict):
+        """
+        Quién entrena a este socio.
+
+        Se permiten VARIOS a la vez, y por eso el diálogo es una lista con un
+        selector abajo y no un simple desplegable: un socio con uno de
+        musculación y otro de funcional es normal, no un error de datos. Es la
+        diferencia deliberada con las rutinas y las dietas, que admiten una
+        sola activa.
+
+        Se muestran también las FINALIZADAS, en gris. Ese historial es el
+        motivo por el que esto es una tabla y no la columna que había antes:
+        reasignar borraba al anterior y nadie podía responder quién lo
+        entrenaba en marzo.
+        """
+        asignaciones = app_state.get_entrenadores_de_socio(socio["id"])
+        disponibles = app_state.get_entrenadores()
+
+        # Los que ya están a cargo no se vuelven a ofrecer: el backend lo
+        # rechaza con un 409 y hacerle elegir algo que va a fallar es hacerle
+        # perder el tiempo.
+        activos = {a["id_entrenador"] for a in asignaciones if a["activa"]}
+        elegibles = [e for e in disponibles if e["id"] not in activos]
+
+        sel_ref = ft.Ref[ft.Dropdown]()
+
+        def asignar(e=None):
+            if not sel_ref.current or not sel_ref.current.value:
+                return
+            self._resolver_dialogo(
+                app_state.asignar_entrenador(socio["id"], int(sel_ref.current.value)),
+                dlg, socio)
+
+        def finalizar(id_asignacion):
+            self._resolver_dialogo(
+                app_state.finalizar_entrenador(id_asignacion), dlg, socio)
+
+        filas = []
+        for a in asignaciones:
+            color = Colors.TEXT_PRIMARY if a["activa"] else Colors.TEXT_MUTED
+            periodo = f"desde {a['desde']}" if a["activa"] else f"{a['desde']} — {a['hasta']}"
+            filas.append(ft.Row([
+                ft.Icon(ft.Icons.FITNESS_CENTER_ROUNDED,
+                        color=Colors.PRIMARY_VOLT if a["activa"] else Colors.TEXT_MUTED,
+                        size=16),
+                ft.Column([
+                    ft.Text(a["entrenador"], color=color, size=13),
+                    ft.Text(f"{a['especialidad']} · {periodo}",
+                            color=Colors.TEXT_MUTED, size=11),
+                ], spacing=0, tight=True, expand=True),
+                *([ft.IconButton(
+                    ft.Icons.CLOSE_ROUNDED, icon_color=Colors.TEXT_MUTED, icon_size=16,
+                    tooltip="Terminar la relación (queda en el historial)",
+                    on_click=lambda e, i=a["id"]: finalizar(i),
+                )] if a["activa"] else [
+                    ft.Text("finalizada", color=Colors.TEXT_MUTED, size=11)
+                ]),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+
+        if not asignaciones:
+            filas.append(ft.Text("Todavía no tiene ningún entrenador asignado.",
+                                 color=Colors.TEXT_MUTED, size=12))
+
+        contenido = [
+            ft.Text("Puede tener más de uno a la vez —por ejemplo, uno de "
+                    "musculación y otro de funcional—.",
+                    color=Colors.TEXT_MUTED, size=11),
+            ft.Container(height=12),
+            *filas,
+            ft.Container(height=12),
+        ]
+
+        if elegibles:
+            contenido += [
+                ft.Divider(height=1, color=Colors.BORDER),
+                ft.Container(height=12),
+                ft.Row([
+                    ft.Container(
+                        content=ft.Dropdown(
+                            ref=sel_ref, label="Asignar entrenador",
+                            options=[ft.dropdown.Option(key=str(x["id"]), text=x["nombre"])
+                                     for x in elegibles],
+                            value=str(elegibles[0]["id"]),
+                            color=Colors.TEXT_PRIMARY, bgcolor=Colors.BG_INPUT,
+                            border_color=Colors.BORDER,
+                            focused_border_color=Colors.ACCENT,
+                            border_radius=Radius.MD,
+                        ),
+                        expand=True,
+                    ),
+                    ft.Container(width=8),
+                    ft.TextButton("Asignar",
+                                  style=ft.ButtonStyle(color=Colors.ACCENT),
+                                  on_click=asignar),
+                ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            ]
+        elif disponibles:
+            contenido.append(ft.Text("Ya tiene a cargo a todos los entrenadores "
+                                     "disponibles.", color=Colors.TEXT_MUTED, size=11))
+        else:
+            contenido.append(ft.Text("No hay entrenadores activos cargados.",
+                                     color=Colors.STATUS_WARN, size=11))
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f"Entrenadores de {socio['nombre']}",
+                          color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
+            bgcolor=Colors.BG_CARD,
+            content=ft.Container(
+                width=440,
+                content=ft.Column(contenido, spacing=8, tight=True,
+                                  scroll=ft.ScrollMode.AUTO),
+            ),
+            actions=[
+                ft.TextButton("Cerrar",
+                              style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                              on_click=lambda e: close_dialog(self.page, dlg)),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        open_dialog(self.page, dlg)
+
+    def _resolver_dialogo(self, resultado: dict, dlg, socio: dict):
+        """
+        Muestra el resultado y VUELVE A ABRIR el diálogo con los datos frescos.
+
+        Reabrirlo en vez de cerrarlo es deliberado: asignar entrenadores es una
+        tarea que se hace de a varios —se le ponen dos, se le saca uno— y
+        cerrar la ventana en cada paso obligaría a volver a buscar al socio en
+        la grilla cada vez.
+        """
+        if not resultado["ok"]:
+            show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+            return
+        close_dialog(self.page, dlg)
+        show_snack(self.page, resultado["mensaje"], Colors.SUCCESS)
+        self._entrenadores(socio)

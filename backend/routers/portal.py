@@ -47,11 +47,11 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import (
-    Actividad, AsignacionDieta, AsignacionRutina, Asistencia, Baja, Congelamiento, Deuda, InscripcionActividad, Membresia, Pago, Persona, RegistroSalud, Reserva, Socio, Telefono, Turno,
+    Actividad, AsignacionDieta, AsignacionEntrenador, AsignacionRutina, Asistencia, Baja, Congelamiento, Deuda, InscripcionActividad, Membresia, Pago, Persona, RegistroSalud, Reserva, Socio, Telefono, Turno,
 )
 from permisos import Seccion
 from schemas import (
-    ActividadOut, AsignacionDietaOut, AsignacionRutinaOut, AsistenciaOut, BajaPropiaRequest, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, CongelamientoOut, CongelarRequest, DietaOut, InscripcionOut, MedicionCrear, MedicionOut, MensajeResponse, MiComidaOut, MiCuotaOut, MiDeudaOut, MiDiaDeDietaOut, MiDietaOut, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRutinaOut, PagoOut, ReservaOut, RutinaOut, TurnoDisponibleOut,
+    ActividadOut, AsignacionDietaOut, AsignacionEntrenadorOut, AsignacionRutinaOut, AsistenciaOut, BajaPropiaRequest, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, CongelamientoOut, CongelarRequest, DietaOut, InscripcionOut, MedicionCrear, MedicionOut, MensajeResponse, MiComidaOut, MiCuotaOut, MiDeudaOut, MiDiaDeDietaOut, MiDietaOut, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRutinaOut, PagoOut, ReservaOut, RutinaOut, TurnoDisponibleOut,
 )
 from notificaciones import notificar_promocion_lista_espera
 from turnos import ocupacion, promover_de_lista_de_espera
@@ -1544,3 +1544,32 @@ def cancelar_mi_inscripcion(
     except HTTPException as e:
         raise _traducir_error(e, nombre) from e
     return salida
+
+
+@router.get("/mi-entrenador", response_model=list[AsignacionEntrenadorOut])
+def mis_entrenadores(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_RUTINA)),
+):
+    """
+    Quién lo entrena. Sólo los vigentes.
+
+    A diferencia del endpoint del personal, acá NO se devuelve el historial: al
+    socio le interesa a quién preguntarle hoy, no quién lo entrenaba en marzo.
+    Ese dato es del gimnasio —sirve para auditar y para que un entrenador
+    nuevo se ponga al día— y no aporta nada en la app de quien entrena.
+
+    Va bajo la sección MI_RUTINA y no una propia: el entrenador a cargo es
+    parte de la misma pregunta que "cuál es mi rutina", y crear una sección
+    sólo para esto obligaría a sumarla a las tres copias de la matriz de
+    permisos para una pantalla que no existe.
+    """
+    socio = _mi_socio(db, sesion)
+    from routers.socios import _a_asignacion_out
+
+    asignaciones = (db.query(AsignacionEntrenador)
+                    .filter(AsignacionEntrenador.id_socio == socio.id_socio,
+                            AsignacionEntrenador.estado == "ACTIVA")
+                    .order_by(AsignacionEntrenador.fecha_inicio)
+                    .all())
+    return [_a_asignacion_out(a) for a in asignaciones]

@@ -1100,6 +1100,45 @@ class AppState:
             return {"ok": False, "mensaje": respuesta.get("error", "No se pudieron generar.")}
         return {"ok": True, "mensaje": respuesta["data"].get("mensaje", "Listo.")}
 
+    # ── Entrenador a cargo ────────────────────────────────────────────────────
+    #
+    # Un socio puede tener VARIOS a la vez —uno de musculación y otro de
+    # funcional— y eso es normal, no un error de datos. Es la diferencia con
+    # las rutinas y las dietas, que admiten una sola activa.
+
+    def get_entrenadores_de_socio(self, id_socio: int) -> list[dict]:
+        """
+        Sus entrenadores, con historial.
+
+        Se traen TODOS y no sólo los activos: el historial es el motivo por el
+        que esto es una tabla y no una columna. Con la columna vieja,
+        reasignar borraba al anterior y nadie podía responder quién lo
+        entrenaba antes.
+        """
+        datos = self._datos(api_client.obtener_entrenadores_de_socio(id_socio), [])
+        return [
+            {
+                "id": a["id_asignacion"],
+                "id_entrenador": a["id_entrenador"],
+                "entrenador": a.get("entrenador", "—"),
+                "especialidad": a.get("especialidad") or "—",
+                "desde": self._fecha(a.get("fecha_inicio")),
+                "hasta": self._fecha(a.get("fecha_fin")) if a.get("fecha_fin") else None,
+                "activa": a.get("estado") == "ACTIVA",
+            }
+            for a in datos
+        ]
+
+    def asignar_entrenador(self, id_socio: int, id_entrenador: int) -> dict:
+        return self._resultado(api_client.asignar_entrenador(id_socio, id_entrenador),
+                                "Entrenador asignado.")
+
+    def finalizar_entrenador(self, id_asignacion: int) -> dict:
+        return self._resultado(
+            api_client.finalizar_asignacion_entrenador(id_asignacion),
+            "Listo. La asignación queda en el historial, no se borra.",
+        )
+
 
 # ── Instancia global única ─────────────────────────────────────────────────────
 # Se crea una sola instancia de AppState al importar este módulo (Singleton).
