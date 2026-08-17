@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, Banknote, CalendarClock, CreditCard, Info } from 'lucide-react';
+import {
+  AlertTriangle,
+  Banknote,
+  CalendarClock,
+  CreditCard,
+  Info,
+  LogOut,
+  Pause,
+  Play,
+} from 'lucide-react';
 import {
   PrimaryButton,
   SectionCard,
@@ -9,8 +18,18 @@ import {
 } from '../../components/ui';
 import { colors } from '../../config';
 import { mensajeDeError } from '../../services/api';
-import { getMiCuota, type MiCuota } from '../../services/socioService';
+import {
+  congelarMiMembresia,
+  darmeDeBaja,
+  getMiCuota,
+  getMisCongelamientos,
+  reanudarMiMembresia,
+  type Congelamiento,
+  type MiCuota,
+} from '../../services/socioService';
 import { useAuthStore } from '../../store/authStore';
+import { useUiStore } from '../../store/uiStore';
+import { InputField } from '../../components/ui';
 // formatearFecha (con año cuando no es el año en curso) y no
 // formatearFechaCorta: una membresía anual arranca y vence el mismo día de
 // meses distintos, y sin el año las dos fechas se leían idénticas.
@@ -18,13 +37,23 @@ import { formatearFecha, formatearMoneda } from '../../utils/format';
 import { parsearFecha } from '../../utils/fechas';
 import { SinSocioEnSesion } from './SinSocioEnSesion';
 
-// Vista 5 del portal (docs/prompt_portal_socio.md). SOLO LECTURA, y acá la
-// restricción es de negocio, no de comodidad: **no hay botón de pago**.
+// Vista 5 del portal (docs/prompt_portal_socio.md).
 //
-// Cobrar es de recepción (DFD 2.3: el socio consulta, el dueño modifica).
-// El socio ve lo que debe y con eso va al mostrador. No es una limitación
-// que haya que disculpar en la interfaz — se dice derecho: "acercate a
-// recepción".
+// ESTA VISTA YA NO ES SOLO LECTURA, y el cambio merece explicación porque
+// contradice la nota que estaba acá antes.
+//
+// Decía: "cobrar es de recepción (DFD 2.3: el socio consulta, el dueño
+// modifica); el socio ve lo que debe y con eso va al mostrador". Era fiel al
+// DFD original, pero el dueño del proyecto cambió el criterio: el socio tiene
+// que poder manejarse solo en todo aspecto y pasar por recepción únicamente
+// si es muy necesario, más allá del primer registro.
+//
+// Lo que se agregó acá es la autogestión de la MEMBRESÍA: pausarla por un
+// viaje o una lesión, reanudarla, y darse de baja. Son cosas que antes
+// requerían ir al mostrador a pedirle a otra persona que las hiciera.
+//
+// El botón de PAGAR sigue sin estar, pero ya no por la razón de antes: falta
+// la integración con Mercado Pago. Cuando exista, va acá.
 //
 // Reutiliza StatCard, StatusBadge y SectionCard.
 
@@ -67,9 +96,11 @@ export function MiCuotaView() {
     let cancelado = false;
     setCuota(null);
     setError(null);
-    getMiCuota()
-      .then((datos) => {
-        if (!cancelado) setCuota(datos);
+    Promise.all([getMiCuota(), getMisCongelamientos()])
+      .then(([datos, pausas]) => {
+        if (cancelado) return;
+        setCuota(datos);
+        setCongelamientos(pausas);
       })
       .catch((err: unknown) => {
         if (!cancelado) setError(mensajeDeError(err));
@@ -79,7 +110,68 @@ export function MiCuotaView() {
     };
   }, [idSocio, intento]);
 
+  // ── Autogestión de la membresía ────────────────────────────────────────
+  const showSnack = useUiStore((s) => s.showSnack);
+  const confirmDialog = useUiStore((s) => s.confirmDialog);
+  const [congelamientos, setCongelamientos] = useState<Congelamiento[]>([]);
+  const [hastaCuando, setHastaCuando] = useState('');
+  const [motivoPausa, setMotivoPausa] = useState('');
+  const [procesando, setProcesando] = useState(false);
+
   const recargar = useCallback(() => setIntento((n) => n + 1), []);
+
+  const pausaActiva = congelamientos.find((c) => c.estado === 'ACTIVO') ?? null;
+
+  const congelar = useCallback(() => {
+    if (!hastaCuando) {
+      showSnack('Elegí hasta cuándo querés pausarla', colors.statusWarn);
+      return;
+    }
+    setProcesando(true);
+    congelarMiMembresia(hastaCuando, motivoPausa || undefined)
+      .then(() => {
+        showSnack('Listo, tu membresía quedó en pausa', colors.statusOk);
+        setHastaCuando('');
+        setMotivoPausa('');
+        recargar();
+      })
+      .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger))
+      .finally(() => setProcesando(false));
+  }, [hastaCuando, motivoPausa, showSnack, recargar]);
+
+  const reanudar = useCallback(() => {
+    setProcesando(true);
+    reanudarMiMembresia()
+      .then((c) => {
+        // El mensaje lo arma el backend porque incluye cuántos días se
+        // sumaron, y ese número lo calcula él: son los días que REALMENTE
+        // estuvo pausada, no los que pidió. Rearmarlo acá significaría
+        // repetir esa cuenta en el cliente y arriesgar que diga otra cosa.
+        showSnack(c.mensaje ?? 'Tu membresía vuelve a estar activa', colors.statusOk);
+        recargar();
+      })
+      .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger))
+      .finally(() => setProcesando(false));
+  }, [showSnack, recargar]);
+
+  const darDeBaja = useCallback(() => {
+    confirmDialog(
+      'Darte de baja',
+      'Se cancela tu membresía y las clases que tengas reservadas. ' +
+        'Tu cuenta sigue activa: vas a poder entrar cuando quieras a ver tu ' +
+        'historial, y si volvés no hace falta que te den de alta de nuevo.',
+      () => {
+        setProcesando(true);
+        darmeDeBaja()
+          .then(({ mensaje }) => {
+            showSnack(mensaje, colors.statusOk);
+            recargar();
+          })
+          .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger))
+          .finally(() => setProcesando(false));
+      },
+    );
+  }, [confirmDialog, showSnack, recargar]);
 
   if (idSocio === null) {
     return <SinSocioEnSesion titulo="Mi cuota" />;
@@ -237,11 +329,126 @@ export function MiCuotaView() {
                 <div className="mt-4 flex items-start gap-3 border-t border-border-idle pt-4">
                   <Info size={16} className="mt-0.5 shrink-0 text-text-muted" />
                   <p className="font-body text-sm text-text-secondary">
-                    Estás al día, no tenés nada pendiente. Para renovar o cambiar de plan,
-                    acercate a recepción.
+                    Estás al día, no tenés nada pendiente. Para cambiar de plan, acercate
+                    a recepción.
                   </p>
                 </div>
               )}
+            </SectionCard>
+
+            {/* ── Autogestión ──────────────────────────────────────────────
+                Pausar y darse de baja sin pedirle a nadie que lo haga.
+
+                La tarjeta cambia entera según si hay una pausa activa: no
+                tiene sentido ofrecer "pausar" a alguien que ya está pausado,
+                ni "reanudar" a quien no lo está. Mostrar los dos botones
+                siempre y deshabilitar uno obliga a leer para entender cuál
+                aplica. */}
+            <SectionCard title="Tu membresía, a tu manera">
+              {pausaActiva ? (
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3 rounded-lg border border-status-warn/40 bg-status-warn/10 p-3">
+                    <Pause size={16} className="mt-0.5 shrink-0 text-status-warn" />
+                    <div>
+                      <p className="font-body text-sm text-text-main">
+                        Tu membresía está en pausa
+                        {pausaActiva.motivo ? ` (${pausaActiva.motivo})` : ''}.
+                      </p>
+                      <p className="font-body text-xs text-text-secondary">
+                        Pediste hasta el{' '}
+                        {formatearFecha(parsearFecha(pausaActiva.fechaFin))}, pero podés
+                        volver cuando quieras: sólo se te suman al vencimiento los días
+                        que realmente estuviste afuera.
+                      </p>
+                    </div>
+                  </div>
+                  <PrimaryButton
+                    label={procesando ? 'Un momento...' : 'Volver a activarla'}
+                    icon={Play}
+                    disabled={procesando}
+                    onClick={reanudar}
+                  />
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3">
+                    <Pause size={16} className="mt-0.5 shrink-0 text-text-muted" />
+                    <p className="font-body text-sm text-text-secondary">
+                      ¿Te vas de viaje o estás lesionado? Pausá la cuota y no perdés los
+                      días que pagaste: se te suman al vencimiento cuando volvés.
+                      La pausa mínima es de 7 días.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <InputField
+                      label="Hasta cuándo"
+                      type="date"
+                      value={hastaCuando}
+                      onChange={setHastaCuando}
+                    />
+                    <InputField
+                      label="Motivo (opcional)"
+                      hint="Ej: viaje"
+                      value={motivoPausa}
+                      onChange={setMotivoPausa}
+                    />
+                  </div>
+                  <PrimaryButton
+                    label={procesando ? 'Un momento...' : 'Pausar mi membresía'}
+                    icon={Pause}
+                    disabled={procesando}
+                    onClick={congelar}
+                  />
+                </div>
+              )}
+
+              {/* Las pausas ya usadas. Importa mostrarlas porque hay un tope
+                  anual: sin el historial, el socio se entera de que se quedó
+                  sin días recién cuando el backend le rechaza el pedido. */}
+              {congelamientos.some((c) => c.estado === 'FINALIZADO') && (
+                <div className="mt-4 border-t border-border-idle pt-4">
+                  <p className="mb-2 font-body text-xs uppercase tracking-wide text-text-muted">
+                    Pausas anteriores
+                  </p>
+                  <div className="space-y-1">
+                    {congelamientos
+                      .filter((c) => c.estado === 'FINALIZADO')
+                      .map((c) => (
+                        <p
+                          key={c.idCongelamiento}
+                          className="font-body text-xs text-text-secondary"
+                        >
+                          {formatearFecha(parsearFecha(c.fechaInicio))} —{' '}
+                          {c.diasAplicados ?? 0} día
+                          {(c.diasAplicados ?? 0) === 1 ? '' : 's'}
+                          {c.motivo ? ` · ${c.motivo}` : ''}
+                        </p>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              {/* La baja va al final y separada: es la acción más
+                  irreversible de la pantalla y no tiene por qué competir
+                  visualmente con pausar, que es lo que la mayoría busca. */}
+              <div className="mt-4 border-t border-border-idle pt-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="font-body text-xs text-text-muted">
+                    ¿Ya no querés seguir? Podés darte de baja. Tu cuenta y tu historial
+                    quedan igual, y si volvés no hace falta que te den de alta de nuevo.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={procesando}
+                    onClick={darDeBaja}
+                    className="flex items-center gap-2 rounded-lg border px-3 py-2 font-body text-sm transition-opacity disabled:opacity-50"
+                    style={{ borderColor: colors.statusDanger, color: colors.statusDanger }}
+                  >
+                    <LogOut size={14} />
+                    Darme de baja
+                  </button>
+                </div>
+              </div>
             </SectionCard>
 
             <SectionCard title="Historial de pagos">

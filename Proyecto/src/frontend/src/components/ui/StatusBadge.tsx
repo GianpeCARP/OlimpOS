@@ -17,6 +17,7 @@ const STATUS_COLORS: Record<string, string> = {
   [EstadoSocio.POR_VENCER]: colors.statusWarn,
   [EstadoSocio.VENCIDO]: colors.statusDanger,
   [EstadoSocio.SUSPENDIDO]: colors.statusWarn,
+  [EstadoSocio.EN_PAUSA]: colors.statusWarn,
   [EstadoSocio.DE_BAJA]: colors.statusDanger,
   // EstadoEmpleado.ACTIVO es el mismo literal 'Activo' que EstadoSocio.ACTIVO
   // — una sola entrada cubre a los dos, no hace falta repetirla.

@@ -116,6 +116,14 @@ def _resumen_membresia(membresia) -> tuple[str, str, date | None]:
     plan = membresia.tipo.nombre if membresia.tipo else "Sin plan"
     vence = membresia.fecha_vencimiento
 
+    # La pausa gana sobre el cálculo de días, y tiene que decirlo ANTES de
+    # mirar el vencimiento: mientras está congelada el reloj no corre, así
+    # que "faltan 90 días" o "por vencer" serían igual de engañosos. Sin
+    # esto, Mi perfil decía "Activo" mientras Mi cuota decía "En pausa" —
+    # dos pantallas del mismo socio contándole cosas distintas.
+    if membresia.estado == "SUSPENDIDA":
+        return plan, "En pausa", vence
+
     if vence is None:
         return plan, "Activo", None
 
@@ -149,9 +157,14 @@ def mi_perfil(
         .first()
     )
 
+    # ACTIVA o SUSPENDIDA. Congelar deja la membresía en SUSPENDIDA para que
+    # el fichaje y las reservas la rechacen, pero sigue siendo su membresía:
+    # buscando sólo la ACTIVA, alguien que pausó su cuota veía su perfil como
+    # si no tuviera ninguna.
     membresia = (
         db.query(Membresia)
-        .filter(Membresia.id_socio == socio.id_socio, Membresia.estado == "ACTIVA")
+        .filter(Membresia.id_socio == socio.id_socio,
+                Membresia.estado.in_(["ACTIVA", "SUSPENDIDA"]))
         .order_by(Membresia.fecha_vencimiento.desc())
         .first()
     )
@@ -367,7 +380,14 @@ def mi_cuota(
 
     membresia = (
         db.query(Membresia)
-        .filter(Membresia.id_socio == socio.id_socio, Membresia.estado == "ACTIVA")
+        # ACTIVA o SUSPENDIDA. Incluir la suspendida NO es un descuido:
+        # congelar la deja en SUSPENDIDA para que el fichaje y las reservas la
+        # rechacen, pero para ESTA pantalla sigue existiendo. Buscando sólo la
+        # ACTIVA, un socio que pausaba su cuota abría "Mi cuota" y leía "Sin
+        # membresía" con el vencimiento en blanco — como si no tuviera nada,
+        # en vez de como si estuviera de pausa.
+        .filter(Membresia.id_socio == socio.id_socio,
+                Membresia.estado.in_(["ACTIVA", "SUSPENDIDA"]))
         .order_by(Membresia.fecha_vencimiento.desc())
         .first()
     )
@@ -403,6 +423,11 @@ def mi_cuota(
     # que la píldora no derive la regla por su cuenta.
     if membresia is None:
         estado = "Sin membresía"
+    elif membresia.estado == "SUSPENDIDA":
+        # Gana sobre el cálculo de días: mientras está en pausa, cuántos días
+        # faltan para el vencimiento es información engañosa — el reloj no
+        # está corriendo. Lo que importa es que está pausada.
+        estado = "En pausa"
     elif dias is None:
         estado = "Activo"
     elif dias < 0:
@@ -793,9 +818,20 @@ def reservar_mi_turno(
                  .order_by(Membresia.fecha_vencimiento.desc())
                  .first())
     if membresia is None:
+        # Distinguir "no tiene" de "está en pausa" no es cosmético: decirle
+        # "renovala" a alguien que congeló su cuota lo haría PAGAR DE NUEVO
+        # una membresía que ya tiene. Lo que necesita es reanudarla, y es
+        # gratis.
+        pausada = (db.query(Membresia)
+                   .filter(Membresia.id_socio == socio.id_socio,
+                           Membresia.estado == "SUSPENDIDA")
+                   .first())
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail="No tenés una membresía activa. Renovala para poder reservar.",
+            detail=("Tu membresía está en pausa. Reanudala desde Mi cuota para "
+                    "poder reservar — no hace falta que pagues de nuevo."
+                    if pausada else
+                    "No tenés una membresía activa. Renovala para poder reservar."),
         )
     if membresia.fecha_vencimiento and membresia.fecha_vencimiento < turno.fecha:
         raise HTTPException(

@@ -596,6 +596,11 @@ export const EstadoSocio = {
   POR_VENCER: 'Por vencer',
   VENCIDO: 'Vencido',
   SUSPENDIDO: 'Suspendido',
+  // Distinto de SUSPENDIDO aunque en la base los dos sean estado
+  // 'SUSPENDIDA'. Quien suspende es el gimnasio; quien pausa es el socio, por
+  // un viaje o una lesión. "Suspendido" se lee como un castigo y el socio que
+  // pausó su cuota por dos semanas de vacaciones no merece esa palabra.
+  EN_PAUSA: 'En pausa',
   SIN_MEMBRESIA: 'Sin membresía',
   DE_BAJA: 'Dado de baja',
 } as const;

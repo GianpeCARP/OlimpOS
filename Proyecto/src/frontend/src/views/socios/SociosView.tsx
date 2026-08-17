@@ -40,7 +40,11 @@ const PRIORIDAD_ESTADO: Record<EstadoSocioValue, number> = {
   [EstadoSocio.POR_VENCER]: 2,
   [EstadoSocio.SIN_MEMBRESIA]: 3,
   [EstadoSocio.ACTIVO]: 4,
-  [EstadoSocio.DE_BAJA]: 5,
+  // Abajo de ACTIVO a propósito: una pausa la pidió el socio, así que no
+  // requiere que el staff haga nada. Va cerca del final justamente porque
+  // esta lista ordena por "qué necesita acción", no por gravedad.
+  [EstadoSocio.EN_PAUSA]: 5,
+  [EstadoSocio.DE_BAJA]: 6,
 };
 
 function coincideFiltro(estado: EstadoSocioValue, filtro: FiltroEstado): boolean {
