@@ -242,6 +242,20 @@ def asignar_dieta(
         anterior.estado = "FINALIZADA"
         anterior.fecha_fin = hoy
 
+    # El flush NO es opcional desde la migración 009.
+    #
+    # Esa migración agregó un índice único parcial que impide dos asignaciones
+    # ACTIVA por socio. Un índice parcial no puede ser DEFERRABLE en Postgres,
+    # así que se evalúa al terminar cada sentencia — y SQLAlchemy ordena su
+    # flush poniendo los INSERT ANTES que los UPDATE. Sin esto, la fila nueva
+    # entraría mientras la anterior sigue ACTIVA y la base rechazaría una
+    # reasignación que es perfectamente válida.
+    #
+    # Es el mismo tipo de detalle que ya mordió en promover_de_lista_de_espera:
+    # la sesión tiene autoflush=False, así que nada llega a la base hasta que
+    # se lo pide explícitamente.
+    db.flush()
+
     asignacion = AsignacionDieta(
         id_socio=socio.id_socio,
         id_dieta=id_dieta,

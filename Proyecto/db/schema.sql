@@ -531,6 +531,28 @@ CREATE INDEX ON "Comida" ("id_dieta", "dia");
 
 CREATE INDEX ON "Asignacion_Dieta" ("id_socio", "estado");
 
+-- Una sola rutina y una sola dieta VIGENTES por socio. El WHERE es lo que
+-- hace que funcione: sin el, un socio no podria tener mas de una asignacion
+-- en toda su vida. Lo que se prohibe son dos a la VEZ, no dos a lo largo del
+-- tiempo — el historial es el motivo por el que estas tablas existen.
+--
+-- Asignacion_Entrenador NO lleva este indice a proposito: ahi varios a la vez
+-- es lo correcto (uno de musculacion y otro de funcional). Ver migracion 009.
+--
+-- OJO: un indice unico PARCIAL no puede ser DEFERRABLE, asi que se evalua al
+-- terminar cada sentencia. El endpoint que reasigna tiene que hacer flush del
+-- UPDATE que finaliza la anterior ANTES de insertar la nueva.
+CREATE UNIQUE INDEX asignacion_rutina_una_activa_uidx
+  ON "Asignacion_Rutina" ("id_socio") WHERE "estado" = 'ACTIVA';
+
+CREATE UNIQUE INDEX asignacion_dieta_una_activa_uidx
+  ON "Asignacion_Dieta" ("id_socio") WHERE "estado" = 'ACTIVA';
+
+-- El que le faltaba a Dieta, para que las tres asignaciones se comporten
+-- igual en lo que si comparten: no repetir el mismo item el mismo dia.
+CREATE UNIQUE INDEX asignacion_dieta_socio_dieta_fecha_uidx
+  ON "Asignacion_Dieta" ("id_socio", "id_dieta", "fecha_inicio");
+
 CREATE INDEX ON "Inscripcion_Actividad" ("id_socio", "estado");
 
 -- Reemplaza el unique viejo ("un Turno = un día"): ahora un mismo día/sede
