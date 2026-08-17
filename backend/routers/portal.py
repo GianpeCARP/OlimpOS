@@ -47,11 +47,11 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import (
-    Actividad, AsignacionDieta, AsignacionRutina, Asistencia, Baja, Congelamiento, Deuda, Membresia, Pago, Persona, RegistroSalud, Reserva, Socio, Telefono, Turno,
+    Actividad, AsignacionDieta, AsignacionRutina, Asistencia, Baja, Congelamiento, Deuda, InscripcionActividad, Membresia, Pago, Persona, RegistroSalud, Reserva, Socio, Telefono, Turno,
 )
 from permisos import Seccion
 from schemas import (
-    ActividadOut, AsignacionDietaOut, AsignacionRutinaOut, AsistenciaOut, BajaPropiaRequest, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, CongelamientoOut, CongelarRequest, DietaOut, MedicionCrear, MedicionOut, MensajeResponse, MiComidaOut, MiCuotaOut, MiDeudaOut, MiDiaDeDietaOut, MiDietaOut, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRutinaOut, PagoOut, ReservaOut, RutinaOut, TurnoDisponibleOut,
+    ActividadOut, AsignacionDietaOut, AsignacionRutinaOut, AsistenciaOut, BajaPropiaRequest, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, CongelamientoOut, CongelarRequest, DietaOut, InscripcionOut, MedicionCrear, MedicionOut, MensajeResponse, MiComidaOut, MiCuotaOut, MiDeudaOut, MiDiaDeDietaOut, MiDietaOut, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRutinaOut, PagoOut, ReservaOut, RutinaOut, TurnoDisponibleOut,
 )
 from notificaciones import notificar_promocion_lista_espera
 from turnos import ocupacion, promover_de_lista_de_espera
@@ -1441,3 +1441,59 @@ def darme_de_baja(
         "cuando quieras a ver tu historial, y si volvés no hace falta que "
         "te den de alta de nuevo."
     ))
+
+
+@router.get("/mis-actividades/inscripciones", response_model=list[InscripcionOut])
+def mis_inscripciones(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MIS_ACTIVIDADES)),
+):
+    """
+    Los abonos que el socio compró, vigentes y vencidos.
+
+    El equivalente del personal —/actividades/inscripciones/socio/{id}— recibe
+    el id en la URL y está protegido con permisos de mostrador. Con ese, un
+    socio veía 403; y si el permiso se aflojara, cambiar el número de la URL
+    le mostraría los abonos de cualquier otro.
+    """
+    socio = _mi_socio(db, sesion)
+    from routers.actividades import _a_inscripcion_out
+
+    inscripciones = (db.query(InscripcionActividad)
+                     .filter(InscripcionActividad.id_socio == socio.id_socio)
+                     .order_by(InscripcionActividad.id_inscripcion.desc())
+                     .all())
+    return [_a_inscripcion_out(i) for i in inscripciones]
+
+
+@router.post("/mis-actividades/inscripciones/{id_inscripcion}/cancelar",
+             response_model=InscripcionOut)
+def cancelar_mi_inscripcion(
+    id_inscripcion: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MIS_ACTIVIDADES)),
+):
+    """
+    Da de baja un abono propio.
+
+    Se verifica que la inscripción SEA SUYA antes de delegar, y si no lo es
+    responde 404 y no 403: un 403 confirmaría que existe y es de otro. Es la
+    misma regla que en cancelar un turno.
+    """
+    inscripcion = db.get(InscripcionActividad, id_inscripcion)
+    if inscripcion is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Ese abono no existe.")
+
+    socio = _mi_socio(db, sesion)
+    if inscripcion.id_socio != socio.id_socio:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Ese abono no existe.")
+
+    from routers.actividades import cancelar_inscripcion
+    nombre = socio.persona.nombre_completo
+    try:
+        salida = cancelar_inscripcion(id_inscripcion=id_inscripcion, db=db, sesion=sesion)
+    except HTTPException as e:
+        raise _traducir_error(e, nombre) from e
+    return salida

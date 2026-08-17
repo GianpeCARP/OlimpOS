@@ -18,6 +18,12 @@
 
 import type { EstadoSocioValue, NivelRutinaValue } from '../config';
 import { pedir } from './api';
+import type {
+  ActividadListada,
+  InscripcionListada,
+  PlanActividadListado,
+  TurnoDisponible,
+} from './actividadService';
 
 // =========================================================================
 // MI PERFIL
@@ -554,4 +560,318 @@ export async function getMisAsistencias(): Promise<AsistenciaListada[]> {
     fechaHoraIngreso: a.fecha_hora_ingreso,
     fechaHoraEgreso: a.fecha_hora_egreso ?? undefined,
   }));
+}
+
+// =============================================================================
+// AUTOGESTIÓN — lo que el socio hace solo
+// =============================================================================
+//
+// Todo lo de acá abajo apunta a `/portal/mi-*`, donde el backend saca el
+// id_socio del TOKEN FIRMADO y no del cuerpo del pedido.
+//
+// No es un detalle de estilo. Las vistas del socio venían llamando a los
+// endpoints del personal (`/actividades/planes/{id}/comprar`) mandando
+// `id_socio` en el cuerpo, y eso hoy devuelve 403 para cualquier socio: esas
+// rutas están protegidas con acciones que sólo tiene el mostrador. O sea que
+// la sección de Actividades del socio no funcionaba — no le faltaba una
+// función, devolvía 403 en las cuatro llamadas.
+//
+// Y aunque el permiso se hubiera aflojado, mandar el id en el cuerpo es el
+// vector que documentó la auditoría del 2026-08-03: un socio cambiando ese
+// número compraba, cancelaba o cobraba a nombre de otro.
+
+/** Los métodos que acepta el backend (enum del esquema). */
+export type MetodoPagoSocio =
+  | 'EFECTIVO'
+  | 'DEBITO'
+  | 'CREDITO'
+  | 'TRANSFERENCIA'
+  | 'BILLETERA_VIRTUAL';
+
+interface PlanApi {
+  id_plan_actividad: number;
+  id_actividad: number;
+  nombre: string;
+  tipo_limite: 'POR_SEMANA' | 'POR_MES';
+  cantidad: number;
+  precio: number;
+  activo: boolean;
+}
+
+interface ActividadCatalogoApi {
+  id_actividad: number;
+  nombre: string;
+  descripcion?: string | null;
+  cupo_default: number;
+  precio_clase_suelta: number;
+  horas_anticipacion_cancelacion: number;
+  minutos_tolerancia: number;
+  planes: PlanApi[];
+}
+
+/**
+ * El catálogo con sus planes, en UN pedido.
+ *
+ * El backend ya devuelve los planes anidados y filtrados —sólo actividades
+ * activas con planes activos—, así que no hace falta una segunda vuelta por
+ * actividad. Ofrecerle a alguien comprar un plan discontinuado terminaría en
+ * un rechazo que no entendería.
+ */
+export async function getCatalogoDelSocio(): Promise<
+  Array<ActividadListada & { planes: PlanActividadListado[] }>
+> {
+  const datos = await pedir<ActividadCatalogoApi[]>('/portal/mis-actividades/catalogo');
+  return datos.map((a) => ({
+    idActividad: a.id_actividad,
+    nombre: a.nombre,
+    descripcion: a.descripcion ?? undefined,
+    cupoDefault: a.cupo_default,
+    precioClaseSuelta: Number(a.precio_clase_suelta),
+    horasAnticipacionCancelacion: a.horas_anticipacion_cancelacion,
+    planes: a.planes.map((p) => ({
+      idPlanActividad: p.id_plan_actividad,
+      idActividad: p.id_actividad,
+      nombre: p.nombre,
+      tipoLimite: p.tipo_limite,
+      cantidad: p.cantidad,
+      precio: Number(p.precio),
+    })),
+  }));
+}
+
+/** Compra un abono. NO lleva id_socio: sale del token. */
+export async function comprarMiPlan(
+  idPlanActividad: number,
+  metodo: MetodoPagoSocio,
+): Promise<{ mensaje: string }> {
+  return pedir<{ mensaje: string }>(
+    `/portal/mis-actividades/planes/${idPlanActividad}/comprar`,
+    { metodo: 'POST', cuerpo: { metodo } },
+  );
+}
+
+/** Paga una clase suelta y queda reservado en ese turno. */
+export async function comprarMiClaseSuelta(
+  idTurno: number,
+  metodo: MetodoPagoSocio,
+): Promise<{ mensaje: string }> {
+  return pedir<{ mensaje: string }>(
+    `/portal/mis-turnos/${idTurno}/clase-suelta`,
+    { metodo: 'POST', cuerpo: { metodo } },
+  );
+}
+
+// =============================================================================
+// TURNOS
+// =============================================================================
+
+/**
+ * Un turno como lo ve el socio, con lo que necesita para decidir.
+ *
+ * Extiende TurnoDisponible con tres cosas que el catálogo del personal no
+ * tiene y que acá cambian el comportamiento del botón: si ya está anotado, si
+ * está en lista de espera, y cuánta gente está esperando.
+ */
+export interface TurnoDelSocio extends TurnoDisponible {
+  enEspera: number;
+  yaAnotado: boolean;
+  miEstado?: 'RESERVADA' | 'EN_ESPERA';
+  idMiReserva?: number;
+  minutosTolerancia: number;
+  horasAnticipacionCancelacion: number;
+}
+
+interface TurnoSocioApi {
+  id_turno: number;
+  actividad: string;
+  fecha: string;
+  hora: string;
+  cupo_maximo: number;
+  ocupados: number;
+  lugares_libres: number;
+  en_espera: number;
+  profesor?: string | null;
+  minutos_tolerancia: number;
+  horas_anticipacion_cancelacion: number;
+  ya_anotado: boolean;
+  mi_estado?: string | null;
+  id_mi_reserva?: number | null;
+}
+
+/**
+ * Las clases a las que se puede anotar, incluidas las LLENAS.
+ *
+ * Las llenas vienen a propósito: esconderlas haría que el socio ni supiera
+ * que existe la clase, y la lista de espera —que existe justamente para
+ * eso— no la usaría nadie.
+ */
+export async function getTurnosDelSocio(dias = 14): Promise<TurnoDelSocio[]> {
+  const datos = await pedir<TurnoSocioApi[]>(
+    `/portal/mis-turnos/disponibles?dias=${dias}`,
+  );
+  return datos.map((t) => ({
+    idTurno: t.id_turno,
+    // El backend manda el nombre, no el id: el socio no elige por id y la
+    // vista no necesita el número para nada.
+    idActividad: 0,
+    nombreActividad: t.actividad,
+    fecha: t.fecha,
+    hora: t.hora,
+    cupoMaximo: t.cupo_maximo,
+    cupoDisponible: t.lugares_libres,
+    nombreProfesional: t.profesor ?? undefined,
+    enEspera: t.en_espera,
+    yaAnotado: t.ya_anotado,
+    miEstado: (t.mi_estado as 'RESERVADA' | 'EN_ESPERA' | undefined) ?? undefined,
+    idMiReserva: t.id_mi_reserva ?? undefined,
+    minutosTolerancia: t.minutos_tolerancia,
+    horasAnticipacionCancelacion: t.horas_anticipacion_cancelacion,
+  }));
+}
+
+/**
+ * Se anota. Si la clase está llena queda EN_ESPERA en vez de fallar: cuando
+ * alguien cancele, el backend lo promueve solo y le avisa.
+ */
+export async function reservarMiTurno(
+  idTurno: number,
+): Promise<{ estado: 'RESERVADA' | 'EN_ESPERA' }> {
+  const r = await pedir<{ estado: 'RESERVADA' | 'EN_ESPERA' }>(
+    `/portal/mis-turnos/${idTurno}/reservar`,
+    { metodo: 'POST' },
+  );
+  return { estado: r.estado };
+}
+
+/** Se baja. El backend verifica que la reserva sea suya. */
+export async function cancelarMiTurno(idReserva: number): Promise<void> {
+  await pedir(`/portal/mis-turnos/${idReserva}/cancelar`, { metodo: 'POST' });
+}
+
+// =============================================================================
+// MI MEMBRESÍA — congelar, reanudar, darse de baja
+// =============================================================================
+
+export interface Congelamiento {
+  idCongelamiento: number;
+  fechaInicio: string;
+  fechaFin: string;
+  fechaReanudacion?: string;
+  diasAplicados?: number;
+  diasPedidos: number;
+  motivo?: string;
+  estado: 'ACTIVO' | 'FINALIZADO' | 'CANCELADO';
+  mensaje?: string;
+}
+
+interface CongelamientoApi {
+  id_congelamiento: number;
+  fecha_inicio: string;
+  fecha_fin: string;
+  fecha_reanudacion?: string | null;
+  dias_aplicados?: number | null;
+  dias_pedidos: number;
+  motivo?: string | null;
+  estado: 'ACTIVO' | 'FINALIZADO' | 'CANCELADO';
+  mensaje?: string | null;
+}
+
+function aCongelamiento(c: CongelamientoApi): Congelamiento {
+  return {
+    idCongelamiento: c.id_congelamiento,
+    fechaInicio: c.fecha_inicio,
+    fechaFin: c.fecha_fin,
+    fechaReanudacion: c.fecha_reanudacion ?? undefined,
+    diasAplicados: c.dias_aplicados ?? undefined,
+    diasPedidos: c.dias_pedidos,
+    motivo: c.motivo ?? undefined,
+    estado: c.estado,
+    mensaje: c.mensaje ?? undefined,
+  };
+}
+
+export async function getMisCongelamientos(): Promise<Congelamiento[]> {
+  const datos = await pedir<CongelamientoApi[]>('/portal/mi-membresia/congelamientos');
+  return datos.map(aCongelamiento);
+}
+
+/**
+ * Pausa la membresía. `fechaFin` es un TOPE, no una promesa: se puede
+ * reanudar antes y sólo se suman los días que realmente estuvo pausada.
+ */
+export async function congelarMiMembresia(
+  fechaFin: string,
+  motivo?: string,
+  fechaInicio?: string,
+): Promise<Congelamiento> {
+  const datos = await pedir<CongelamientoApi>('/portal/mi-membresia/congelar', {
+    metodo: 'POST',
+    cuerpo: { fecha_fin: fechaFin, motivo: motivo || null, fecha_inicio: fechaInicio || null },
+  });
+  return aCongelamiento(datos);
+}
+
+export async function reanudarMiMembresia(): Promise<Congelamiento> {
+  const datos = await pedir<CongelamientoApi>('/portal/mi-membresia/reanudar', {
+    metodo: 'POST',
+  });
+  return aCongelamiento(datos);
+}
+
+/**
+ * Se da de baja.
+ *
+ * La cuenta NO se desactiva: puede seguir entrando a ver su historial y, si
+ * vuelve, no hace falta darlo de alta otra vez. (El endpoint del mostrador sí
+ * desactiva la cuenta, y por eso este no lo reusa: aplicado a uno mismo,
+ * apretar el botón lo dejaría afuera sin poder volver a entrar.)
+ */
+export async function darmeDeBaja(motivo?: string): Promise<{ mensaje: string }> {
+  return pedir<{ mensaje: string }>('/portal/mi-membresia/baja', {
+    metodo: 'POST',
+    cuerpo: { motivo: motivo || null },
+  });
+}
+
+// =============================================================================
+// MIS ABONOS
+// =============================================================================
+
+interface InscripcionApiSocio {
+  id_inscripcion: number;
+  id_actividad: number;
+  actividad: string;
+  plan: string;
+  tipo_limite: 'POR_SEMANA' | 'POR_MES';
+  cantidad: number;
+  clases_restantes?: number | null;
+  precio_pactado: number;
+  fecha_inicio: string;
+  fecha_vencimiento: string;
+  estado: 'ACTIVA' | 'VENCIDA' | 'CANCELADA';
+}
+
+/** Los abonos propios. El id sale del token, no de la URL. */
+export async function getMisAbonos(): Promise<InscripcionListada[]> {
+  const datos = await pedir<InscripcionApiSocio[]>('/portal/mis-actividades/inscripciones');
+  return datos.map((i) => ({
+    idInscripcion: i.id_inscripcion,
+    idActividad: i.id_actividad,
+    nombreActividad: i.actividad,
+    nombrePlan: i.plan,
+    tipoLimite: i.tipo_limite,
+    cantidad: i.cantidad,
+    clasesRestantes: i.clases_restantes ?? undefined,
+    precioPactado: Number(i.precio_pactado),
+    fechaInicio: i.fecha_inicio,
+    fechaVencimiento: i.fecha_vencimiento,
+    estado: i.estado,
+  }));
+}
+
+/** Da de baja un abono propio. */
+export async function cancelarMiAbono(idInscripcion: number): Promise<void> {
+  await pedir(`/portal/mis-actividades/inscripciones/${idInscripcion}/cancelar`, {
+    metodo: 'POST',
+  });
 }

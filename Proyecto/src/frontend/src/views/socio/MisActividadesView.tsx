@@ -2,16 +2,23 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PrimaryButton, SectionCard, StatusBadge, Topbar } from '../../components/ui';
 import { colors, EstadoInscripcionActividad } from '../../config';
 import { mensajeDeError } from '../../services/api';
-import {
-  cancelarInscripcion,
-  comprarPlan,
-  getActividades,
-  getMisInscripciones,
-  getPlanesDeActividad,
-  type ActividadListada,
-  type InscripcionListada,
-  type PlanActividadListado,
+import type {
+  ActividadListada,
+  InscripcionListada,
+  PlanActividadListado,
 } from '../../services/actividadService';
+// Del servicio del SOCIO, no del personal.
+//
+// Esta vista llamaba a /actividades/* mandando id_socio en el cuerpo, y esas
+// rutas estan protegidas con permisos de mostrador: un socio recibia 403 en
+// las cuatro llamadas, o sea que la seccion no funcionaba. Ahora usa
+// /portal/mi-*, donde el id sale del token firmado.
+import {
+  cancelarMiAbono,
+  comprarMiPlan,
+  getCatalogoDelSocio,
+  getMisAbonos,
+} from '../../services/socioService';
 import { useAuthStore } from '../../store/authStore';
 import { useUiStore } from '../../store/uiStore';
 import { formatearFecha, formatearMoneda } from '../../utils/format';
@@ -64,14 +71,16 @@ export function MisActividadesView() {
     setDatos(null);
     setError(null);
 
-    Promise.all([getActividades(), getMisInscripciones(idSocio)])
-      .then(async ([actividades, misInscripciones]) => {
-        const listasDePlanes = await Promise.all(
-          actividades.map((a) => getPlanesDeActividad(a.idActividad)),
-        );
+    // El catalogo del socio trae los planes ANIDADOS, asi que se fue el
+    // N+1: antes se pedia la lista de actividades y despues una consulta de
+    // planes POR CADA UNA. Con cinco actividades eran seis pedidos para
+    // dibujar una pantalla.
+    Promise.all([getCatalogoDelSocio(), getMisAbonos()])
+      .then(([catalogo, misInscripciones]) => {
         if (cancelado) return;
         const planesPorActividad = new Map<number, PlanActividadListado[]>();
-        actividades.forEach((a, i) => planesPorActividad.set(a.idActividad, listasDePlanes[i]));
+        catalogo.forEach((a) => planesPorActividad.set(a.idActividad, a.planes));
+        const actividades: ActividadListada[] = catalogo.map(({ planes: _planes, ...a }) => a);
         setDatos({ actividades, planesPorActividad, misInscripciones });
       })
       .catch((err: unknown) => {
@@ -106,7 +115,7 @@ export function MisActividadesView() {
           ? `Se cobran ${formatearMoneda(plan.precio)}. Tu plan actual (${planViejo.nombrePlan}) se cancela sin devolución al confirmar.`
           : `Se cobran ${formatearMoneda(plan.precio)} por este plan.`,
         () => {
-          comprarPlan(idSocio, plan.idPlanActividad)
+          comprarMiPlan(plan.idPlanActividad, 'EFECTIVO')
             .then(() => {
               showSnack(`Listo, ya tenés "${plan.nombre}" activo`, colors.statusOk);
               recargar();
@@ -125,7 +134,7 @@ export function MisActividadesView() {
         `¿Cancelar tu plan de ${insc.nombreActividad}?`,
         `Dejás de poder reservar turnos de ${insc.nombreActividad} con "${insc.nombrePlan}". Esta acción no se puede deshacer.`,
         () => {
-          cancelarInscripcion(idSocio, insc.idInscripcion)
+          cancelarMiAbono(insc.idInscripcion)
             .then(() => {
               showSnack(`Cancelaste tu plan de ${insc.nombreActividad}`, colors.statusOk);
               recargar();

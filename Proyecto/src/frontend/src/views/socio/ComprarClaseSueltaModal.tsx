@@ -3,12 +3,13 @@ import { CalendarX2, Users } from 'lucide-react';
 import { PrimaryButton } from '../../components/ui';
 import { colors } from '../../config';
 import { mensajeDeError } from '../../services/api';
+import type { ActividadListada } from '../../services/actividadService';
+// Del portal del socio: los endpoints del personal devolvian 403 acá.
 import {
-  comprarClaseSuelta,
-  getTurnosDisponibles,
-  type ActividadListada,
-  type TurnoDisponible,
-} from '../../services/actividadService';
+  comprarMiClaseSuelta,
+  getTurnosDelSocio,
+  type TurnoDelSocio,
+} from '../../services/socioService';
 import { useAuthStore } from '../../store/authStore';
 import { useUiStore } from '../../store/uiStore';
 import { formatearFecha, formatearMoneda } from '../../utils/format';
@@ -34,19 +35,25 @@ function Skeleton({ className }: { className: string }) {
 }
 
 export function ComprarClaseSueltaModal({ actividad, onClose }: ComprarClaseSueltaModalProps) {
+  // Ni idSocio ni el id del usuario: el backend los saca del token firmado.
+  // Mandarlos desde acá era el vector que cerró la auditoría del 2026-08-03.
   const idSocio = useAuthStore((s) => s.idSocio);
-  const idUsuarioActor = useAuthStore((s) => s.usuario?.id_usuario);
   const showSnack = useUiStore((s) => s.showSnack);
 
-  const [turnos, setTurnos] = useState<TurnoDisponible[] | null>(null);
+  const [turnos, setTurnos] = useState<TurnoDelSocio[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [comprando, setComprando] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelado = false;
-    getTurnosDisponibles(actividad.idActividad)
+    getTurnosDelSocio()
       .then((lista) => {
-        if (!cancelado) setTurnos(lista);
+        // Se filtra acá y no en el backend porque /mis-turnos/disponibles
+        // devuelve TODA la grilla: es el mismo pedido que usa la pantalla de
+        // turnos, y pedirlo dos veces con filtros distintos sería una consulta
+        // de más para mostrar un subconjunto de lo que ya se tiene.
+        const deEsta = lista.filter((t) => t.nombreActividad === actividad.nombre);
+        if (!cancelado) setTurnos(deEsta);
       })
       .catch((err: unknown) => {
         if (!cancelado) setError(mensajeDeError(err));
@@ -54,17 +61,18 @@ export function ComprarClaseSueltaModal({ actividad, onClose }: ComprarClaseSuel
     return () => {
       cancelado = true;
     };
-  }, [actividad.idActividad]);
+  }, [actividad.idActividad, actividad.nombre]);
 
   const comprar = async (idTurno: number) => {
     if (idSocio === null) return;
     setComprando(idTurno);
     try {
-      const reserva = await comprarClaseSuelta(idSocio, idTurno, idUsuarioActor);
-      showSnack(
-        `Clase suelta de ${reserva.nombreActividad} confirmada para el ${formatearFecha(parsearFecha(reserva.fecha))} a las ${reserva.hora}`,
-        colors.statusOk,
-      );
+      const { mensaje } = await comprarMiClaseSuelta(idTurno, 'EFECTIVO');
+      // El mensaje lo redacta el backend y ya viene en segunda persona
+      // ("Compraste una clase suelta de Yoga por $6.000"). Rearmarlo acá
+      // significaria dos textos para lo mismo, y el del servidor es el unico
+      // que sabe cuanto se cobro realmente.
+      showSnack(mensaje, colors.statusOk);
       onClose();
     } catch (err) {
       showSnack(mensajeDeError(err), colors.statusDanger);
