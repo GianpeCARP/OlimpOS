@@ -14,6 +14,15 @@ Es la unica regla del congelamiento que no se puede verificar por HTTP sola, y
 es la que mas plata mueve: si sumara los dias PEDIDOS, alguien pidiendo 90 dias
 y volviendo a los dos se llevaria tres meses gratis.
 """
+import pathlib
+import sys
+
+# Los tests viven en pruebas/ pero importan modulos de backend/ (database,
+# models). Sin esto, `python pruebas/test_x.py` falla con ModuleNotFoundError
+# porque Python solo pone en sys.path el directorio del SCRIPT, no el de
+# arriba. Agregarlo aca permite correrlos desde donde sea.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+
 import json
 import urllib.error
 import urllib.request
@@ -36,6 +45,16 @@ def pedir(m, p, b=None, tok=None):
         return e.code, json.loads(e.read())
 
 
+# Se contempla la clave inicial: el test tiene que poder correr sobre una base
+# recien vaciada, sin depender de que otro test haya cambiado la contraseña
+# antes. Asumirlo hacia que fallara con un KeyError incomprensible.
+_s, _r = pedir("POST", "/login", {"username": "dueno",
+                                  "password": "cambiar-esto-en-el-primer-ingreso"})
+if _r.get("debe_cambiar_password"):
+    pedir("POST", "/cambiar-password", {
+        "username": "dueno",
+        "password_actual": "cambiar-esto-en-el-primer-ingreso",
+        "password_nueva": "Prueba2026!"})
 STAFF = pedir("POST", "/login", {"username": "dueno", "password": "Prueba2026!"})[1]["token"]
 
 s, r = pedir("POST", "/socios", {"nombre": "Dani", "apellido": "Test",

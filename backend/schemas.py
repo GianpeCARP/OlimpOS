@@ -1523,3 +1523,10 @@ class PlanDisponibleOut(BaseModel):
     descripcion: str | None = None
     duracion_dias: int
     precio: float
+
+
+class GeneracionDeudasOut(BaseModel):
+    creadas: int
+    revisadas: int
+    monto_total: float
+    mensaje: str

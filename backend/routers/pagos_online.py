@@ -250,6 +250,16 @@ def _extender_membresia(db: Session, pago: Pago) -> None:
         vigente.estado = "VENCIDA"
 
     from datetime import timedelta
+
+    # Mismo UNIQUE (id_socio, fecha_inicio) que contempla el cobro del
+    # mostrador. Acá el caso es más probable todavía: el socio puede apretar
+    # "pagar" dos veces en la app y quedar con dos pagos del mismo día.
+    while (db.query(Membresia)
+           .filter(Membresia.id_socio == pago.id_socio,
+                   Membresia.fecha_inicio == desde)
+           .first()) is not None:
+        desde = desde + timedelta(days=1)
+
     membresia = Membresia(
         id_socio=pago.id_socio,
         id_tipo_membresia=tipo.id_tipo_membresia,

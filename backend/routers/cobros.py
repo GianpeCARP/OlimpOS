@@ -32,15 +32,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from database import get_db
+from deudas import generar_deudas
 from models import (
     Deuda, InscripcionActividad, Membresia, Pago, PlanActividad, Socio,
     TipoMembresia,
 )
 from permisos import Acceso, Accion, Seccion
 from schemas import (
-    CobrarRequest, CobroResponse, DeudaOut, EstadoCuentaOut, InscripcionOut,
-    MembresiaOut, PagarDeudaRequest, PagoOut, TipoMembresiaCrear,
-    TipoMembresiaOut,
+    CobrarRequest, CobroResponse, DeudaOut, EstadoCuentaOut, GeneracionDeudasOut, InscripcionOut, MembresiaOut, PagarDeudaRequest, PagoOut, TipoMembresiaCrear, TipoMembresiaOut,
 )
 from security import Sesion, requiere_accion, requiere_seccion
 
@@ -328,6 +327,25 @@ def cobrar(
         es_adelanto = True
         vigente.estado = "VENCIDA"    # la reemplaza la nueva
 
+    # Membresia tiene un UNIQUE en (id_socio, fecha_inicio), asi que dos
+    # membresias del mismo socio no pueden arrancar el mismo dia. Sin este
+    # chequeo, el INSERT explotaba con un IntegrityError y el mostrador veia
+    # un 500 con el nombre del constraint de Postgres en pantalla.
+    #
+    # El caso real que lo dispara: se cobra, se anula el pago por un error, y
+    # se vuelve a cobrar el mismo dia. La membresia anulada sigue existiendo
+    # con fecha_inicio de hoy, asi que la nueva choca.
+    #
+    # Se corre al primer dia libre en vez de fallar: el socio esta enfrente
+    # pagando, y negarle el cobro por un detalle de indices seria absurdo. Un
+    # dia de corrimiento no le quita nada — el vencimiento se calcula desde
+    # ahi.
+    while (db.query(Membresia)
+           .filter(Membresia.id_socio == socio.id_socio,
+                   Membresia.fecha_inicio == inicio)
+           .first()) is not None:
+        inicio = inicio + timedelta(days=1)
+
     membresia = Membresia(
         id_socio=socio.id_socio,
         id_tipo_membresia=tipo.id_tipo_membresia,
@@ -547,3 +565,28 @@ def pagar_deuda(
     db.commit()
     db.refresh(pago)
     return _a_pago_out(pago)
+
+
+@router.post("/deudas/generar", response_model=GeneracionDeudasOut)
+def generar_deudas_pendientes(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.GESTION_DEUDAS)),
+):
+    """
+    Genera las deudas de las cuotas vencidas que nadie renovó.
+
+    El backend ya la corre al arrancar y es idempotente, así que este endpoint
+    no puede duplicar nada. Existe para el caso de un servidor que lleva
+    semanas sin reiniciarse: sin él, habría que reiniciarlo para que el
+    gimnasio se entere de quién le debe.
+    """
+    r = generar_deudas(db)
+    if r["creadas"]:
+        mensaje = (f"Se generaron {r['creadas']} deuda(s) por "
+                   f"${r['monto_total']:,.2f} en total.")
+    elif r["revisadas"] == 0:
+        mensaje = "No hay cuotas vencidas. Nadie debe nada."
+    else:
+        mensaje = (f"Se revisaron {r['revisadas']} cuota(s) vencida(s) y todas "
+                   f"ya estaban al día o con su deuda generada.")
+    return GeneracionDeudasOut(**r, mensaje=mensaje)

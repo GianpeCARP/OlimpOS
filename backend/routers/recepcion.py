@@ -79,6 +79,19 @@ def _alerta_de_socio(db: Session, socio: Socio) -> str | None:
     if not socio.activo:
         return "Socio dado de baja."
 
+    # La DEUDA se consulta primero y gana sobre todo lo demás.
+    #
+    # Antes se miraba al final, así que a un socio con la cuota vencida Y una
+    # deuda generada el mostrador le decía "Sin membresía activa" — cierto,
+    # pero inútil: eso ya se deduce. Lo accionable es cuánto debe, que es lo
+    # que hay que cobrarle cuando lo tiene enfrente.
+    deuda = (db.query(func.coalesce(func.sum(Deuda.monto), 0))
+             .filter(Deuda.id_socio == socio.id_socio,
+                     Deuda.estado == "PENDIENTE")
+             .scalar()) or 0
+    if deuda > 0:
+        return f"Debe ${deuda:,.0f}."
+
     membresia = (db.query(Membresia)
                  .filter(Membresia.id_socio == socio.id_socio,
                          Membresia.estado == "ACTIVA")
@@ -91,13 +104,6 @@ def _alerta_de_socio(db: Session, socio: Socio) -> str | None:
     if membresia.fecha_vencimiento and membresia.fecha_vencimiento < date.today():
         dias = (date.today() - membresia.fecha_vencimiento).days
         return f"Cuota vencida hace {dias} día(s)."
-
-    deuda = (db.query(func.coalesce(func.sum(Deuda.monto), 0))
-             .filter(Deuda.id_socio == socio.id_socio,
-                     Deuda.estado == "PENDIENTE")
-             .scalar()) or 0
-    if deuda > 0:
-        return f"Debe ${deuda:,.0f}."
 
     # Aviso temprano: es el único momento en que se tiene la atención de la
     # persona, y avisarle tres días antes evita el corte en seco del día que

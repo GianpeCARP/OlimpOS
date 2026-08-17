@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from csrf import middleware_csrf
 from database import Base, SessionLocal, engine
 from seeder import ejecutar_seeder
+from deudas import generar_deudas
 from turnos import generar_turnos
 
 # El import de models tiene que estar aunque no se use ninguno de sus nombres
@@ -91,6 +92,19 @@ async def lifespan(app: FastAPI):
         if resultado["creados"]:
             print(f"Turnos generados: {resultado['creados']} "
                   f"(hasta el {resultado['hasta'].strftime('%d/%m/%Y')})")
+
+        # Las deudas de las cuotas vencidas que nadie renovó.
+        #
+        # Va acá por lo mismo que la generación de turnos: es idempotente, no
+        # hay dónde correr un cron, y un gimnasio reinicia su servidor bastante
+        # más seguido de lo que hace falta. Sin esto, la tabla Deuda quedaba
+        # vacía para siempre y el gimnasio no tenía forma de saber quién le
+        # debía — el contador del panel daba cero aunque hubiera diez socios
+        # con la cuota vencida hace meses.
+        deuda = generar_deudas(db)
+        if deuda["creadas"]:
+            print(f"Deudas generadas: {deuda['creadas']} "
+                  f"por ${deuda['monto_total']:,.2f} en total")
     finally:
         db.close()
 
