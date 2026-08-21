@@ -1,0 +1,753 @@
+// =============================================================================
+// OlimpOS — Modelo de datos
+// =============================================================================
+// 37 tablas · 13 enums · 67 claves foráneas (65 simples + 2 compuestas)
+//
+// GENERADO DESDE Proyecto/db/schema.sql — verificado el 21/08/2026.
+// schema.sql es la ÚNICA fuente de verdad; este archivo es su reflejo visual.
+// Si los dos difieren, el que está mal es este.
+//
+// PARA VERLO: pegar todo en https://dbdiagram.io/d  (Import > DBML)
+//
+// LO QUE ESTE ARCHIVO NO PUEDE MOSTRAR (DBML no tiene sintaxis para eso):
+//   - Los 7 CHECK           -> ver §8 de la masterclass
+//   - Los 3 triggers        -> empleado sin subtipo, y los dos de cupo
+//   - Los 4 índices únicos PARCIALES: acá se ven como únicos comunes, lo cual
+//     es engañoso. El `WHERE estado = 'ACTIVA'` es lo que convierte
+//     "una sola rutina en toda su vida" (absurdo) en "una sola vigente a la
+//     vez" (la regla real).
+// =============================================================================
+
+
+// =============================================================================
+// ENUMS (13)
+// =============================================================================
+
+Enum metodo_pago {
+  EFECTIVO
+  DEBITO
+  CREDITO
+  TRANSFERENCIA
+  BILLETERA_VIRTUAL
+}
+
+Enum estado_membresia {
+  ACTIVA
+  VENCIDA
+  SUSPENDIDA
+  CANCELADA
+}
+
+Enum estado_congelamiento {
+  ACTIVO
+  FINALIZADO
+  CANCELADO
+}
+
+Enum estado_pago {
+  CONFIRMADO
+  PENDIENTE
+  CANCELADO
+  REEMBOLSADO
+}
+
+Enum estado_deuda {
+  PENDIENTE
+  PAGADA
+  CONDONADA
+}
+
+Enum estado_turno {
+  HABILITADO
+  CANCELADO
+}
+
+Enum estado_reserva {
+  RESERVADA
+  EN_ESPERA
+  CANCELADA_SOCIO
+  CANCELADA_GIMNASIO
+}
+
+Enum estado_asignacion {
+  ACTIVA
+  FINALIZADA
+  CANCELADA
+}
+
+Enum tipo_baja {
+  VOLUNTARIA
+  MORA
+  ADMINISTRATIVA
+}
+
+Enum tipo_telefono {
+  CELULAR
+  FIJO
+}
+
+Enum tipo_limite {
+  POR_SEMANA
+  POR_MES
+}
+
+Enum estado_inscripcion {
+  ACTIVA
+  VENCIDA
+  CANCELADA
+}
+
+Enum metodo_registro {
+  RFID
+  MANUAL
+}
+
+
+// =============================================================================
+// BLOQUE A — IDENTIDAD Y PERSONAS (9 tablas)
+// =============================================================================
+
+Table Persona {
+  id_persona int [pk, increment]
+  dni varchar(20) [unique, not null]
+  apellido varchar(100) [not null]
+  nombre varchar(100) [not null]
+  sexo varchar(20)
+  email varchar(150) [unique]
+  calle varchar(100)
+  numero_calle varchar(10)
+  localidad varchar(80)
+  fecha_nacimiento date
+  emergencia_nombre varchar(150)
+  emergencia_telefono varchar(30)
+  emergencia_parentesco varchar(50)
+  fecha_alta timestamp [default: `now()`]
+  activo boolean [default: true]
+
+  Note: 'SUPERTIPO de la jerarquia humana. Existe porque la misma persona puede ser socio Y empleado a la vez: con los datos duplicados, se muda y alguien actualiza una copia y se olvida de la otra.'
+}
+
+Table Telefono {
+  id_telefono int [pk, increment]
+  id_persona int [not null]
+  numero varchar(30) [not null]
+  tipo tipo_telefono [default: 'CELULAR']
+  principal boolean [default: false]
+
+  Note: 'Razon 1 (1FN). El ejemplo canonico: una persona puede tener celular Y fijo. Dos columnas fijas funcionan hasta que alguien tiene dos celulares.'
+}
+
+Table Usuario {
+  id_usuario int [pk, increment]
+  id_persona int [unique, not null]
+  username varchar(50) [unique, not null]
+  password_hash varchar(255) [not null]
+  debe_cambiar_password boolean [not null, default: true]
+  ultimo_acceso timestamp
+  intentos_fallidos int [default: 0]
+  bloqueado boolean [default: false]
+  activo boolean [default: true]
+
+  Note: 'Separa IDENTIDAD (Persona) de AUTENTICACION. No hay columna rol: el rol se DERIVA de en que subtipos aparece la persona, asi que el permiso y el hecho son el mismo dato. debe_cambiar_password nace en true a proposito.'
+}
+
+Table Dueno {
+  id_dueno int [pk, increment]
+  id_persona int [unique, not null]
+  porcentaje_participacion decimal(5,2)
+
+  Note: 'Razon 3 (herencia). porcentaje_participacion solo tiene sentido para un dueno. Que sea tabla y no un booleano permite la sociedad: dos duenos al 50%.'
+}
+
+Table Empleado {
+  id_empleado int [pk, increment]
+  id_persona int [unique, not null]
+  id_sede int [not null]
+  legajo varchar(20) [unique]
+  fecha_ingreso date [not null]
+  fecha_egreso date
+  activo boolean [default: true]
+
+  Note: 'El dueno del empleado NO esta aca: se navega Empleado -> Sede -> Dueno. Ponerlo directo seria una dependencia transitiva (violacion de 3FN). fecha_egreso nullable en vez de borrar: sus rutinas siguen apuntando a el.'
+}
+
+Table Entrenador {
+  id_entrenador int [pk, increment]
+  id_empleado int [unique, not null]
+  titulo varchar(100)
+  especialidad varchar(100)
+  matricula varchar(50)
+
+  Note: 'Arma rutinas y hace seguimiento personalizado. Rutina.id_entrenador apunta ACA y no a Empleado: eso hace estructuralmente imposible que un recepcionista figure como autor de una rutina.'
+}
+
+Table Nutricionista {
+  id_nutricionista int [pk, increment]
+  id_empleado int [unique, not null]
+  titulo varchar(100)
+  matricula varchar(50)
+
+  Note: 'Espejo de Entrenador en el dominio nutricional.'
+}
+
+Table Recepcionista {
+  id_recepcionista int [pk, increment]
+  id_empleado int [unique, not null]
+  turno_laboral varchar(20)
+
+  Note: 'La unica hoja de los 4 subtipos, y la tabla mas cuestionada del modelo. Defensa estructural: sin ella un recepcionista seria un Empleado sin subtipo, y el trigger de totalidad lo rechaza. No produce entidades porque OPERA el sistema; esa huella queda en Asistencia.id_registrado_por.'
+}
+
+Table Profesor {
+  id_profesor int [pk, increment]
+  id_empleado int [unique, not null]
+  titulo varchar(100)
+  especialidad varchar(100)
+
+  Note: 'Dicta clases grupales con horario fijo. Trabajo distinto del Entrenador, con relaciones distintas. Es el unico subtipo sin rol de sesion: da clases, no usa el sistema.'
+}
+
+
+// =============================================================================
+// BLOQUE B — SOCIOS Y CICLO DE VIDA (5 tablas)
+// =============================================================================
+
+Table Socio {
+  id_socio int [pk, increment]
+  id_persona int [unique, not null]
+  id_sede int [not null]
+  numero_socio varchar(20) [unique]
+  codigo_rfid varchar(50) [unique]
+  fecha_alta date [not null]
+  objetivo varchar(150)
+  observaciones text
+  activo boolean [default: true]
+
+  Note: 'EL CENTRO DE GRAVEDAD: 13 tablas lo referencian. codigo_rfid UNIQUE es lo que hace funcionar el molinete. Ya NO tiene id_entrenador_a_cargo: esa columna se reemplazo por Asignacion_Entrenador en la migracion 003, porque una columna de valor unico no puede representar dos entrenadores a la vez ni conservar el pasado.'
+}
+
+Table Baja {
+  id_baja int [pk, increment]
+  id_socio int [not null]
+  fecha_baja date [not null]
+  tipo tipo_baja
+  motivo varchar(250)
+
+  Note: 'Razon 2 (historia). Es 1:N y no 1:1 para admitir reingresos: con un booleano en Socio, la segunda baja pisaria a la primera y no habria metrica de retencion.'
+}
+
+Table Registro_Salud {
+  id_registro_salud int [pk, increment]
+  id_socio int [not null]
+  fecha date [not null]
+  peso decimal(5,2)
+  altura decimal(3,2)
+  grasa_corporal decimal(4,2)
+  masa_muscular decimal(5,2)
+  observaciones text
+
+  indexes {
+    (id_socio, fecha) [unique]
+  }
+
+  Note: 'El peso actual sirve poco; la PROGRESION es todo el producto. Por eso el peso NO se guarda en Socio: se deriva del registro mas reciente, para no tener dos fuentes de verdad que puedan divergir.'
+}
+
+Table Patologia {
+  id_patologia int [pk, increment]
+  nombre varchar(100) [unique, not null]
+  descripcion text
+
+  Note: 'Razon 5 (catalogo). Sin el, "diabetes", "Diabetes" y "diabetes tipo 2" son tres patologias distintas para la base, y la consulta devuelve resultados incompletos sin que nadie se entere.'
+}
+
+Table Socio_Patologia {
+  id_socio int [pk]
+  id_patologia int [pk]
+  fecha_diagnostico date
+  observaciones text
+
+  Note: 'N:M enriquecido. PK compuesta: no se puede cargar dos veces la misma patologia al mismo socio. fecha_diagnostico depende de LA COMBINACION, no de ninguno de los dos por separado: 2FN bien aplicada.'
+}
+
+
+// =============================================================================
+// BLOQUE C — DINERO (6 tablas)
+// =============================================================================
+
+Table Tipo_Membresia {
+  id_tipo_membresia int [pk, increment]
+  nombre varchar(50) [unique, not null]
+  descripcion text
+  duracion_dias int [not null]
+  precio_actual decimal(10,2) [not null]
+  activo boolean [default: true]
+
+  Note: 'precio_actual es el precio VIGENTE HOY, para nuevas ventas. NO es el precio al que se vendio cada membresia existente: ese vive en Membresia.precio_pactado.'
+}
+
+Table Membresia {
+  id_membresia int [pk, increment]
+  id_socio int [not null]
+  id_tipo_membresia int [not null]
+  id_promocion int
+  precio_pactado decimal(10,2) [not null]
+  fecha_inicio date [not null]
+  fecha_vencimiento date
+  estado estado_membresia [default: 'ACTIVA']
+
+  indexes {
+    (id_socio, fecha_inicio) [unique]
+    (estado, fecha_vencimiento)
+  }
+
+  Note: 'precio_pactado aca y precio_actual en el catalogo NO son redundancia: son dos hechos distintos. Si el gimnasio aumenta 20%, las membresias vendidas antes tienen que seguir diciendo el precio viejo, porque eso es lo que la persona pago.'
+}
+
+Table Promocion {
+  id_promocion int [pk, increment]
+  id_dueno int [not null]
+  id_sede int
+  nombre varchar(100) [not null]
+  descripcion text
+  porcentaje_descuento decimal(5,2)
+  monto_fijo_descuento decimal(10,2)
+  fecha_inicio date [not null]
+  fecha_fin date [not null]
+  activo boolean [default: true]
+
+  Note: 'id_sede NULLABLE significa "aplica a todas las sedes". Es un uso deliberado del NULL como valor semantico, y esta bien aca porque NO es ambiguo: no hay ningun otro motivo por el que ese campo podria estar vacio. Tener porcentaje Y monto fijo permite las dos modalidades comerciales sin forzar una conversion.'
+}
+
+Table Congelamiento {
+  id_congelamiento int [pk, increment]
+  id_socio int [not null]
+  id_membresia int [not null]
+  fecha_inicio date [not null]
+  fecha_fin date [not null]
+  fecha_reanudacion date
+  dias_aplicados int
+  motivo varchar(200)
+  estado estado_congelamiento [not null, default: 'ACTIVO']
+  fecha_solicitud timestamp [not null, default: `now()`]
+
+  indexes {
+    (id_socio) [unique, note: 'PARCIAL: WHERE estado = ACTIVO']
+    (id_socio, fecha_inicio)
+  }
+
+  Note: 'Migracion 008. La extension del vencimiento se aplica al REANUDAR, no al congelar: quien pide 30 dias y vuelve a los 10 tiene que recuperar 10, no 30. fecha_fin es un TOPE, no una promesa. dias_aplicados se guarda (y no se deriva) porque documenta un efecto YA producido sobre la membresia.'
+}
+
+Table Pago {
+  id_pago int [pk, increment]
+  id_socio int [not null]
+  id_membresia int
+  id_inscripcion int
+  id_sede int
+  metodo metodo_pago [not null]
+  monto decimal(10,2) [not null]
+  fecha_pago timestamp [not null, default: `now()`]
+  periodo_desde date
+  periodo_hasta date
+  es_adelanto boolean [default: false]
+  estado estado_pago [default: 'CONFIRMADO']
+  fecha_cancelacion timestamp
+  numero_comprobante varchar(50) [unique]
+
+  Note: 'NUNCA SE BORRA: anular es estado = CANCELADO mas fecha_cancelacion. En contabilidad el rastro de lo anulado es tan importante como lo que quedo. numero_comprobante UNIQUE impide emitir dos veces el mismo numero: problema fiscal, no informatico. Las 3 FK opcionales son porque un pago puede ser de membresia, de inscripcion, o de ninguna (clase suelta).'
+}
+
+Table Deuda {
+  id_deuda int [pk, increment]
+  id_socio int [not null]
+  id_membresia int
+  monto decimal(10,2) [not null]
+  fecha_generacion date [not null]
+  fecha_vencimiento date
+  estado estado_deuda [default: 'PENDIENTE']
+  generada_automaticamente boolean [default: true]
+  id_pago_cancelatorio int
+  observaciones varchar(250)
+
+  Note: 'Nace al vencer una membresia impaga, con 3 dias de gracia. id_pago_cancelatorio cierra el circulo deuda -> pago. CONDONADA existe porque perdonar una deuda es el tipo de acto que conviene tener registrado, no borrado.'
+}
+
+
+// =============================================================================
+// BLOQUE D — ENTRENAMIENTO (5 tablas)
+// =============================================================================
+
+Table Ejercicio {
+  id_ejercicio int [pk, increment]
+  nombre varchar(100) [unique, not null]
+  grupo_muscular varchar(50) [not null]
+  descripcion text
+  url_video varchar(255)
+  requiere_maquina boolean [default: false]
+
+  Note: 'grupo_muscular vive ACA y no en la rutina, porque es una propiedad DEL EJERCICIO. Ponerlo en Rutina_Ejercicio seria violacion de 3FN de libro. url_video centralizado: corregir un link arregla todas las rutinas que lo usan.'
+}
+
+Table Rutina {
+  id_rutina int [pk, increment]
+  id_entrenador int [not null]
+  nombre varchar(100) [not null]
+  objetivo varchar(100)
+  nivel varchar(20)
+  dias_por_semana int
+  fecha_creacion date [default: `now()`]
+  activo boolean [default: true]
+
+  Note: 'Es una PLANTILLA REUTILIZABLE, no la rutina de una persona. Se escribe una vez y se asigna a treinta socios: por eso esta separada de Asignacion_Rutina. Fusionarlas obligaria a duplicar el contenido entero por cada socio.'
+}
+
+Table Rutina_Ejercicio {
+  id_rutina_ejercicio int [pk, increment]
+  id_rutina int [not null]
+  id_ejercicio int [not null]
+  dia int [not null]
+  orden int [not null]
+  series int
+  repeticiones varchar(20)
+  peso_sugerido decimal(6,2)
+  descanso_segundos int
+  observaciones varchar(200)
+
+  indexes {
+    (id_rutina, dia, orden) [unique]
+  }
+
+  Note: 'Series y repeticiones no son del ejercicio ni de la rutina, sino de ESTE ejercicio DENTRO de ESTA rutina: 2FN. repeticiones es varchar y no int a proposito: en el gimnasio real se escribe "8-12" o "al fallo".'
+}
+
+Table Asignacion_Rutina {
+  id_asignacion_rutina int [pk, increment]
+  id_socio int [not null]
+  id_rutina int [not null]
+  id_entrenador int
+  fecha_inicio date [not null]
+  fecha_fin date
+  estado estado_asignacion [default: 'ACTIVA']
+
+  indexes {
+    (id_socio, id_rutina, fecha_inicio) [unique]
+    (id_socio) [unique, note: 'PARCIAL: WHERE estado = ACTIVA — migracion 009']
+  }
+
+  Note: 'PK subrogada para que un socio pueda VOLVER a una rutina que ya hizo. id_entrenador aca es independiente de Rutina.id_entrenador: uno escribio la plantilla, el otro decidio asignarsela.'
+}
+
+Table Asignacion_Entrenador {
+  id_asignacion_entrenador int [pk, increment]
+  id_socio int [not null]
+  id_entrenador int [not null]
+  fecha_inicio date [not null]
+  fecha_fin date
+  estado estado_asignacion [default: 'ACTIVA']
+
+  indexes {
+    (id_socio, id_entrenador, fecha_inicio) [unique]
+  }
+
+  Note: 'Reemplaza a Socio.id_entrenador_a_cargo (migracion 003). Misma forma que sus dos hermanas PERO aca SI se permiten varias ACTIVAS a la vez: un socio con un entrenador de musculacion y otro de funcional es normal. La migracion 009 la dejo afuera del indice "una sola activa" A PROPOSITO.'
+}
+
+
+// =============================================================================
+// BLOQUE E — NUTRICION (3 tablas)
+// =============================================================================
+
+Table Dieta {
+  id_dieta int [pk, increment]
+  id_nutricionista int [not null]
+  nombre varchar(100) [not null]
+  objetivo varchar(100)
+  calorias_diarias int
+  descripcion text
+  fecha_creacion date [default: `now()`]
+  activo boolean [default: true]
+
+  Note: 'Espejo exacto de Rutina en el dominio nutricional. Misma logica de plantilla reutilizable.'
+}
+
+Table Comida {
+  id_comida int [pk, increment]
+  id_dieta int [not null]
+  dia int
+  momento varchar(30)
+  descripcion text [not null]
+  calorias int
+
+  Note: 'El equivalente nutricional de Rutina_Ejercicio. descripcion es texto libre y no un catalogo de alimentos: eso seria un sistema entero en si mismo. Decision de alcance consciente.'
+}
+
+Table Asignacion_Dieta {
+  id_asignacion_dieta int [pk, increment]
+  id_socio int [not null]
+  id_dieta int [not null]
+  id_nutricionista int
+  fecha_inicio date [not null]
+  fecha_fin date
+  estado estado_asignacion [default: 'ACTIVA']
+  observaciones text
+
+  indexes {
+    (id_socio, id_dieta, fecha_inicio) [unique]
+    (id_socio) [unique, note: 'PARCIAL: WHERE estado = ACTIVA — migracion 009']
+  }
+
+  Note: 'La migracion 009 le agrego el indice unico que le FALTABA y que sus dos hermanas ya tenian: la misma dieta se podia asignar dos veces el mismo dia al mismo socio.'
+}
+
+
+// =============================================================================
+// BLOQUE F — ACTIVIDADES, TURNOS Y RESERVAS (8 tablas)
+// =============================================================================
+
+Table Actividad {
+  id_actividad int [pk, increment]
+  nombre varchar(80) [unique, not null]
+  descripcion text
+  cupo_default int [not null]
+  precio_clase_suelta decimal(10,2) [not null]
+  horas_anticipacion_cancelacion int [not null, default: 0]
+  minutos_tolerancia int [not null, default: 15]
+  activo boolean [default: true]
+
+  Note: 'MUSCULACION ES UNA FILA MAS ACA, no un caso especial. Asi todo el sistema de Turno/Reserva/Inscripcion funciona igual para las tres sin duplicar logica, y las diferencias se expresan como DATOS (tolerancia, cancelacion, staff) en vez de codigo. minutos_tolerancia (migracion 004) tiene CHECK 0-180.'
+}
+
+Table Plan_Actividad {
+  id_plan_actividad int [pk, increment]
+  id_actividad int [not null]
+  nombre varchar(80) [not null]
+  tipo_limite tipo_limite [not null]
+  cantidad int [not null]
+  precio decimal(10,2) [not null]
+  activo boolean [default: true]
+
+  Note: 'tipo_limite CAMBIA EL SIGNIFICADO de la columna cantidad: con POR_SEMANA, cantidad=2 es "dos veces por semana"; con POR_MES, cantidad=12 es "doce clases al mes". Agregar "3 veces por semana" es un INSERT, no un despliegue.'
+}
+
+Table Inscripcion_Actividad {
+  id_inscripcion int [pk, increment]
+  id_socio int [not null]
+  id_plan_actividad int [not null]
+  id_membresia int [not null]
+  precio_pactado decimal(10,2) [not null]
+  fecha_inicio date [not null]
+  fecha_vencimiento date [not null]
+  clases_restantes int
+  estado estado_inscripcion [default: 'ACTIVA']
+
+  Note: 'id_membresia NOT NULL: ata la inscripcion a la membresia que la cubre. clases_restantes SOLO se usa si el plan es POR_MES; en los semanales queda NULL y el consumo se cuenta sobre Reserva, porque un contador semanal tendria que reiniciarse solo cada lunes con un proceso que puede fallar.'
+}
+
+Table Profesor_Actividad {
+  id_profesor int [pk]
+  id_actividad int [pk]
+
+  Note: 'N:M puro, sin atributos propios. MAS IMPORTANTE DE LO QUE PARECE: es el destino de las DOS claves foraneas COMPUESTAS del modelo. No solo documenta quien puede dictar que: la base la usa para IMPEDIR que se asigne un profesor a una clase que no esta habilitado a dar.'
+}
+
+Table Horario_Actividad {
+  id_horario_actividad int [pk, increment]
+  id_sede int [not null]
+  id_actividad int [not null]
+  dia_semana int [not null]
+  hora time [not null]
+  cupo int [not null]
+  id_profesor int
+  id_entrenador_a_cargo int
+  vigente_desde date [not null]
+  vigente_hasta date
+  activo boolean [default: true]
+
+  indexes {
+    (id_sede, id_actividad, dia_semana, hora) [unique, note: 'PARCIAL: WHERE activo']
+    (activo, dia_semana)
+  }
+
+  Note: 'Migracion 005. La actividad declara SU HORARIO y el backend genera los turnos de las proximas semanas. dia_semana es ISO 1-7 (lunes=1), NO el nativo de PostgreSQL que empieza en domingo, porque EXTRACT(ISODOW) devuelve exactamente eso. La migracion 007 le agrego id_entrenador_a_cargo, que la 005 habia olvidado: sin el, musculacion no podia tener horario semanal.'
+}
+
+Table Turno {
+  id_turno int [pk, increment]
+  id_sede int [not null]
+  id_actividad int [not null]
+  fecha date [not null]
+  hora time [not null]
+  cupo_maximo int [not null]
+  estado estado_turno [default: 'HABILITADO']
+  id_entrenador_a_cargo int
+  id_profesor int
+  id_horario_actividad int
+  motivo_cancelacion varchar(200)
+  observaciones varchar(200)
+
+  indexes {
+    (id_sede, id_actividad, fecha, hora) [unique]
+  }
+
+  Note: 'Dos campos de staff EXCLUYENTES (CHECK chk_turno_un_solo_staff). Que AMBOS sean NULL si es valido: es la sala abierta sin nadie asignado. id_horario_actividad NULL = cargado a mano, y la generacion automatica nunca los toca. NO existe estado FINALIZADO: que un turno ya haya ocurrido se DEDUCE del reloj.'
+}
+
+Table Reserva {
+  id_reserva int [pk, increment]
+  id_turno int [not null]
+  id_socio int [not null]
+  id_inscripcion int
+  es_clase_suelta boolean [default: false]
+  id_pago int
+  fecha_reserva timestamp [default: `now()`]
+  estado estado_reserva [default: 'RESERVADA']
+  fecha_cancelacion timestamp
+
+  indexes {
+    (id_turno, id_socio) [unique]
+  }
+
+  Note: 'EN_ESPERA es un ESTADO, no una tabla aparte: al compartir tabla, el UNIQUE (id_turno, id_socio) que ya existia impide GRATIS que alguien este anotado y en espera a la vez. El orden de la cola sale de fecha_reserva, no de una columna "posicion". OJO: EN_ESPERA no ocupa cupo, todo conteo tiene que filtrar por RESERVADA.'
+}
+
+Table Asistencia {
+  id_asistencia int [pk, increment]
+  id_socio int [not null]
+  id_sede int [not null]
+  id_reserva int
+  fecha_hora_ingreso timestamp [not null]
+  fecha_hora_egreso timestamp
+  metodo_registro metodo_registro [not null, default: 'MANUAL']
+  id_registrado_por int
+
+  Note: 'SU ROL SILENCIOSO: es la tabla que hace posible que "asistio" sea DERIVABLE en vez de guardado. Es 1:N con Reserva (se puede entrar y salir varias veces) y id_reserva es nullable (se puede entrar sin reserva). id_registrado_por apunta a Usuario y no a Empleado porque lo auditable es que CUENTA hizo la operacion.'
+}
+
+
+// =============================================================================
+// BLOQUE G — ORGANIZACION (1 tabla)
+// =============================================================================
+
+Table Sede {
+  id_sede int [pk, increment]
+  id_dueno int [not null]
+  nombre varchar(100) [not null]
+  calle varchar(100)
+  numero_calle varchar(10)
+  localidad varchar(80)
+  telefono varchar(30)
+  capacidad_maxima int
+  hora_apertura time
+  hora_cierre time
+  abierto_24hs boolean [default: true]
+  activo boolean [default: true]
+
+  Note: 'Raiz organizativa: 7 tablas le pertenecen. Multi-sede AUNQUE HOY HAYA UNA SOLA: agregar la dimension sede despues, con datos cargados, obligaria a modificar siete tablas y decidir a que sede pertenece cada fila historica. La regla de "una unica sede" NO esta en el esquema: vive en seed.sql.'
+}
+
+
+// =============================================================================
+// RELACIONES — 67 en total
+// =============================================================================
+
+// --- Tipo 1: HERENCIA (1:1 obligatoria). El UNIQUE es lo que las hace 1:1 ----
+Ref: Dueno.id_persona - Persona.id_persona
+Ref: Empleado.id_persona - Persona.id_persona
+Ref: Socio.id_persona - Persona.id_persona
+Ref: Usuario.id_persona - Persona.id_persona
+
+Ref: Entrenador.id_empleado - Empleado.id_empleado
+Ref: Nutricionista.id_empleado - Empleado.id_empleado
+Ref: Recepcionista.id_empleado - Empleado.id_empleado
+Ref: Profesor.id_empleado - Empleado.id_empleado
+
+// --- Tipo 2: PERTENENCIA (muchos a uno) ------------------------------------
+Ref: Sede.id_dueno > Dueno.id_dueno
+Ref: Telefono.id_persona > Persona.id_persona
+Ref: Empleado.id_sede > Sede.id_sede
+Ref: Socio.id_sede > Sede.id_sede
+
+Ref: Baja.id_socio > Socio.id_socio
+Ref: Registro_Salud.id_socio > Socio.id_socio
+
+Ref: Promocion.id_dueno > Dueno.id_dueno
+Ref: Promocion.id_sede > Sede.id_sede
+
+Ref: Membresia.id_socio > Socio.id_socio
+Ref: Membresia.id_tipo_membresia > Tipo_Membresia.id_tipo_membresia
+Ref: Membresia.id_promocion > Promocion.id_promocion
+
+Ref: Congelamiento.id_socio > Socio.id_socio
+Ref: Congelamiento.id_membresia > Membresia.id_membresia
+
+Ref: Pago.id_socio > Socio.id_socio
+Ref: Pago.id_membresia > Membresia.id_membresia
+Ref: Pago.id_sede > Sede.id_sede
+Ref: Pago.id_inscripcion > Inscripcion_Actividad.id_inscripcion
+
+Ref: Deuda.id_socio > Socio.id_socio
+Ref: Deuda.id_membresia > Membresia.id_membresia
+Ref: Deuda.id_pago_cancelatorio > Pago.id_pago
+
+Ref: Rutina.id_entrenador > Entrenador.id_entrenador
+Ref: Dieta.id_nutricionista > Nutricionista.id_nutricionista
+Ref: Comida.id_dieta > Dieta.id_dieta
+
+Ref: Plan_Actividad.id_actividad > Actividad.id_actividad
+
+Ref: Inscripcion_Actividad.id_socio > Socio.id_socio
+Ref: Inscripcion_Actividad.id_plan_actividad > Plan_Actividad.id_plan_actividad
+Ref: Inscripcion_Actividad.id_membresia > Membresia.id_membresia
+
+Ref: Horario_Actividad.id_sede > Sede.id_sede
+Ref: Horario_Actividad.id_actividad > Actividad.id_actividad
+Ref: Horario_Actividad.id_entrenador_a_cargo > Entrenador.id_entrenador
+
+Ref: Turno.id_sede > Sede.id_sede
+Ref: Turno.id_actividad > Actividad.id_actividad
+Ref: Turno.id_entrenador_a_cargo > Entrenador.id_entrenador
+Ref: Turno.id_profesor > Profesor.id_profesor
+Ref: Turno.id_horario_actividad > Horario_Actividad.id_horario_actividad
+
+Ref: Asistencia.id_socio > Socio.id_socio
+Ref: Asistencia.id_sede > Sede.id_sede
+Ref: Asistencia.id_reserva > Reserva.id_reserva
+Ref: Asistencia.id_registrado_por > Usuario.id_usuario
+
+// --- Tipo 3: N:M PURAS ------------------------------------------------------
+Ref: Socio_Patologia.id_socio > Socio.id_socio
+Ref: Socio_Patologia.id_patologia > Patologia.id_patologia
+Ref: Profesor_Actividad.id_profesor > Profesor.id_profesor
+Ref: Profesor_Actividad.id_actividad > Actividad.id_actividad
+
+// --- Tipo 4: N:M ENRIQUECIDO CON HISTORIA -----------------------------------
+Ref: Asignacion_Rutina.id_socio > Socio.id_socio
+Ref: Asignacion_Rutina.id_rutina > Rutina.id_rutina
+Ref: Asignacion_Rutina.id_entrenador > Entrenador.id_entrenador
+
+Ref: Asignacion_Entrenador.id_socio > Socio.id_socio
+Ref: Asignacion_Entrenador.id_entrenador > Entrenador.id_entrenador
+
+Ref: Asignacion_Dieta.id_socio > Socio.id_socio
+Ref: Asignacion_Dieta.id_dieta > Dieta.id_dieta
+Ref: Asignacion_Dieta.id_nutricionista > Nutricionista.id_nutricionista
+
+Ref: Rutina_Ejercicio.id_rutina > Rutina.id_rutina
+Ref: Rutina_Ejercicio.id_ejercicio > Ejercicio.id_ejercicio
+
+Ref: Reserva.id_turno > Turno.id_turno
+Ref: Reserva.id_socio > Socio.id_socio
+Ref: Reserva.id_inscripcion > Inscripcion_Actividad.id_inscripcion
+Ref: Reserva.id_pago > Pago.id_pago
+
+// --- Tipo 5: LAS DOS FK COMPUESTAS (el blindaje declarativo) ----------------
+// En vez de verificar por separado que el profesor existe y que la actividad
+// existe, verifican que ESA COMBINACION este habilitada. Es imposible poner un
+// profesor a dictar algo para lo que no esta habilitado, sin una linea de codigo.
+//
+// Y aprovechan una regla del estandar SQL: cuando una columna de una FK
+// compuesta es NULL, la restriccion NO SE EVALUA. Por eso los turnos de
+// musculacion (sin profesor) quedan exentos AUTOMATICAMENTE.
+Ref: Turno.(id_profesor, id_actividad) > Profesor_Actividad.(id_profesor, id_actividad)
+Ref: Horario_Actividad.(id_profesor, id_actividad) > Profesor_Actividad.(id_profesor, id_actividad)

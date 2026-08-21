@@ -946,3 +946,94 @@ CREATE INDEX horario_actividad_activo_idx ON "Horario_Actividad" ("activo", "dia
 
 CREATE INDEX turno_horario_idx ON "Turno" ("id_horario_actividad")
   WHERE "id_horario_actividad" IS NOT NULL;
+
+-- ---------------------------------------------------------------------------
+-- (C) EL CUPO DE UN TURNO SE HACE CUMPLIR EN LA BASE
+-- Hasta la migracion 006 el cupo lo controlaba SOLO el backend. Se comprobo
+-- insertando 5 reservas RESERVADA en un turno de cupo_maximo = 2: la base las
+-- acepto todas sin decir nada. El equivalente idempotente para bases ya
+-- creadas esta en migrations/006_cupo_de_turno.sql
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION trg_reserva_respeta_cupo()
+RETURNS trigger AS $$
+DECLARE
+  v_cupo      int;
+  v_ocupados  int;
+  v_actividad text;
+BEGIN
+  -- EN_ESPERA y las canceladas no ocupan lugar: por definicion la lista de
+  -- espera existe para los que NO entraron. Si contaran, el turno se veria
+  -- lleno con gente que no tiene lugar y la cola nunca avanzaria.
+  IF NEW.estado IS DISTINCT FROM 'RESERVADA' THEN
+    RETURN NULL;
+  END IF;
+
+  SELECT t.cupo_maximo, a.nombre
+    INTO v_cupo, v_actividad
+  FROM "Turno" t
+  LEFT JOIN "Actividad" a ON a.id_actividad = t.id_actividad
+  WHERE t.id_turno = NEW.id_turno;
+
+  -- El turno pudo haberse borrado en la misma transaccion. No es asunto de
+  -- este trigger: de eso se ocupa la foreign key.
+  IF v_cupo IS NULL THEN
+    RETURN NULL;
+  END IF;
+
+  SELECT count(*) INTO v_ocupados
+  FROM "Reserva"
+  WHERE id_turno = NEW.id_turno AND estado = 'RESERVADA';
+
+  IF v_ocupados > v_cupo THEN
+    RAISE EXCEPTION
+      'El turno % (%) tiene cupo % y ya hay % reservas confirmadas.',
+      NEW.id_turno, coalesce(v_actividad, 'sin actividad'), v_cupo, v_ocupados
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+-- DEFERRABLE INITIALLY DEFERRED: se evalua al confirmar la transaccion, no
+-- fila por fila. Importa para poder mover gente dentro de un mismo turno en
+-- una sola transaccion (cancelar a uno y promover a otro, que es exactamente
+-- lo que hace la lista de espera) sin que el estado intermedio dispare el
+-- error aunque el estado final sea valido.
+DROP TRIGGER IF EXISTS trg_reserva_cupo ON "Reserva";
+CREATE CONSTRAINT TRIGGER trg_reserva_cupo
+  AFTER INSERT OR UPDATE OF estado, id_turno ON "Reserva"
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION trg_reserva_respeta_cupo();
+
+COMMENT ON FUNCTION trg_reserva_respeta_cupo() IS
+  'Impide que un turno tenga mas reservas RESERVADA que cupo_maximo. EN_ESPERA no cuenta. No cubre la carrera entre transacciones simultaneas: de eso se ocupa el SELECT ... FOR UPDATE del endpoint de reservar.';
+
+-- Bajarle el cupo a un turno que ya tiene mas gente anotada tambien es una
+-- forma de sobrevenderlo, y el trigger de arriba no la ve porque mira Reserva,
+-- no Turno. Este la cubre.
+CREATE OR REPLACE FUNCTION trg_turno_cupo_no_menor_a_reservas()
+RETURNS trigger AS $$
+DECLARE
+  v_ocupados int;
+BEGIN
+  SELECT count(*) INTO v_ocupados
+  FROM "Reserva"
+  WHERE id_turno = NEW.id_turno AND estado = 'RESERVADA';
+
+  IF v_ocupados > NEW.cupo_maximo THEN
+    RAISE EXCEPTION
+      'No se puede dejar el cupo del turno % en %: ya hay % personas anotadas.',
+      NEW.id_turno, NEW.cupo_maximo, v_ocupados
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_turno_cupo ON "Turno";
+CREATE CONSTRAINT TRIGGER trg_turno_cupo
+  AFTER UPDATE OF cupo_maximo ON "Turno"
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION trg_turno_cupo_no_menor_a_reservas();
