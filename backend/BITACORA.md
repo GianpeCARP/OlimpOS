@@ -266,3 +266,54 @@ Y no es copiar y pegar: cada una hay que cruzarla contra lo que el endpoint
 realmente devuelve. El mock inventó formas de datos que a veces no coinciden
 con el esquema real — pasó con `authService`, donde el mock tenía
 `usuario.rol` como columna y el backend lo deriva.
+
+---
+
+## 11. Estado al 2026-08-20
+
+Desde el cierre de la sección 10 (commit `631b599`, 2026-08-10) pasaron 24
+commits más de cableado real: Actividades completo en las dos apps, Flet
+terminó sus escrituras (asistencia, cobros, recepción con refresco solo),
+autogestión del socio (turnos, abonos, congelamiento, baja), Mercado Pago en
+modo simulado, y las tres tablas que en la sección 10 figuraban como
+pendientes (salud, bajas, patologías) ya están.
+
+| | |
+|---|---|
+| Endpoints | **129** |
+| Routers | **14** (+ `auth_router`) |
+| Tablas modeladas | **37 de 37** — pero ver "El agujero que apareció" abajo |
+| PWA cableada | **11 de 11 secciones** — `mockDb.ts` ya no existe en el repo |
+| Flet cableado | **11 de 11 vistas** — las 60 funciones de datos de `state.py` llaman a `api_client`; las 18 restantes son helpers de sesión/formato que no necesitan pegarle a la API |
+
+Verificado leyendo código, no mensajes de commit: conté los `@router.` de
+cada archivo de `backend/routers/`, las `class X(Base)` de `models.py`, y en
+cada `service/*.ts` de la PWA y cada función de `state.py` si efectivamente
+llaman a `pedir()` / `api_client` en vez de devolver algo hardcodeado. No
+quedan imports de `mockDb` (el archivo se borró) ni TODOs de mock reales en
+las vistas de ninguna de las dos apps — los dos "TODO" que aparecieron en el
+grep eran la palabra "todo/todos" en español, no marcadores.
+
+### El agujero que apareció
+
+`Congelamiento` (migración 008) tiene clase en `models.py` pero **no tiene
+`CREATE TABLE` en `schema.sql`**. Es exactamente el riesgo que advierte el
+comentario de `database.py` sobre mantener las dos copias sincronizadas: la
+008 se aplicó a mano contra Neon y a `schema.sql` — a diferencia de las otras
+ocho migraciones — nunca se la dobló. Hoy son 37 tablas reales en Neon (se
+puede congelar una membresía y el backend lo lee sin problema) pero 36 en el
+DDL entregado. Si alguien arranca una base nueva desde `schema.sql` a secas,
+le va a faltar esa tabla.
+
+### Lo que falta ahora
+
+- **Backend**: nada de tablas sin cablear. Lo pendiente es todo lo que ya
+  usa datos reales pero no se probó contra Mercado Pago real (ver docstring
+  de `mercadopago.py`: falta token, URL pública y secreto del webhook).
+- **`schema.sql`**: agregar el `CREATE TABLE "Congelamiento"` que falta (ver
+  arriba). Es la migración 008 copiada tal cual, no hay que diseñar nada.
+- **Entrega**: seguía pendiente en la sección 10 — vaciar la base dejando
+  solo el seed — no se volvió a tocar este ítem, sigue abierto.
+- **Permisos**: el guard de roles del router de Flet sigue comentado a
+  propósito (ver `CLAUDE.md` de la raíz) — no es un olvido, es la matriz de
+  `config.ts` la que todavía tiene que reemplazarlo.
