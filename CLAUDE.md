@@ -33,26 +33,36 @@ componente `.tsx` de la PWA es gemelo. Si tocás uno, mirá el otro.
 
 ## Estado actual
 
-**Todo el front-end está hecho y funcionando** en las dos apps, con datos mock.
+**Las dos apps están terminadas y funcionando contra la API real.**
 
 - La PWA tiene implementada la extensión completa de Actividades (planes por mes o
   por semana, clases sueltas, asistencia, cobros), según
   `Proyecto/especificacion_definitiva_actividades.md`.
-- La app Flet tiene las mismas secciones que la PWA para el personal: Dashboard,
+- La app Flet tiene diez secciones para el personal: Dashboard, **Recepción**,
   Socios, Cobros, Asistencia, Personal, Rutinas, Nutrición, Actividades, Usuarios.
+  Recepción no tiene gemela en la PWA: es el panel del mostrador (próximos turnos,
+  búsqueda por DNI, cobro en el acto) y es donde aterriza un Recepcionista al entrar,
+  en vez del Dashboard.
 
-**Lo que falta es el backend.** Va a ser **Python + FastAPI** (decisión ya tomada, no
-revisitar; no va a ser Node). Hasta entonces:
+**El backend ya existe** y las dos apps están cableadas contra él. Es **Python +
+FastAPI** sobre Neon (decisión ya tomada, no revisitar; no va a ser Node), en
+`backend/`, con 129 endpoints en 14 routers y 37 tablas modeladas.
 
-- Los datos salen de mocks en memoria: `services/mockDb.ts` (PWA) y `app/state.py` (Flet).
-- Las acciones de escritura de las vistas nuevas de Flet (Cobros, Asistencia,
-  Actividades) **tienen el diseño completo y están cableadas, pero no escriben nada**:
-  cada una tiene su endpoint marcado con un comentario `TODO`.
-- **Los permisos no están implementados.** El guard de roles del router de Flet está
-  **comentado a propósito**, con la nota de que va reemplazado por la matriz de
-  permisos de `config.ts` (5 roles × 3 niveles de acceso), no por un `is_admin()`
-  booleano. **No lo "arregles" descomentándolo**: con él activo no se puede ni abrir
-  la sección Usuarios para revisar su diseño.
+Las tres cosas que este archivo daba por pendientes YA NO LO ESTÁN, y conviene
+saberlo porque las notas viejas pedían explícitamente no tocarlas:
+
+- **No hay mocks.** `services/mockDb.ts` se borró del repo y `app/state.py` habla
+  con `api_client.py`. Ningún dato sale de memoria.
+- **Las escrituras de Flet escriben.** Las nueve vistas llaman a la API; ya no
+  queda ningún `TODO` de cableado.
+- **Los permisos SÍ están implementados, y el guard del router de Flet está
+  ACTIVO.** La nota vieja decía "no lo arregles descomentándolo" y tenía razón
+  *en su momento*: el guard era un `is_admin()` booleano que además moría en
+  silencio. Esa precondición ya se cumplió — `app/permisos.py` es la tercera
+  copia de la matriz (5 roles × 3 niveles) y ahora el guard avisa por qué
+  bloquea. **Descomentarlo ya está hecho; volver a comentarlo sería el error.**
+
+Lo que sí falta está en `backend/BITACORA.md` §12.
 
 ---
 

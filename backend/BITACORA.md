@@ -317,3 +317,120 @@ le va a faltar esa tabla.
 - **Permisos**: el guard de roles del router de Flet sigue comentado a
   propósito (ver `CLAUDE.md` de la raíz) — no es un olvido, es la matriz de
   `config.ts` la que todavía tiene que reemplazarlo.
+
+---
+
+## 12. Correcciones a la sección 11, y estado al 2026-08-23
+
+La sección 11 se escribió al día siguiente de los últimos commits de
+cableado, y en tres puntos quedó desactualizada o dice algo que ya no es
+cierto. Se corrige acá en vez de editarla: la bitácora cuenta un recorrido, y
+tachar lo que se creía en su momento haría perder justamente eso.
+
+### Tres cosas que la sección 11 da por pendientes y no lo están
+
+**1. El guard de permisos de Flet ya NO está comentado.** La sección 11 dice
+que "sigue comentado a propósito" y remite al `CLAUDE.md` de la raíz. Los dos
+textos quedaron viejos: el guard está **activo** desde el commit `43379c3`.
+
+Lo que lo bloqueaba era real y estaba bien anotado: el guard viejo era un
+`if route == USUARIOS and not is_admin(): return`, un booleano suelto que
+además **moría en silencio** — la pantalla no cambiaba y no había forma de
+saber si el permiso había fallado o si la app se había colgado. La nota pedía
+no descomentarlo hasta que existiera la matriz de verdad.
+
+Esa precondición se cumplió: `Proyeto-Python/Proyecto/app/permisos.py` es
+ahora la tercera copia de la matriz (5 roles × 3 niveles), y
+`check_permisos.py` verifica que las tres digan lo mismo. Con eso el guard
+puede decir algo mejor que "no": muestra un snackbar explicando que el rol no
+tiene acceso. El problema nunca fue bloquear, era bloquear sin explicar.
+
+> **Ojo, esto importa para la próxima sesión:** el `CLAUDE.md` de la raíz
+> todavía instruye *"No lo 'arregles' descomentándolo"*. Esa instrucción ya
+> no aplica y seguirla hoy revertiría código que funciona.
+
+**2. `Congelamiento` ya está en `schema.sql`.** La sección 11 lo describe
+como "el agujero que apareció", pero el mismo commit que escribió esa
+sección (`436eb82`) lo arregló. El documento se contradice a sí mismo: la
+sección lo reporta abierto y el DDL entregado ya lo tiene.
+
+**3. La base ya está vacía.** El ítem "Entrega: vaciar la base dejando solo
+el seed" venía arrastrándose desde la sección 10. Hoy Neon tiene **6 filas**:
+la Persona y el `Dueno` del titular, la Sede Central, los dos tipos de
+membresía y la cuenta `dueno` — que nace con `debe_cambiar_password` en true,
+así que el primer ingreso obliga a definir una contraseña propia.
+
+### Una divergencia NUEVA que la sección 11 no podía anticipar
+
+El commit `436eb82` sacó `Consulta_Cruzada` de `schema.sql` con el argumento
+de que es una tabla decorativa que ningún modelo referencia. El argumento es
+correcto, pero tiene una consecuencia que conviene dejar escrita:
+
+    schema.sql   ->  37 tablas
+    Neon         ->  38 tablas  (Consulta_Cruzada sigue ahí)
+
+O sea que el DDL entregado y la base real **ya no coinciden**. No rompe nada
+—nadie la usa— pero es exactamente el mismo tipo de deriva que la sección 11
+señalaba en el caso inverso con `Congelamiento`, y merece una decisión
+explícita: o se borra de Neon, o se vuelve a poner en el DDL. Queda anotado,
+no resuelto.
+
+### Lo que la sección 11 no menciona porque todavía no existía
+
+| | |
+|---|---|
+| Migraciones | **9** (`Proyecto/db/migrations/`) |
+| Suites de integración | **8** (`backend/pruebas/`) |
+| Endpoints | **129** en 14 routers |
+| Tablas modeladas | **37** |
+
+Las suites no son scripts descartables: crean su propio escenario, corren
+contra Neon con la base vacía y se guardaron en el repo porque son lo que
+encontró casi todos los bugs de esta etapa. Dos de ellas
+(`test_extension_congelamiento`, `test_una_sola_activa`) tocan la base
+directamente por SQL, porque lo que prueban no se puede verificar por HTTP:
+para que una cuota venza hay que esperar un mes, y para probar que la base
+frena un INSERT hay que hacer ese INSERT sin pasar por la app.
+
+### La lección que se repitió tres veces
+
+Tres agujeros distintos de esta etapa resultaron ser el mismo problema: **una
+regla de negocio que vivía sólo en el código del router, con la base sin
+enterarse.**
+
+| Regla | Cómo se descubrió | Dónde vive ahora |
+|---|---|---|
+| El cupo de un turno | Se metieron 5 reservas en un turno de 2 | `CONSTRAINT TRIGGER` (migración 006) + lock de fila |
+| Una sola rutina/dieta activa | Se insertaron 2 activas por SQL | Índice único parcial (migración 009) |
+| La deuda de una cuota vencida | `Deuda(` no aparecía en ningún router | Se genera al arrancar (`deudas.py`) |
+
+Los tres se encontraron **corriendo**, no leyendo. Y el patrón del arreglo
+también se repitió: la defensa se bajó al esquema, donde no se puede olvidar
+de aplicar, en vez de dejarla en un `if` que el próximo endpoint puede no
+copiar.
+
+Con una trampa que apareció dos veces y conviene recordar: la sesión de
+SQLAlchemy tiene `autoflush=False`, así que **nada llega a la base hasta que
+se lo pide explícitamente**. Eso rompió la promoción de la lista de espera
+(contaba el cupo antes de que la cancelación estuviera escrita) y casi rompe
+la reasignación de rutinas (un índice único parcial no puede ser
+`DEFERRABLE`, y SQLAlchemy ordena sus `INSERT` antes que sus `UPDATE`). Las
+dos veces la solución fue un `db.flush()` en el lugar exacto.
+
+### Lo que falta ahora
+
+- **Mercado Pago**: es lo único del backend que no se probó contra el
+  servicio real. Falta lo que no depende del código y está anotado en
+  `backend/.env.example`: un `ACCESS_TOKEN`, el secreto del webhook, y una
+  **URL pública** — Mercado Pago no le puede avisar a `127.0.0.1` que un pago
+  se acreditó. Mientras tanto hay un modo simulado que permite recorrer el
+  flujo entero, y que se niega a activarse si detecta un token real cargado.
+- **UI que falta para cosas que el backend ya hace**: patologías no tiene
+  pantalla en ninguna de las dos apps, y "entrenador a cargo" sólo la tiene
+  en Flet. La PWA no las conoce.
+- **`Promocion`**: está modelada y ningún router la usa. Los descuentos
+  existen en el esquema y no hay forma de cargarlos.
+- **`Consulta_Cruzada`**: la divergencia de arriba.
+- **`CLAUDE.md`**: tiene al menos dos afirmaciones vencidas (los permisos y
+  las escrituras de Flet marcadas como `TODO`). Conviene actualizarlo antes
+  que la bitácora, porque es el archivo que se carga en cada sesión.
