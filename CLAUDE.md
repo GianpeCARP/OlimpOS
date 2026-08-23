@@ -98,6 +98,38 @@ Todas se encontraron **corriendo la app**, no leyendo el código:
 
 ## Cómo verificar los cambios
 
+**Backend** (desde `backend/`). Ojo: usar SIEMPRE el Python del venv, no el
+global — el global no tiene las dependencias y da errores que parecen bugs:
+```bash
+.venv/Scripts/python.exe -c "import main"          # compila Y ejecuta: compileall NO alcanza
+.venv/Scripts/python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
+.venv/Scripts/python.exe check_permisos.py         # las 3 copias de la matriz de permisos
+```
+
+**Las 8 suites de integración** viven en `backend/pruebas/`. No son unitarias:
+corren contra Neon de verdad, con el backend levantado y **la base vacía**.
+Cada una arma su propio escenario.
+```bash
+.venv/Scripts/python.exe pruebas/test_una_sola_activa.py
+.venv/Scripts/python.exe pruebas/test_patologias.py
+.venv/Scripts/python.exe pruebas/test_entrenador_a_cargo.py
+.venv/Scripts/python.exe pruebas/test_deudas.py
+.venv/Scripts/python.exe pruebas/test_pago_online.py
+.venv/Scripts/python.exe pruebas/test_portal_socio.py
+.venv/Scripts/python.exe pruebas/test_mi_membresia.py
+.venv/Scripts/python.exe pruebas/test_extension_congelamiento.py
+```
+Entre suite y suite hay que **vaciar la base**, o la anterior le deja datos a la
+siguiente y fallan por el escenario, no por un bug. La base "vacía" son 6 filas:
+Persona + Dueno del titular, Sede Central, 2 tipos de membresía y la cuenta
+`dueno` (que nace con `debe_cambiar_password`, así que el primer login pide
+cambiarla — la inicial está en `DUENO_INICIAL_PASSWORD` del `.env`).
+
+> **Casi todos los bugs de este proyecto aparecieron CORRIENDO, no leyendo.**
+> `python -m compileall` compila pero no ejecuta: un import faltante pasa el
+> chequeo y revienta al arrancar. Y un nombre usado sólo dentro de una función
+> tampoco lo detecta el import — eso ya mordió dos veces.
+
 **PWA** (desde `Proyecto/src/frontend`):
 ```bash
 npx tsc --noEmit -p tsconfig.app.json   # ojo: SIN -p no compila nada y siempre da OK
