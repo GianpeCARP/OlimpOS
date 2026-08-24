@@ -1,0 +1,70 @@
+CONTRASEÑAS DE TESTEO — OlimpOS
+================================
+Anotar acá TODA cuenta que se cree, del backend o de cualquiera de las dos apps.
+
+USERNAME              PASSWORD              ROL            NOTAS
+--------------------  --------------------  -------------  ---------------------------
+dueno                 dueno 1234            Dueño          Entra directo.
+ana.gomez             Demo2026!             Entrenador     Musculación. A cargo de Juan
+                                                           y de Lucía.
+beto.ruiz             Demo2026!             Entrenador     Funcional. A cargo de Juan;
+                                                           con Lucía, finalizada.
+caro.diaz             Demo2026!             Nutricionista
+rita.lopez            Demo2026!             Recepcionista  Con esta cuenta NO aparece el
+                                                           botón de historial médico.
+juan.perez            Demo2026!             Socio          Dos entrenadores a la vez.
+lucia.marino          Demo2026!             Socio          Uno activo y uno finalizado.
+nico.sosa             Demo2026!             Socio          Dos patologías cargadas.
+
+Todas menos `dueno` las crea pruebas/escenario_demo.py, y desaparecen al vaciar
+la base. Volver a cargarlas es correr ese script de nuevo (necesita la base
+recién vaciada; si encuentra socios, avisa y no hace nada).
+
+OJO: escenario_demo.py le deja al `dueno` la contraseña Demo2026!, porque entra
+con la inicial del .env y la cambia. Si querés volver a `dueno 1234`, corré el
+comando del OJO 1 de más abajo.
+
+
+OJO 1 — vaciar_base.py PISA la contraseña del dueño
+---------------------------------------------------
+`pruebas/vaciar_base.py --si` deja la base en el estado de ENTREGA, y eso
+incluye recrear la cuenta `dueno` con la contraseña de DUENO_INICIAL_PASSWORD
+del .env (hoy: cambiar-esto-en-el-primer-ingreso) y con debe_cambiar_password
+en true, así que el primer ingreso vuelve a pedir una nueva.
+
+Si después de vaciar querés volver a `dueno 1234` sin pasar por la pantalla de
+cambio, desde backend/ con el venv:
+
+    .venv/Scripts/python.exe -c "from auth import hashear_password; from database import SessionLocal; from sqlalchemy import text; db=SessionLocal(); db.execute(text('UPDATE \"Usuario\" SET password_hash=:h, debe_cambiar_password=false, bloqueado=false, intentos_fallidos=0 WHERE username=:u'), {'h': hashear_password('dueno 1234'), 'u':'dueno'}); db.commit(); db.close()"
+
+
+OJO 2 — a los 5 intentos fallidos la cuenta se BLOQUEA
+------------------------------------------------------
+MAX_INTENTOS_FALLIDOS = 5 en routers/auth_router.py. Una cuenta bloqueada
+devuelve el MISMO mensaje que una contraseña mal ("Usuario o contraseña
+incorrectos"), a propósito, para no revelar el estado de una cuenta ajena — así
+que desde afuera no hay forma de distinguir "me equivoqué" de "ya está
+bloqueada". Si sospechás que pasó, mirá la fila:
+
+    SELECT username, bloqueado, intentos_fallidos FROM "Usuario";
+
+Y para desbloquear sin tocar la contraseña:
+
+    UPDATE "Usuario" SET bloqueado=false, intentos_fallidos=0 WHERE username='dueno';
+
+
+OJO 3 — las cuentas que crean las suites
+-----------------------------------------
+Las suites de pruebas/ dan de alta su propio personal y sus propios socios, y
+les cambian la contraseña temporal por una fija (Clave2026! en test_patologias).
+Esas cuentas NO van en esta tabla: se borran al vaciar la base.
+
+Las credenciales admin/admin123 y trainer/train123 que menciona el CLAUDE.md
+son de la época de los datos de prueba en memoria. Ya no existen en la base.
+
+
+CÓMO NACE UNA CUENTA NUEVA
+---------------------------
+El alta de socio o de empleado (con crear_cuenta) devuelve username y
+password_temporal UNA sola vez: en la base queda el hash. Si no se anota en ese
+momento, hay que resetearla. Anotala acá apenas la veas.
