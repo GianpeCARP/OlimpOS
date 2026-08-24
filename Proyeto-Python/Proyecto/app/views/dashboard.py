@@ -69,7 +69,10 @@ class DashboardView:
     def build(self) -> ft.Column:
         stats     = app_state.get_dashboard_stats()
         actividad = app_state.get_actividad_reciente()
-        socios    = app_state.get_socios()[:4]
+        # Endpoint dedicado: `get_socios()[:4]` traia la grilla entera —un
+        # pedido de ~0,9s— para mostrar cuatro filas. Ver el docstring de
+        # get_socios_recientes en state.py.
+        socios    = app_state.get_socios_recientes()[:4]
 
         topbar = build_topbar(
             "Dashboard",
@@ -89,7 +92,12 @@ class DashboardView:
                     t["titulo"],
                     _formatear(m["valor"], t["formato"]),
                     _texto_delta(m["delta_pct"], t["comparacion"]),
-                    "down" if m["delta_pct"] < 0 else "up",
+                    # `or 0` porque delta_pct puede ser None: sin esto la
+                    # comparación explota antes de llegar a stat_card. Con None
+                    # la tendencia da igual —no se dibuja la flecha— pero hay
+                    # que poder calcularla sin reventar. Mismo `?? 0` que usa
+                    # DashboardView.tsx.
+                    "down" if (m["delta_pct"] or 0) < 0 else "up",
                     t["icono"],
                     t["color"],
                 )
@@ -259,13 +267,29 @@ def _formatear(valor, formato: str) -> str:
         return str(valor)
 
 
-def _texto_delta(delta_pct: float, comparacion: str) -> str:
+def _texto_delta(delta_pct: float | None, comparacion: str) -> str:
     """
     Arma el texto del delta: "+80% vs mes anterior".
 
     Se construye acá y no en state.py por la misma razón que en la web: el
     dato es el porcentaje, la frase de comparación es cosa de la vista.
+
+    CON None DEVUELVE CADENA VACÍA, y `stat_card` con un delta vacío no dibuja
+    el renglón. Eso es lo que pide el contrato del backend, que ya lo tenía
+    escrito en el docstring de `_delta` (routers/dashboard.py): el delta es
+    None —no cero— cuando el mes anterior fue cero, porque dividir daría
+    infinito y mostrar "+100%" al pasar de 0 a 1 socio sería inventar un dato.
+    "La vista, con None, no muestra nada, que es lo honesto."
+
+    Esa mitad del contrato no estaba implementada acá y reventaba con
+    `'>=' not supported between instances of 'NoneType' and 'int'` apenas se
+    abría el Dashboard sobre una base sin historial — o sea, en la primera
+    demo. La PWA sí la tenía (`textoDelta` en DashboardView.tsx devuelve
+    undefined); era una asimetría entre gemelas, no una decisión.
     """
+    if delta_pct is None:
+        return ""
+
     signo = "+" if delta_pct >= 0 else ""
     # Los porcentajes redondos se muestran sin decimales; el resto con uno y
     # coma decimal, como se escribe en castellano.

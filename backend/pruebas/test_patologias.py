@@ -147,31 +147,54 @@ s, mias = pedir("GET", "/portal/mis-patologias", tok=cuentas["Nico"])
 print(f"   {s}  {[p['nombre'] for p in mias]}")
 chequear(s == 200 and len(mias) == 1, "ve la que le cargó el entrenador")
 
-print("\n9. Y declara una propia")
+print("\n9. Y puede LISTAR el catálogo para elegir de ahí")
+# Este chequeo faltaba y por eso el agujero vivio hasta que se dibujo la
+# pantalla. El paso 10 de aca abajo manda ID_ASMA, pero ese numero salio del
+# GET /patologias que hizo TERE en el paso 2: la prueba se lo pasaba al socio
+# por una variable de Python. En la app real no hay tal variable — el socio
+# tiene que preguntarle el catalogo al backend, y GET /patologias le responde
+# 403 porque exige VER_HISTORIAL_MEDICO, que el rol Socio tiene en false como
+# todas las acciones. O sea: el endpoint para declarar la propia condicion
+# estaba, pero no habia forma de averiguar que id mandarle.
+s, cat_socio = pedir("GET", "/portal/catalogo-patologias", tok=cuentas["Nico"])
+print(f"   {s}  {[p['nombre'] for p in cat_socio] if s == 200 else cat_socio}")
+chequear(s == 200, "el socio ve el catálogo desde el portal")
+chequear(s == 200 and len(cat_socio) == len(catalogo),
+         "y es el mismo catálogo que ve el entrenador")
+chequear(s == 200 and all("id_patologia" in p for p in cat_socio),
+         "con los ids, que es lo que necesita para el POST de abajo")
+
+# Y sigue SIN poder entrar por la puerta del personal: lo de arriba es un
+# endpoint nuevo del portal, no un permiso aflojado.
+s, _ = pedir("GET", "/patologias", tok=cuentas["Nico"])
+print(f"   {s}  GET /patologias (la puerta del personal)")
+chequear(s == 403, "el catálogo del personal le sigue estando vedado")
+
+print("\n10. Y declara una propia")
 s, r = pedir("POST", "/portal/mis-patologias",
              {"id_patologia": ID_ASMA, "observaciones": "Uso inhalador antes de entrenar"},
              tok=cuentas["Nico"])
 print(f"   {s}  {r.get('nombre')}: {r.get('observaciones')}")
 chequear(s == 201, "el socio carga la suya sin pasar por nadie")
 
-print("\n10. Pero NO puede ver las de otro socio")
+print("\n11. Pero NO puede ver las de otro socio")
 s, r = pedir("GET", f"/socios/{ID_SOCIO}/patologias", tok=cuentas["Nico"])
 print(f"   {s}  (el endpoint del personal)")
 chequear(s == 403, "rechazado: ese endpoint es para ver las de terceros")
 
-print("\n11. Ni inventar una condición fuera del catálogo")
+print("\n12. Ni inventar una condición fuera del catálogo")
 s, r = pedir("POST", "/portal/mis-patologias", {"id_patologia": 9999}, tok=cuentas["Nico"])
 print(f"   {s}  {r.get('detail')}")
 chequear(s == 404, "sólo del catálogo")
 
-print("\n12. Se saca una")
+print("\n13. Se saca una")
 s, _ = pedir("DELETE", f"/portal/mis-patologias/{ID_ASMA}", tok=cuentas["Nico"])
 print(f"   {s}")
 chequear(s == 204, "borrada")
 s, mias = pedir("GET", "/portal/mis-patologias", tok=cuentas["Nico"])
 chequear(len(mias) == 1, "queda sólo la otra")
 
-print("\n13. El entrenador ve el resultado")
+print("\n14. El entrenador ve el resultado")
 s, suyas = pedir("GET", f"/socios/{ID_SOCIO}/patologias", tok=cuentas["Tere"])
 for p in suyas:
     print(f"   {p['nombre']:<18} {p['fecha_diagnostico'] or '—'}  {p['observaciones'] or ''}")

@@ -190,7 +190,7 @@ export function DashboardView() {
         actions={
           puedeAltaSocios ? (
             <PrimaryButton
-              label="Nuevo socio"
+              label="Nuevo Socio"
               icon={UserPlus}
               onClick={() => navigate(`/${Routes.SOCIOS}`)}
             />

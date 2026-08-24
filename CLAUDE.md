@@ -38,6 +38,20 @@ componente `.tsx` de la PWA es gemelo. Si tocás uno, mirá el otro.
 - La PWA tiene implementada la extensión completa de Actividades (planes por mes o
   por semana, clases sueltas, asistencia, cobros), según
   `Proyecto/especificacion_definitiva_actividades.md`.
+- **Historial médico** (patologías) en las dos apps: catálogo compartido y
+  condiciones por socio. Del lado del personal cuelga de Socios; del lado del
+  socio, de "Mi perfil" (`MisCondicionesCard`), donde él mismo puede
+  declararlas. El botón se **omite** —no se deshabilita— para quien no tenga la
+  acción `verHistorialMedico`: uno gris que no responde igual delata que el
+  socio tiene algo cargado.
+- **Entrenador a cargo** en las dos: se admiten VARIOS a la vez (uno de
+  musculación y otro de funcional es normal, no un error de datos) y las
+  finalizadas quedan en el historial. En la PWA el socio lo ve en "Mi rutina"
+  (`MiEntrenadorCard`).
+- **Promociones** en las dos, dentro de Cobros. Ojo con el reparto de permisos,
+  que es el diseño y no un detalle: **listar** pide la sección COBROS (para que
+  el Recepcionista pueda elegir una al cobrar) y **crear/editar/dar de baja**
+  pide `GESTION_PROMOCIONES`, que sólo tiene el Dueño.
 - La app Flet tiene diez secciones para el personal: Dashboard, **Recepción**,
   Socios, Cobros, Asistencia, Personal, Rutinas, Nutrición, Actividades, Usuarios.
   Recepción no tiene gemela en la PWA: es el panel del mostrador (próximos turnos,
@@ -46,7 +60,9 @@ componente `.tsx` de la PWA es gemelo. Si tocás uno, mirá el otro.
 
 **El backend ya existe** y las dos apps están cableadas contra él. Es **Python +
 FastAPI** sobre Neon (decisión ya tomada, no revisitar; no va a ser Node), en
-`backend/`, con 129 endpoints en 14 routers y 37 tablas modeladas.
+`backend/`, con **138 endpoints en 15 routers** y **37 tablas** modeladas. El
+DDL (`Proyecto/db/schema.sql`) y Neon coinciden nombre por nombre: si agregás
+una tabla en uno, va en el otro.
 
 Las tres cosas que este archivo daba por pendientes YA NO LO ESTÁN, y conviene
 saberlo porque las notas viejas pedían explícitamente no tocarlas:
@@ -62,7 +78,19 @@ saberlo porque las notas viejas pedían explícitamente no tocarlas:
   copia de la matriz (5 roles × 3 niveles) y ahora el guard avisa por qué
   bloquea. **Descomentarlo ya está hecho; volver a comentarlo sería el error.**
 
-Lo que sí falta está en `backend/BITACORA.md` §12.
+  Ojo con las COPIAS de la matriz: vive en tres lugares
+  (`backend/permisos.py`, `app/permisos.py`, `config.ts`) y `check_permisos.py`
+  verifica que digan lo mismo. Apareció una **cuarta**, escrita a mano en
+  `app/views/usuarios.py`, que el chequeo no miraba porque no era una matriz
+  sino una lista suelta — y estaba mal para los cuatro roles. Ahora se deriva.
+  Si necesitás mostrar permisos en pantalla, **derivalos**; no los escribas.
+
+Lo que sí falta está en `backend/BITACORA.md` **§13**: sólo Mercado Pago, y no
+depende del código (falta el token, el secreto del webhook y una URL pública).
+El trabajo de rendimiento está en la **§14**.
+Los cuatro pendientes que listaba la §12 —UI de patologías, entrenador a cargo
+en la PWA, `Promocion` sin usar y la divergencia de `Consulta_Cruzada`— están
+cerrados.
 
 ---
 
@@ -94,6 +122,75 @@ Todas se encontraron **corriendo la app**, no leyendo el código:
    `ft.app`. La app arranca con **cero `DeprecationWarning`**; si aparece uno, algo se
    revirtió.
 
+7. **Que la app ARRANQUE no significa que se pueda ENTRAR ni NAVEGAR.** Tres
+   bugs de esta familia llegaron hasta una demo, y los tres revientan al
+   CONSTRUIR una vista con datos que el backend devuelve legítimamente:
+
+   - `router.view_class()` devolvía `None` porque `router.setup()` —que
+     registraba el mapa de rutas— se llamaba 18 líneas DESPUÉS de usarlo en
+     `login.py`. `None(page=...)` → `'NoneType' object is not callable`, y el
+     login de los **cuatro** roles roto.
+   - El Dashboard hacía `delta_pct >= 0` con un delta que el backend manda en
+     `None` cuando no hay mes anterior. Con base nueva, las cuatro métricas
+     vienen en None: nunca abría.
+   - Nutrición hacía `sum(cals)//len(cals)` sin planes cargados
+     (`ZeroDivisionError`, y `min`/`max` un `ValueError`).
+
+   Los tres sobrevivieron a `compileall`, a las 9 suites y a un arranque sin
+   warnings, porque **las suites prueban el backend por HTTP y nunca instancian
+   una vista de Flet**. Y los dos últimos ya estaban resueltos en la PWA: eran
+   asimetrías entre gemelas, no decisiones. Antes de dar por buena una vista:
+
+   ```bash
+   python pruebas_vistas.py     # desde Proyeto-Python/Proyecto
+   ```
+
+   Entra con cada rol y llama a `build()` de cada sección que ese rol ve (25
+   combinaciones, segundos). Correla **también con la base vacía**: es donde
+   estos tres se disparan, y lo que va a ver cualquiera que arranque de cero.
+
+---
+
+## Rendimiento: la base está lejos, y eso ordena todo
+
+Medido, no estimado. La base es Neon en **sa-east-1 (São Paulo)**:
+
+    SELECT 1 en una conexión YA abierta ......  44 ms   <- piso físico (RTT)
+    Abrir una conexión NUEVA (TLS + auth) .... 825 ms   <- 19x
+
+**El cuello de botella nunca es Python.** Durante una request el proceso está
+esperando un socket, no calculando; reescribir esto en otro lenguaje daría los
+mismos 44 ms. Las dos únicas palancas son **preguntar menos veces** y **no
+esperar la respuesta**. (Por lo mismo el GIL no molesta: los hilos de precarga
+y refresco esperan red.)
+
+Cuatro cosas ya implementadas que **no hay que desarmar sin leer la §14**:
+
+1. **El pool** (`backend/database.py`): `pool_recycle=240` + keepalives de TCP.
+   Sin esto las conexiones mueren solas y una request cualquiera paga 825 ms —
+   era el "a veces tarda 2 segundos de la nada".
+2. **El latido** (`backend/main.py`): un `SELECT 1` cada 2 minutos en un hilo
+   daemon. Neon (plan gratuito) **suspende el compute** tras unos minutos sin
+   consultas y despertarlo cuesta segundos.
+3. **Listados en lote, no en bucle.** `roles_de_persona()` toca 6 relaciones
+   por fila: sin `selectinload`, `/usuarios` hacía 45 consultas para 8 cuentas.
+   Y `/socios` usa `_listar_socios_en_lote` (nº fijo de consultas);
+   `_a_socio_out` quedó sólo para el socio de a uno.
+4. **Servir-y-refrescar en Flet** (`app/api_client.py`): se devuelve el caché al
+   instante aunque esté vencido y se refresca por atrás; el login precarga en
+   paralelo. Un caché con TTL a secas **no alcanza** — se probó y reproducía la
+   queja original (rápido dentro de la ventana, lento fuera).
+
+> **Cualquier escritura invalida TODO el caché**, no sólo la ruta que tocó, y
+> el logout también. Lo primero porque cobrar cambia cuatro rutas a la vez; lo
+> segundo porque el caché guarda respuestas traídas con los permisos de la
+> sesión anterior.
+
+Recorrer los nueve paneles: **4175 ms → 19 ms**.
+
+Si alguna vez hace falta bajar el piso de 44 ms, la palanca es **acercar la
+base** (Postgres local ≈ 1 ms). No toca código: sólo `DATABASE_URL`.
+
 ---
 
 ## Cómo verificar los cambios
@@ -106,9 +203,17 @@ global — el global no tiene las dependencias y da errores que parecen bugs:
 .venv/Scripts/python.exe check_permisos.py         # las 3 copias de la matriz de permisos
 ```
 
-**Las 8 suites de integración** viven en `backend/pruebas/`. No son unitarias:
+**Las 9 suites de integración** viven en `backend/pruebas/`. No son unitarias:
 corren contra Neon de verdad, con el backend levantado y **la base vacía**.
 Cada una arma su propio escenario.
+
+> **Antes de correr una suite, verificá contra QUÉ backend estás corriendo.**
+> Un `uvicorn` que no pudo tomar el puerto 8000 muere en silencio y el proceso
+> viejo sigue atendiendo: una corrida entera dio tres fallos falsos por eso. Se
+> ve comparando la cantidad de endpoints:
+> ```bash
+> curl -s http://127.0.0.1:8000/openapi.json | .venv/Scripts/python.exe -c "import json,sys; print(len(json.load(sys.stdin)['paths']))"
+> ```
 ```bash
 .venv/Scripts/python.exe pruebas/test_una_sola_activa.py
 .venv/Scripts/python.exe pruebas/test_patologias.py
@@ -118,17 +223,61 @@ Cada una arma su propio escenario.
 .venv/Scripts/python.exe pruebas/test_portal_socio.py
 .venv/Scripts/python.exe pruebas/test_mi_membresia.py
 .venv/Scripts/python.exe pruebas/test_extension_congelamiento.py
+.venv/Scripts/python.exe pruebas/test_promociones.py
 ```
+Ojo: `test_extension_congelamiento` **no imprime** la línea "TODOS LOS CHEQUEOS
+PASARON" — usa otro formato. Mirá su código de salida, no grepées el texto.
+
 Entre suite y suite hay que **vaciar la base**, o la anterior le deja datos a la
-siguiente y fallan por el escenario, no por un bug. La base "vacía" son 6 filas:
-Persona + Dueno del titular, Sede Central, 2 tipos de membresía y la cuenta
-`dueno` (que nace con `debe_cambiar_password`, así que el primer login pide
-cambiarla — la inicial está en `DUENO_INICIAL_PASSWORD` del `.env`).
+siguiente y fallan por el escenario, no por un bug. Ya no se hace a mano:
+
+```bash
+.venv/Scripts/python.exe pruebas/vaciar_base.py        # muestra qué borraría
+.venv/Scripts/python.exe pruebas/vaciar_base.py --si   # lo hace
+```
+
+La base "vacía" son 6 filas: Persona + Dueno del titular, Sede Central, 2 tipos
+de membresía y la cuenta `dueno` (que nace con `debe_cambiar_password`, así que
+el primer login pide cambiarla — la inicial está en `DUENO_INICIAL_PASSWORD` del
+`.env`).
+
+Con la base vacía **las pantallas no muestran nada**, así que para MIRARLAS hay
+otro script, que no es una suite y no reemplaza a ninguna:
+
+```bash
+.venv/Scripts/python.exe pruebas/escenario_demo.py   # 4 empleados, 3 socios, patologías, promociones
+```
+
+Las contraseñas de esas cuentas —y de la del dueño— viven en
+`backend/CONTRASEÑAS PARA TESTEO Y ACTUALIZADAS.txt`. **Anotá ahí toda cuenta
+nueva**: el alta devuelve la contraseña temporal UNA sola vez.
+
+> A los **5 intentos fallidos la cuenta se bloquea**, y el mensaje es idéntico
+> al de una contraseña equivocada (a propósito, para no revelar el estado de una
+> cuenta ajena). Desde afuera no se distingue, así que si el login falla y estás
+> seguro de la clave, mirá la fila:
+> `SELECT username, bloqueado, intentos_fallidos FROM "Usuario";`
 
 > **Casi todos los bugs de este proyecto aparecieron CORRIENDO, no leyendo.**
 > `python -m compileall` compila pero no ejecuta: un import faltante pasa el
 > chequeo y revienta al arrancar. Y un nombre usado sólo dentro de una función
-> tampoco lo detecta el import — eso ya mordió dos veces.
+> tampoco lo detecta el import — eso ya mordió **tres** veces (la última:
+> `input_field` en `views/cobros.py`).
+>
+> Dos continuaciones de la misma regla, las dos pagadas:
+> - **Correr no alcanza si no verificás contra qué corrés** (el backend viejo en
+>   el puerto 8000 dio tres fallos falsos).
+> - **Que el proceso levante no significa que la pantalla funcione** (ver la
+>   trampa 7 de Flet, más arriba).
+>
+> Para Python, un chequeo que sí encuentra los nombres sin importar: parsear el
+> archivo con `ast` y comparar los `Name` cargados contra los importados y los
+> ligados localmente. Es lo que cazó el `input_field`.
+>
+> En TypeScript, `tsc` tampoco alcanza para todo: un `useEffect` cuyo array de
+> dependencias lee un `const` declarado más abajo compila perfecto y revienta en
+> ejecución con un `ReferenceError` por TDZ (el array se evalúa DURANTE el
+> render).
 
 **PWA** (desde `Proyecto/src/frontend`):
 ```bash
@@ -139,8 +288,13 @@ npx tsc --build --force
 
 **Flet** (desde `Proyeto-Python/Proyecto`):
 ```bash
-python -m compileall -q app main.py
+python -m compileall -q app main.py   # NO alcanza: ver la trampa 7
+python pruebas_vistas.py              # build() de cada vista con cada rol
 ```
+`compileall` no ejecuta nada, así que aprueba un nombre sin importar y una
+división por cero que sólo pasan al abrir la pantalla. `pruebas_vistas.py` es lo
+que cubre ese hueco; necesita el backend levantado y las cuentas del escenario
+de demo.
 Flet abre una ventana nativa que no se puede screenshotear. Para revisarla visualmente,
 lanzarla en el navegador:
 ```python
@@ -150,7 +304,16 @@ Dos cosas del entorno: recargar muchas veces deja **sesiones Flet apiladas** y l
 navegación parece rota sin estarlo (hard reload y una sola sesión); y el **aviso de
 Chrome para guardar contraseña bloquea los clicks** de automatización.
 
-Credenciales de prueba de la app Flet: `admin / admin123` y `trainer / train123`.
+Credenciales: **`admin/admin123` y `trainer/train123` YA NO EXISTEN.** Eran de
+la época de los datos en memoria y no hay ninguna cuenta así en la base. Las
+reales están en `backend/CONTRASEÑAS PARA TESTEO Y ACTUALIZADAS.txt`.
+
+Para verla en el navegador **no toques `main.py`**: hacé un envoltorio que
+importe su `main()` y lo lance con otra vista. Un detalle que cuesta media hora
+si se pisa: **ese archivo no puede llamarse `flet_web.py`** — Flet hace
+`from flet_web.fastapi import ...` para servir por HTTP, el directorio del
+script va primero en `sys.path`, y termina importándose el envoltorio en vez del
+paquete (`asyncio.run() cannot be called from a running event loop`).
 
 ---
 

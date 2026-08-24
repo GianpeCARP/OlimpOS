@@ -51,7 +51,7 @@ from models import (
 )
 from permisos import Seccion
 from schemas import (
-    ActividadOut, AsignacionDietaOut, AsignacionEntrenadorOut, AsignacionRutinaOut, AsignarPatologiaRequest, AsistenciaOut, BajaPropiaRequest, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, CongelamientoOut, CongelarRequest, DietaOut, InscripcionOut, MedicionCrear, MedicionOut, MensajeResponse, MiComidaOut, MiCuotaOut, MiDeudaOut, MiDiaDeDietaOut, MiDietaOut, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRutinaOut, PagoOut, PatologiaDeSocioOut, ReservaOut, RutinaOut, TurnoDisponibleOut,
+    ActividadOut, AsignacionDietaOut, AsignacionEntrenadorOut, AsignacionRutinaOut, AsignarPatologiaRequest, AsistenciaOut, BajaPropiaRequest, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, CongelamientoOut, CongelarRequest, DietaOut, InscripcionOut, MedicionCrear, MedicionOut, MensajeResponse, MiComidaOut, MiCuotaOut, MiDeudaOut, MiDiaDeDietaOut, MiDietaOut, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRutinaOut, PagoOut, PatologiaDeSocioOut, PatologiaOut, ReservaOut, RutinaOut, TurnoDisponibleOut,
 )
 from notificaciones import notificar_promocion_lista_espera
 from turnos import ocupacion, promover_de_lista_de_espera
@@ -1588,6 +1588,46 @@ def mis_entrenadores(
 # maneje solo: "soy asmático" es algo que él sabe y el gimnasio necesita, y
 # obligarlo a ir al mostrador a contarlo —donde además el recepcionista no
 # debería enterarse— sería exactamente al revés.
+
+@router.get("/catalogo-patologias", response_model=list[PatologiaOut])
+def catalogo_para_el_socio(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_PERFIL)),
+):
+    """
+    El catálogo, para que el socio pueda elegir de la lista.
+
+    Existe porque sin esto el POST de acá abajo es inusable: pide un
+    `id_patologia` que tiene que salir del catálogo, y el catálogo se lista en
+    `GET /patologias`, que exige `VER_HISTORIAL_MEDICO` — una acción que el
+    Socio tiene en False como todas las demás. O sea que el endpoint para
+    declarar la propia condición estaba, pero no había forma de averiguar qué
+    número mandarle. El agujero no se ve leyendo el router de patologías ni el
+    del portal por separado: aparece recién al intentar dibujar la pantalla.
+
+    Duplicar el listado acá en vez de aflojarle el permiso a `GET /patologias`
+    es deliberado. Esa acción NO significa "ver la lista de enfermedades que
+    existen": significa ver el historial médico de OTRA persona, y es la única
+    donde el Recepcionista queda por debajo del Entrenador. Abrirla para que
+    entre el socio le daría de paso al mostrador el acceso que el router de
+    patologías explica en detalle por qué no debe tener.
+
+    Lo que se devuelve acá no es de nadie: son nombres de condiciones, las
+    mismas que están en cualquier formulario de aptitud física. Ninguna fila
+    dice qué socio tiene qué.
+
+    No es la primera vez que hace falta esto en este mismo archivo:
+    `/portal/mi-cuota/planes` existe por lo mismo —duplica el listado de
+    `/cobros/tipos-membresia`, que el socio no puede tocar porque la sección
+    COBROS la tiene en NINGUNO—. El patrón ya está establecido: cuando el
+    portal necesita un catálogo que vive detrás de un permiso de gestión, se
+    republica acá recortado, no se afloja el permiso del otro lado.
+    """
+    patologias = db.query(Patologia).order_by(Patologia.nombre).all()
+    return [PatologiaOut(id_patologia=p.id_patologia, nombre=p.nombre,
+                          descripcion=p.descripcion)
+            for p in patologias]
+
 
 @router.get("/mis-patologias", response_model=list[PatologiaDeSocioOut])
 def mis_patologias(

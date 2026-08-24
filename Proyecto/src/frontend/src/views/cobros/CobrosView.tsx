@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Search, Wallet } from 'lucide-react';
+import { AlertTriangle, Search, Tag, Wallet } from 'lucide-react';
 import { PrimaryButton, SectionCard, SelectField, StatusBadge, Topbar, type SelectOption } from '../../components/ui';
 import { colors, EstadoPago } from '../../config';
 import { mensajeDeError } from '../../services/api';
@@ -14,15 +14,23 @@ import {
   type PlanActividadListado,
 } from '../../services/actividadService';
 import { cobrar, pagarDeuda } from '../../services/cobrosService';
+import {
+  listarPromociones,
+  vistaPreviaDescuento,
+  type Promocion,
+  type VistaPrevia,
+} from '../../services/promocionesService';
 import { obtenerCuotaDeSocio } from '../../services/cobrosService';
 import type { MiCuota } from '../../services/socioService';
 import { listarSocios, listarTiposMembresia, type SocioListado } from '../../services/sociosService';
 import type { Pago, TipoMembresia } from '../../types';
 import { useAuthStore } from '../../store/authStore';
 import { useUiStore } from '../../store/uiStore';
+import { usePuedeAccion } from '../../hooks/usePermisos';
 import { formatearFecha, formatearFechaConAnio, formatearMoneda } from '../../utils/format';
 import { parsearFecha } from '../../utils/fechas';
 import { CobroActividadCard } from './CobroActividadCard';
+import { PromocionesPanel } from './PromocionesPanel';
 import { CobroClaseSueltaModal } from './CobroClaseSueltaModal';
 
 // Cobros (Recepción): buscar un socio, ver su cuenta, cobrarle. Reutiliza
@@ -60,6 +68,10 @@ interface DatosActividades {
 export function CobrosView() {
   const idUsuarioActor = useAuthStore((s) => s.usuario?.id_usuario);
   const showSnack = useUiStore((s) => s.showSnack);
+  // La accion mas restringida de la matriz: la tiene el Dueno y nadie mas.
+  // El Recepcionista SI ve el selector de promociones al cobrar —lo necesita—
+  // pero no este panel, que es donde se inventan.
+  const puedeGestionarPromociones = usePuedeAccion('gestionPromociones');
   const confirmDialog = useUiStore((s) => s.confirmDialog);
 
   const [socios, setSocios] = useState<SocioListado[] | null>(null);
@@ -134,6 +146,31 @@ export function CobrosView() {
     setInscripcionesActivas([]);
   }, []);
 
+  // Promociones VIGENTES nada más: el mostrador no tiene por qué poder elegir
+  // una de enero en marzo. El backend igual la rechazaría, pero ofrecerla y
+  // después negarla sería hacerle perder el tiempo a quien cobra.
+  const [promociones, setPromociones] = useState<Promocion[]>([]);
+  const [idPromocionElegida, setIdPromocionElegida] = useState('');
+  // Lo que saldría cobrar, calculado POR EL BACKEND. No se multiplica acá: la
+  // fórmula (con su piso en cero y su redondeo) vive en un solo lugar, y así
+  // el número que se ve antes de cobrar es el mismo que se va a registrar.
+  const [previa, setPrevia] = useState<VistaPrevia | null>(null);
+
+  useEffect(() => {
+    let cancelado = false;
+    listarPromociones(true)
+      .then((lista) => {
+        if (!cancelado) setPromociones(lista);
+      })
+      // Sin snack: quedarse sin promociones no impide cobrar a precio de
+      // lista, que es el caso normal. Un cartel de error acá alarmaría por
+      // algo que no bloquea nada.
+      .catch(() => undefined);
+    return () => {
+      cancelado = true;
+    };
+  }, []);
+
   const resultadosBusqueda = useMemo(() => {
     const texto = busqueda.trim().toLowerCase();
     if (!texto || !socios) return [];
@@ -144,22 +181,62 @@ export function CobrosView() {
 
   const tipoElegido = tiposMembresia?.find((t) => String(t.id_tipo_membresia) === idTipoElegido);
 
+  // Va DESPUES de `tipoElegido` y no junto al resto de los efectos: el array
+  // de dependencias se evalua durante el render, asi que ponerlo arriba lo
+  // leeria antes de su `const` y tiraria un ReferenceError por TDZ. No lo
+  // detecta tsc — la referencia es valida para el compilador, el problema es
+  // el orden en tiempo de ejecucion.
+  useEffect(() => {
+    if (idPromocionElegida === '' || !tipoElegido) {
+      setPrevia(null);
+      return;
+    }
+    let cancelado = false;
+    vistaPreviaDescuento(Number(idPromocionElegida), tipoElegido.id_tipo_membresia)
+      .then((v) => {
+        if (!cancelado) setPrevia(v);
+      })
+      .catch(() => {
+        if (!cancelado) setPrevia(null);
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [idPromocionElegida, tipoElegido]);
+
+
   const cobrarMembresiaClick = () => {
     if (!socioSeleccionado || !tipoElegido) return;
     const yaTiene = cuenta?.tieneMembresia;
+    // El monto del diálogo sale de la vista previa cuando hay promo: mostrar
+    // el precio de lista y después cobrar otro sería pedir una confirmación
+    // sobre una cifra que no es la que se va a registrar.
+    const aCobrar = previa ? previa.precioFinal : tipoElegido.precio_actual;
+    const detallePromo = previa
+      ? ` Incluye "${previa.promocion}": ${formatearMoneda(previa.descuento)} de descuento sobre ${formatearMoneda(previa.precioLista)}.`
+      : '';
     confirmDialog(
       `¿Cobrar "${tipoElegido.nombre}"?`,
-      `Se cobran ${formatearMoneda(tipoElegido.precio_actual)} en ${OPCIONES_METODO.find((o) => o.value === metodo)?.label}.${
+      `Se cobran ${formatearMoneda(aCobrar)} en ${OPCIONES_METODO.find((o) => o.value === metodo)?.label}.${detallePromo}${
         yaTiene ? ' Se suma a partir del vencimiento actual, sin perder los días ya pagados.' : ''
       }`,
       () => {
         setOcupado(true);
-        cobrar(socioSeleccionado.idSocio, tipoElegido.id_tipo_membresia, metodo)
+        cobrar(socioSeleccionado.idSocio, tipoElegido.id_tipo_membresia, metodo, {
+          idPromocion: idPromocionElegida === '' ? undefined : Number(idPromocionElegida),
+        })
           .then((resultado) => {
             showSnack(
-              `Cobrado: ${resultado.membresia.plan} hasta el ${formatearFecha(parsearFecha(resultado.membresia.vencimiento))}`,
+              `Cobrado: ${resultado.membresia.plan} hasta el ${formatearFecha(parsearFecha(resultado.membresia.vencimiento))}` +
+                (resultado.descuento
+                  ? ` — ${formatearMoneda(resultado.descuento)} de descuento por "${resultado.promocion}"`
+                  : ''),
               colors.statusOk,
             );
+            // La promo se limpia después de cobrar: dejarla puesta haría que
+            // el siguiente socio que atienda el mostrador se lleve el
+            // descuento sin que nadie lo haya decidido.
+            setIdPromocionElegida('');
             cargarCuenta(socioSeleccionado.idSocio);
           })
           .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger))
@@ -270,6 +347,11 @@ export function CobrosView() {
       <Topbar title="Cobros" subtitle={socioSeleccionado ? socioSeleccionado.nombreCompleto : undefined} />
 
       <div className="space-y-4 p-8">
+        {/* Fuera del flujo del socio a proposito: administrar descuentos no
+            depende de tener a nadie seleccionado. Arranca plegado para no
+            empujar el buscador hacia abajo. */}
+        {puedeGestionarPromociones && <PromocionesPanel />}
+
         {errorInicial && (
           <SectionCard>
             <p className="font-body text-sm text-status-danger">{errorInicial}</p>
@@ -419,11 +501,47 @@ export function CobrosView() {
                           }))}
                         />
                       </div>
+                      {/* Solo si hay alguna vigente: un selector vacío que
+                          dice "Sin promoción" y no ofrece nada más es ruido en
+                          la pantalla que más se usa del sistema. */}
+                      {promociones.length > 0 && (
+                        <div className="w-56">
+                          <SelectField
+                            label="Promoción"
+                            value={idPromocionElegida}
+                            onChange={setIdPromocionElegida}
+                            options={promociones.map((p) => ({
+                              value: String(p.idPromocion),
+                              label: `${p.nombre} — ${p.etiqueta}`,
+                            }))}
+                            placeholder="Sin promoción"
+                            icon={Tag}
+                          />
+                        </div>
+                      )}
                       <PrimaryButton
                         label={cuenta.tieneMembresia ? 'Cobrar renovación' : 'Cobrar membresía'}
                         onClick={cobrarMembresiaClick}
                         disabled={ocupado || !tipoElegido}
                       />
+                    </div>
+                  )}
+
+                  {/* Las tres cifras, no solo el final: quien cobra tiene que
+                      poder decirle al socio cuánto era y cuánto se le
+                      descontó. */}
+                  {previa && (
+                    <div className="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-md border border-border-active bg-surface-hover px-3 py-2">
+                      <Tag size={14} className="text-primary-volt" />
+                      <span className="font-body text-sm text-text-secondary line-through">
+                        {formatearMoneda(previa.precioLista)}
+                      </span>
+                      <span className="font-mono text-base font-semibold text-primary-volt">
+                        {formatearMoneda(previa.precioFinal)}
+                      </span>
+                      <span className="font-body text-xs text-text-muted">
+                        ahorra {formatearMoneda(previa.descuento)} con "{previa.promocion}"
+                      </span>
                     </div>
                   )}
                 </SectionCard>

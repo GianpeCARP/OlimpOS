@@ -4,6 +4,7 @@
 
 import flet as ft
 from app.config import Colors, Radius, Routes  # Paleta, radios y rutas
+from app.permisos import Accion                # Para el guard del historial médico
 from app.state import app_state               # Estado global con los datos de socios
 # Componentes reutilizables del sistema de diseño
 from app.components.ui import (build_topbar, status_badge, primary_button,
@@ -208,7 +209,9 @@ class SociosView:
                 ft.Text("Plan",    color=Colors.SUCCESS, size=12, weight=ft.FontWeight.W_600, expand=2),
                 ft.Text("Estado",  color=Colors.SUCCESS, size=12, weight=ft.FontWeight.W_600, expand=2),
                 ft.Text("Vence",   color=Colors.SUCCESS, size=12, weight=ft.FontWeight.W_600, expand=2),
-                ft.Text("Acciones", color=Colors.SUCCESS, size=12, weight=ft.FontWeight.W_600, expand=2),
+                # expand=3 y no 2 como el resto: acá entran hasta cuatro
+                # botones y con 2 el último quedaba cortado.
+                ft.Text("Acciones", color=Colors.SUCCESS, size=12, weight=ft.FontWeight.W_600, expand=3),
             ]),
             padding=ft.Padding.symmetric(horizontal=20, vertical=14),
             bgcolor=Colors.BG_SIDEBAR,
@@ -248,6 +251,15 @@ class SociosView:
                     ft.IconButton(ft.Icons.FITNESS_CENTER_ROUNDED, icon_color=Colors.PRIMARY_VOLT,
                                   icon_size=18, tooltip="Entrenadores a cargo",
                                   on_click=lambda e, x=s: self._entrenadores(x)),
+                    # El botón se OMITE, no se deshabilita, para quien no tenga
+                    # la acción. Un botón gris que no responde igual delata que
+                    # el socio tiene algo cargado, y el punto de que el
+                    # Recepcionista no vea esto es que no se entere.
+                    *([ft.IconButton(
+                        ft.Icons.MEDICAL_INFORMATION_ROUNDED, icon_color=Colors.INFO,
+                        icon_size=18, tooltip="Historial médico",
+                        on_click=lambda e, x=s: self._patologias(x),
+                    )] if app_state.puede(Accion.VER_HISTORIAL_MEDICO) else []),
                     # Baja o reactivación según cómo esté. El botón de "eliminar"
                     # que había acá prometía algo que el sistema no hace: la baja
                     # es LÓGICA —la fila queda, con su historial de pagos y
@@ -260,7 +272,7 @@ class SociosView:
                      ft.IconButton(ft.Icons.PERSON_ADD_ALT_1_ROUNDED, icon_color=Colors.SUCCESS,
                                    icon_size=18, tooltip="Reactivar",
                                    on_click=lambda e, x=s: self._reactivar(x))),
-                ], expand=2),
+                ], expand=3),
             ]),
             padding=ft.Padding.symmetric(horizontal=20, vertical=12),
             border=ft.Border.only(bottom=ft.BorderSide(1, Colors.BORDER)),
@@ -682,3 +694,323 @@ class SociosView:
         close_dialog(self.page, dlg)
         show_snack(self.page, resultado["mensaje"], Colors.SUCCESS)
         self._entrenadores(socio)
+
+    # ── Historial médico ──────────────────────────────────────────────────────
+    #
+    # Esta pantalla no la ve todo el que llega a Socios. El Recepcionista entra
+    # a la sección con acceso TOTAL y aun así no tiene VER_HISTORIAL_MEDICO,
+    # así que el botón que abre esto ni siquiera se dibuja para él. El guard de
+    # verdad está en el backend; el de acá es para no ofrecer algo que va a
+    # volver 403.
+
+    def _patologias(self, socio: dict):
+        """
+        Las condiciones de salud del socio.
+
+        Por qué un catálogo y no el campo "Observaciones" que ya tiene la ficha:
+        aquel es texto libre y sirve para una nota suelta, pero "asma, rodilla
+        operada, hipertensión" escrito en una celda no se puede filtrar ni
+        contar, y cada quien lo escribe distinto. Con el catálogo, "qué socios
+        tienen asma" es una consulta. Los dos campos conviven a propósito.
+
+        Las observaciones de CADA condición son lo que de verdad le sirve al
+        entrenador y el catálogo no puede saber: "rodilla derecha", "controlada
+        con medicación", "evitar impacto". El nombre dice QUÉ tiene; esto dice
+        qué hacer al respecto.
+        """
+        registradas = app_state.get_patologias_de_socio(socio["id"])
+        catalogo = app_state.get_catalogo_patologias()
+
+        # Las que ya tiene no se vuelven a ofrecer: el backend responde 409 y
+        # hacerle elegir algo que va a fallar es hacerle perder el tiempo.
+        # Mismo criterio que en el diálogo de entrenadores.
+        ya_tiene = {p["id"] for p in registradas}
+        elegibles = [c for c in catalogo if c["id"] not in ya_tiene]
+
+        sel_ref   = ft.Ref[ft.Dropdown]()
+        fecha_ref = ft.Ref[ft.TextField]()
+        obs_ref   = ft.Ref[ft.TextField]()
+
+        def agregar(e=None):
+            if not sel_ref.current or not sel_ref.current.value:
+                return
+            fecha = self._fecha_iso(self._texto(fecha_ref))
+            if fecha is False:
+                show_snack(self.page, "La fecha va como dd/mm/aaaa.",
+                           Colors.STATUS_DANGER)
+                return
+            self._resolver_patologias(
+                app_state.asignar_patologia(socio["id"], int(sel_ref.current.value),
+                                             fecha, self._texto(obs_ref)),
+                dlg, socio)
+
+        filas = []
+        for p in registradas:
+            detalle = p["observaciones"] or p["descripcion"] or "sin observaciones"
+            filas.append(ft.Row([
+                ft.Icon(ft.Icons.MEDICAL_INFORMATION_ROUNDED,
+                        color=Colors.INFO, size=16),
+                ft.Column([
+                    ft.Text(p["nombre"], color=Colors.TEXT_PRIMARY, size=13),
+                    ft.Text(f"desde {p['desde']} · {detalle}",
+                            color=Colors.TEXT_MUTED, size=11),
+                ], spacing=0, tight=True, expand=True),
+                ft.IconButton(
+                    ft.Icons.EDIT_ROUNDED, icon_color=Colors.INFO, icon_size=16,
+                    tooltip="Editar fecha y observaciones",
+                    on_click=lambda e, x=p: self._editar_patologia(socio, x, dlg),
+                ),
+                ft.IconButton(
+                    ft.Icons.CLOSE_ROUNDED, icon_color=Colors.TEXT_MUTED, icon_size=16,
+                    tooltip="Quitarla de la ficha",
+                    on_click=lambda e, i=p["id"]: self._resolver_patologias(
+                        app_state.quitar_patologia(socio["id"], i), dlg, socio),
+                ),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+
+        if not registradas:
+            filas.append(ft.Text("No tiene ninguna condición registrada.",
+                                 color=Colors.TEXT_MUTED, size=12))
+
+        contenido = [
+            ft.Text("Lo que hay que tener en cuenta al armarle una rutina o "
+                    "una dieta.", color=Colors.TEXT_MUTED, size=11),
+            ft.Container(height=12),
+            *filas,
+            ft.Container(height=12),
+            ft.Divider(height=1, color=Colors.BORDER),
+            ft.Container(height=12),
+        ]
+
+        if elegibles:
+            contenido += [
+                ft.Dropdown(
+                    ref=sel_ref, label="Agregar condición",
+                    options=[ft.dropdown.Option(key=str(c["id"]), text=c["nombre"])
+                             for c in elegibles],
+                    value=str(elegibles[0]["id"]),
+                    color=Colors.TEXT_PRIMARY, bgcolor=Colors.BG_INPUT,
+                    border_color=Colors.BORDER, focused_border_color=Colors.ACCENT,
+                    border_radius=Radius.MD,
+                ),
+                ft.Container(height=10),
+                input_field("Fecha de diagnóstico (opcional)", "dd/mm/aaaa",
+                            ref=fecha_ref, icon=ft.Icons.CALENDAR_TODAY_OUTLINED),
+                ft.Container(height=10),
+                input_field("Observaciones (opcional)",
+                            "Ej: rodilla derecha, evitar impacto",
+                            ref=obs_ref, multiline=True),
+                ft.Container(height=10),
+                ft.Row([ft.TextButton("Agregar",
+                                       style=ft.ButtonStyle(color=Colors.ACCENT),
+                                       on_click=agregar)],
+                       alignment=ft.MainAxisAlignment.END),
+            ]
+        elif catalogo:
+            contenido.append(ft.Text("Ya tiene registradas todas las condiciones "
+                                     "del catálogo.", color=Colors.TEXT_MUTED, size=11))
+        else:
+            # Sin esto la pantalla nace muerta: la base entregada viene con el
+            # catálogo vacío, y sin una condición cargada no hay nada para
+            # elegir ni forma de salir del paso desde acá.
+            contenido.append(ft.Text("El catálogo está vacío. Cargá la primera "
+                                     "condición con el botón de abajo.",
+                                     color=Colors.STATUS_WARN, size=11))
+
+        contenido += [
+            ft.Container(height=8),
+            ft.Row([
+                ft.TextButton(
+                    "¿No está en la lista? Agregarla al catálogo",
+                    style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                    icon=ft.Icons.ADD_ROUNDED,
+                    on_click=lambda e: self._nueva_del_catalogo(socio, dlg),
+                ),
+            ], alignment=ft.MainAxisAlignment.START),
+        ]
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f"Historial médico de {socio['nombre']}",
+                          color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
+            bgcolor=Colors.BG_CARD,
+            content=ft.Container(
+                width=460,
+                height=470,
+                content=ft.Column(contenido, spacing=8, tight=True,
+                                  scroll=ft.ScrollMode.AUTO),
+            ),
+            actions=[
+                ft.TextButton("Cerrar",
+                              style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                              on_click=lambda e: close_dialog(self.page, dlg)),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        open_dialog(self.page, dlg)
+
+    def _editar_patologia(self, socio: dict, patologia: dict, padre):
+        """
+        Cambia fecha y observaciones de una condición ya registrada.
+
+        Existe en vez de "borrar y volver a cargar" porque las observaciones
+        cambian más seguido que el diagnóstico —una lesión que mejora, una
+        medicación que se ajusta— y rehacerla perdería la fecha original.
+        """
+        close_dialog(self.page, padre)
+
+        fecha_ref = ft.Ref[ft.TextField]()
+        obs_ref   = ft.Ref[ft.TextField]()
+
+        def guardar(e=None):
+            fecha = self._fecha_iso(self._texto(fecha_ref))
+            if fecha is False:
+                show_snack(self.page, "La fecha va como dd/mm/aaaa.",
+                           Colors.STATUS_DANGER)
+                return
+            resultado = app_state.editar_patologia_de_socio(
+                socio["id"], patologia["id"], fecha, self._texto(obs_ref))
+            if not resultado["ok"]:
+                show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+                return
+            close_dialog(self.page, dlg)
+            show_snack(self.page, resultado["mensaje"], Colors.SUCCESS)
+            self._patologias(socio)
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(patologia["nombre"],
+                          color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
+            bgcolor=Colors.BG_CARD,
+            content=ft.Container(
+                width=420,
+                content=ft.Column([
+                    ft.Text("El nombre no se edita acá: sale del catálogo y "
+                            "cambiarlo se lo cambiaría a todos los socios que "
+                            "lo tengan.", color=Colors.TEXT_MUTED, size=11),
+                    ft.Container(height=12),
+                    input_field("Fecha de diagnóstico", "dd/mm/aaaa",
+                                ref=fecha_ref, icon=ft.Icons.CALENDAR_TODAY_OUTLINED,
+                                value=patologia["desde"] if patologia["fecha_iso"] else ""),
+                    ft.Container(height=12),
+                    input_field("Observaciones",
+                                "Ej: rodilla derecha, evitar impacto",
+                                ref=obs_ref, multiline=True,
+                                value=patologia["observaciones"]),
+                ], spacing=0, tight=True),
+            ),
+            actions=[
+                ft.TextButton("Cancelar",
+                              style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                              on_click=lambda e: self._volver_a_patologias(dlg, socio)),
+                ft.TextButton("Guardar",
+                              style=ft.ButtonStyle(color=Colors.ACCENT),
+                              on_click=guardar),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        open_dialog(self.page, dlg)
+
+    def _nueva_del_catalogo(self, socio: dict, padre):
+        """
+        Suma una condición al CATÁLOGO, no a la ficha del socio.
+
+        Son dos pasos y no uno a propósito: el catálogo es compartido por todo
+        el gimnasio, y dejar que se cargue al vuelo mientras se completa una
+        ficha es exactamente cómo terminan conviviendo "Asma", "asma" y "ASMA"
+        —que es lo que el catálogo venía a evitar—. El backend además compara
+        sin distinguir mayúsculas y rechaza la repetida.
+        """
+        close_dialog(self.page, padre)
+
+        nombre_ref = ft.Ref[ft.TextField]()
+        desc_ref   = ft.Ref[ft.TextField]()
+
+        def guardar(e=None):
+            nombre = self._texto(nombre_ref)
+            if len(nombre) < 2:
+                show_snack(self.page, "El nombre de la condición es obligatorio.",
+                           Colors.STATUS_DANGER)
+                return
+            resultado = app_state.crear_patologia(nombre, self._texto(desc_ref) or None)
+            if not resultado["ok"]:
+                show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+                return
+            close_dialog(self.page, dlg)
+            show_snack(self.page, resultado["mensaje"], Colors.SUCCESS)
+            # Se vuelve al historial del socio, que es de donde vino: ahora la
+            # condición nueva aparece en el selector y se la puede asignar.
+            self._patologias(socio)
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Nueva condición del catálogo",
+                          color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
+            bgcolor=Colors.BG_CARD,
+            content=ft.Container(
+                width=420,
+                content=ft.Column([
+                    ft.Text("Queda disponible para todos los socios, no sólo "
+                            "para este.", color=Colors.TEXT_MUTED, size=11),
+                    ft.Container(height=12),
+                    input_field("Nombre", "Ej: Asma", ref=nombre_ref,
+                                icon=ft.Icons.MEDICAL_INFORMATION_OUTLINED),
+                    ft.Container(height=12),
+                    input_field("Descripción (opcional)",
+                                "Qué implica para el entrenamiento",
+                                ref=desc_ref, multiline=True),
+                ], spacing=0, tight=True),
+            ),
+            actions=[
+                ft.TextButton("Cancelar",
+                              style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                              on_click=lambda e: self._volver_a_patologias(dlg, socio)),
+                ft.TextButton("Guardar",
+                              style=ft.ButtonStyle(color=Colors.ACCENT),
+                              on_click=guardar),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        open_dialog(self.page, dlg)
+
+    def _volver_a_patologias(self, dlg, socio: dict):
+        """Cancelar en un sub-diálogo devuelve al historial, no a la grilla."""
+        close_dialog(self.page, dlg)
+        self._patologias(socio)
+
+    def _resolver_patologias(self, resultado: dict, dlg, socio: dict):
+        """
+        Igual que `_resolver_dialogo` pero reabriendo el historial médico.
+
+        Se reabre en vez de cerrar por el mismo motivo que en entrenadores:
+        cargar condiciones es una tarea de a varias —se agregan dos, se corrige
+        una— y cerrar en cada paso obligaría a buscar al socio en la grilla
+        cada vez.
+        """
+        if not resultado["ok"]:
+            show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+            return
+        close_dialog(self.page, dlg)
+        show_snack(self.page, resultado["mensaje"], Colors.SUCCESS)
+        self._patologias(socio)
+
+    @staticmethod
+    def _fecha_iso(texto: str):
+        """
+        'dd/mm/aaaa' -> 'aaaa-mm-dd' para mandarle al backend. Vacío -> None.
+        Devuelve False si no se entiende, para poder distinguir "no puso fecha"
+        de "puso cualquier cosa" — con None para los dos casos, un error de
+        tipeo se guardaría en silencio como si no hubiera escrito nada.
+
+        Se parsea acá y no se usa un DatePicker porque la fecha de diagnóstico
+        suele ser vieja e imprecisa ("fue en 2019"), y elegirla en un
+        calendario obliga a navegar años hacia atrás para un dato opcional.
+        """
+        texto = (texto or "").strip()
+        if not texto:
+            return None
+        try:
+            dia, mes, anio = texto.split("/")
+            return f"{int(anio):04d}-{int(mes):02d}-{int(dia):02d}"
+        except (ValueError, AttributeError):
+            return False

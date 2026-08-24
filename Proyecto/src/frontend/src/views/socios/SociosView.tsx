@@ -11,6 +11,8 @@ import {
 } from '../../services/sociosService';
 import { useUiStore } from '../../store/uiStore';
 import { useAccesoSeccion, usePuedeAccion } from '../../hooks/usePermisos';
+import { EntrenadoresModal } from './EntrenadoresModal';
+import { PatologiasModal } from './PatologiasModal';
 import { SocioFormModal } from './SocioFormModal';
 import { SocioTableRow } from './SocioTableRow';
 import { SortableHeader } from './SortableHeader';
@@ -67,6 +69,18 @@ export function SociosView() {
   // el alta y la baja exigen además la acción puntual de la matriz.
   const puedeEditar = useAccesoSeccion(Routes.SOCIOS) === Acceso.TOTAL;
   const puedeAltaBaja = usePuedeAccion('altaBajaSocios');
+  // Un tercer permiso, que no se deduce de los otros dos ni del acceso a la
+  // sección: el Recepcionista tiene Socios en TOTAL y esta acción en false,
+  // mientras que el Entrenador está justo al revés. Es la única de la matriz
+  // donde el mostrador queda por debajo del Entrenador, y el motivo está en el
+  // docstring de routers/patologias.py.
+  const puedeVerHistorialMedico = usePuedeAccion('verHistorialMedico');
+  // Asignar un entrenador pide `gestionRutinas` y NO `altaBajaSocios`: no es
+  // un dato administrativo del socio, es una decisión de entrenamiento. Con
+  // esa acción la tienen el Dueño, el Recepcionista y el propio Entrenador,
+  // que es quien toma un cliente nuevo. Ver el bloque ENTRENADOR A CARGO de
+  // sociosService.
+  const puedeGestionarRutinas = usePuedeAccion('gestionRutinas');
 
   const [socios, setSocios] = useState<SocioListado[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -84,6 +98,11 @@ export function SociosView() {
   });
 
   const [modal, setModal] = useState<{ socio: SocioListado | null } | null>(null);
+  // Estado propio y no un tercer valor dentro de `modal`: el historial médico
+  // no comparte nada con el formulario de alta/edición —ni datos ni permiso—
+  // y meterlos en el mismo estado obligaría a discriminar el tipo en cada uso.
+  const [historial, setHistorial] = useState<SocioListado | null>(null);
+  const [entrenadores, setEntrenadores] = useState<SocioListado | null>(null);
 
   useEffect(() => {
     let cancelado = false;
@@ -285,9 +304,12 @@ export function SociosView() {
                           socio={socio}
                           puedeEditar={puedeEditar}
                           puedeAltaBaja={puedeAltaBaja}
+                          puedeVerHistorialMedico={puedeVerHistorialMedico}
                           onEditar={() => setModal({ socio })}
+                          onEntrenadores={() => setEntrenadores(socio)}
                           onDarDeBaja={() => pedirBaja(socio)}
                           onActivar={() => activar(socio)}
+                          onHistorialMedico={() => setHistorial(socio)}
                         />
                       ))}
                     </tbody>
@@ -304,6 +326,23 @@ export function SociosView() {
           socio={modal.socio}
           onClose={() => setModal(null)}
           onGuardado={actualizarEnLista}
+        />
+      )}
+
+      {/* No recarga la grilla al cerrar: las patologías no son una columna de
+          la tabla, así que nada de lo que se toca acá adentro cambia lo que se
+          está viendo detrás. */}
+      {historial && (
+        <PatologiasModal socio={historial} onClose={() => setHistorial(null)} />
+      )}
+
+      {/* Tampoco recarga la grilla: el entrenador a cargo no es una columna
+          de la tabla. */}
+      {entrenadores && (
+        <EntrenadoresModal
+          socio={entrenadores}
+          puedeGestionar={puedeGestionarRutinas}
+          onClose={() => setEntrenadores(null)}
         />
       )}
     </div>

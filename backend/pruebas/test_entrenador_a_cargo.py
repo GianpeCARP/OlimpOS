@@ -171,6 +171,52 @@ for path, cuerpo in [(f"/socios/9999/entrenadores", {"id_entrenador": ID_BETO}),
     print(f"   {s}  {r.get('detail')}")
     chequear(s == 404, "404")
 
+# -- El otro lado del mostrador ----------------------------------------------
+print("\n11. El SOCIO ve quien lo entrena, desde el portal")
+# Este paso faltaba y la PWA lo necesita: MiEntrenadorCard consume
+# /portal/mi-entrenador, que hasta ahora no lo tocaba ninguna suite. El socio
+# de arriba se creo con crear_cuenta=False, asi que hace falta uno con cuenta.
+s, r = pedir("POST", "/socios", {"nombre": "Lucia", "apellido": "Portal",
+    "dni": "61000222", "email": "lucia@ejemplo.com", "id_sede": 1,
+    "crear_cuenta": True}, tok=STAFF)
+ID_LUCIA = r["id_socio"]
+TOK_LUCIA = entrar(r["username"], r["password_temporal"], "Clave2026!")
+chequear(bool(TOK_LUCIA), "la socia entra a su portal")
+
+pedir("POST", f"/socios/{ID_LUCIA}/entrenadores", {"id_entrenador": ID_BETO}, tok=STAFF)
+
+s, mios = pedir("GET", "/portal/mi-entrenador", tok=TOK_LUCIA)
+print(f"   {s}  {[e['entrenador'] for e in mios] if s == 200 else mios}")
+chequear(s == 200 and len(mios) == 1, "ve al que tiene a cargo")
+# Los cinco campos que lee MiEntrenadorCard. Si el backend renombra uno, la
+# card muestra undefined y nadie se entera hasta abrir la pantalla.
+esperados = {"id_asignacion", "id_entrenador", "entrenador", "especialidad", "fecha_inicio"}
+chequear(s == 200 and esperados.issubset(mios[0]), "con los campos que espera la PWA")
+
+print("\n12. Y NO ve el historial, solo lo vigente")
+# A diferencia del endpoint del personal: al socio le interesa a quien
+# preguntarle hoy, no quien lo entrenaba en marzo.
+#
+# Hace falta una entrenadora NUEVA y no se puede reusar a Ana: el paso 9 le
+# dio de baja el empleado, y el backend —con razon— no deja asignar a alguien
+# que ya no trabaja en el gimnasio.
+s, r = pedir("POST", "/personal", {"nombre": "Caro", "apellido": "Entrena",
+    "dni": "61000333", "rol": "Entrenador", "especialidad": "Pilates",
+    "id_sede": 1, "crear_cuenta": False}, tok=STAFF)
+s, lista3 = pedir("GET", "/personal/entrenadores", tok=STAFF)
+ID_CARO = next(e["id"] for e in lista3 if e["nombre"].startswith("Caro"))
+
+pedir("POST", f"/socios/{ID_LUCIA}/entrenadores", {"id_entrenador": ID_CARO}, tok=STAFF)
+s, todas = pedir("GET", f"/socios/{ID_LUCIA}/entrenadores", tok=STAFF)
+id_para_cerrar = next(a["id_asignacion"] for a in todas if a["id_entrenador"] == ID_CARO)
+pedir("POST", f"/socios/entrenadores/asignaciones/{id_para_cerrar}/finalizar", tok=STAFF)
+
+s, mios = pedir("GET", "/portal/mi-entrenador", tok=TOK_LUCIA)
+s2, staff = pedir("GET", f"/socios/{ID_LUCIA}/entrenadores", tok=STAFF)
+print(f"   socio ve {len(mios)}, el personal ve {len(staff)} (con la finalizada)")
+chequear(len(mios) == 1, "el socio solo ve la vigente")
+chequear(len(staff) == 2, "el personal sigue viendo el historial completo")
+
 print("\n" + "=" * 74)
 if fallos:
     print(f"FALLARON {len(fallos)}:")

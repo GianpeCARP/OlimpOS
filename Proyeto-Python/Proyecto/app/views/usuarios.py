@@ -2,7 +2,8 @@
 # views/usuarios.py — Gestión de usuarios del sistema
 # =============================================================================
 import flet as ft
-from app.config import Colors, Routes, alpha
+from app import permisos
+from app.config import Colors, NAV_ITEMS, Routes, alpha
 from app.state import app_state
 from app.components.ui import (build_topbar, status_badge, primary_button,
                                 show_snack, open_dialog, close_dialog)
@@ -24,18 +25,52 @@ ROLE_CONFIG = {
 
 # Secciones que ve cada rol, para la tarjeta informativa de abajo.
 #
-# Es un RESUMEN para mostrar en pantalla, no la fuente de verdad: quien decide
-# de verdad es la matriz de permisos del backend (permisos.py), que además
-# distingue tres niveles de acceso por sección y no sólo "ve / no ve". Si las
-# dos se contradicen, manda el backend — acá se vería mal, allá se rechaza.
+# SE CALCULA DESDE LA MATRIZ. Antes era un diccionario escrito a mano —una
+# CUARTA copia de los permisos, además de app/permisos.py, backend/permisos.py
+# y config.ts de la PWA— y estaba mal para los CUATRO roles:
+#
+#     Recepcionista : decía que veía Actividades (no la ve) y NO mencionaba
+#                     Usuarios, Rutinas, Nutrición, Personal ni Recepción
+#                     (las ve todas). Era la contradicción más visible: la
+#                     pantalla de Usuarios describía permisos que la propia
+#                     app no respetaba.
+#     Entrenador    : decía Dashboard, Asistencia y Actividades. Ninguna.
+#     Nutricionista : decía Dashboard. No la ve.
+#     Dueño         : no mencionaba Recepción.
+#
+# El comentario viejo decía "si las dos se contradicen, manda el backend". Es
+# cierto, pero no alcanza: la tarjeta existe para EXPLICARLE a alguien qué
+# puede hacer cada rol, y una explicación equivocada es peor que ninguna —
+# manda a discutir con la app en vez de leerla.
+#
+# `check_permisos.py` compara las TRES copias de la matriz entre sí; a esta
+# cuarta no la miraba nadie, porque no era una matriz sino una lista suelta.
+# Derivarla elimina el problema de raíz: no hay nada que sincronizar.
+def _secciones_de(rol: str) -> list[str]:
+    """
+    Las secciones que ve un rol, leídas de la matriz.
+
+    Marca las de sólo lectura con un asterisco: el Recepcionista "ve Personal"
+    y el Entrenador también "ve Socios", pero ninguno de los dos puede tocar
+    nada ahí, y una lista que no distingue los dos casos vuelve a explicar mal.
+    """
+    salida = []
+    for item in NAV_ITEMS:
+        nivel = permisos.acceso_a_seccion([rol], item["route"])
+        if nivel == permisos.Acceso.NINGUNO:
+            continue
+        salida.append(item["label"] + ("*" if nivel == permisos.Acceso.LECTURA else ""))
+    return salida
+
+
+# El Socio no aparece en NAV_ITEMS —esta app es la del personal— así que su
+# resumen se escribe aparte. No es una excepción a la regla de arriba: es que
+# sus secciones no existen en este menú.
 PERMISOS_RESUMEN = {
-    "dueno":         ["Dashboard", "Socios", "Personal", "Cobros", "Asistencia",
-                      "Rutinas", "Nutrición", "Actividades", "Usuarios"],
-    "entrenador":    ["Dashboard", "Socios", "Asistencia", "Rutinas", "Actividades"],
-    "nutricionista": ["Dashboard", "Socios", "Nutrición"],
-    "recepcionista": ["Dashboard", "Socios", "Cobros", "Asistencia", "Actividades"],
-    "socio":         ["Portal del socio"],
+    rol: _secciones_de(rol)
+    for rol in ("dueno", "recepcionista", "entrenador", "nutricionista")
 }
+PERMISOS_RESUMEN["socio"] = ["Portal del socio (usa la web, no esta app)"]
 
 
 class UsuariosView:
@@ -135,33 +170,82 @@ class UsuariosView:
             e.control.bgcolor = Colors.BG_INPUT if e.data == "true" else ft.Colors.TRANSPARENT
             e.control.update()
 
-        acciones = [
-            ft.IconButton(ft.Icons.KEY_ROUNDED, icon_color=Colors.WARNING,
-                          icon_size=18, tooltip="Resetear contraseña",
-                          on_click=lambda e, x=u: self._reset_password(x)),
-        ]
+        # ── Las dos reglas de FILA ────────────────────────────────────────
+        #
+        # No son de sección: el Recepcionista tiene Usuarios en TOTAL y la
+        # acción `gestionUsuarios` en true, así que llega acá con permiso para
+        # operar. Lo que lo limita es SOBRE QUÉ FILA, y eso no lo puede decir
+        # la matriz de permisos — depende de a quién pertenece la cuenta.
+        #
+        # Las dos las aplica el backend (`_validar_jerarquia` y
+        # `_validar_no_es_propia` en routers/usuarios.py) y las dos estaban
+        # implementadas en la PWA (`esCuentaDeMayorJerarquia` /
+        # `esCuentaPropiaRestringida` en config.ts). Acá NO estaban: la vista
+        # dibujaba los tres botones en todas las filas, incluida la del Dueño,
+        # y como esa es la PRIMERA de la grilla, el Recepcionista apretaba,
+        # recibía un 403 y se iba con la idea de que no podía modificar NADA.
+        # Podía: todas las demás.
+        #
+        # Se OMITEN los botones en vez de deshabilitarlos, igual que en el
+        # historial médico: uno gris que no responde no explica por qué.
+
+        # Regla 2 — jerarquía: sólo un Dueño opera sobre la cuenta de un Dueño.
+        # Incluye el reseteo, que es justamente el vector de escalación:
+        # mostrarle la contraseña temporal del Dueño a un rol inferior le
+        # entrega la cuenta entera.
+        es_cuenta_protegida = ("dueno" in u.get("roles", [])
+                               and not app_state.puede_editar_duenos())
+
+        # Regla 1 — nadie fuera del Dueño se toca a sí mismo. Resetearse la
+        # propia contraseña SÍ está permitido (no hay riesgo y es útil), así
+        # que esta regla no aplica al botón de la llave.
+        es_cuenta_propia = (u.get("usuario") == app_state.get_user_username()
+                            and not app_state.puede_editar_duenos())
+
+        acciones = []
+
+        if not es_cuenta_protegida:
+            acciones.append(
+                ft.IconButton(ft.Icons.KEY_ROUNDED, icon_color=Colors.WARNING,
+                              icon_size=18, tooltip="Resetear contraseña",
+                              on_click=lambda e, x=u: self._reset_password(x))
+            )
 
         # El botón de desbloquear sólo aparece si la cuenta está bloqueada. No
         # es una preferencia estética: desbloquear una cuenta que no lo está no
         # hace nada, y tenerlo siempre a la vista invita a apretarlo pensando
         # que "arregla" un problema distinto (una cuenta desactivada, por
         # ejemplo, que se arregla con el botón de al lado).
-        if bloqueado:
+        if bloqueado and not es_cuenta_protegida and not es_cuenta_propia:
             acciones.append(
                 ft.IconButton(ft.Icons.LOCK_OPEN_ROUNDED, icon_color=Colors.INFO,
                               icon_size=18, tooltip="Desbloquear",
                               on_click=lambda e, x=u: self._desbloquear(x))
             )
 
-        acciones.append(
-            ft.IconButton(
-                ft.Icons.BLOCK_ROUNDED if activo else ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED,
-                icon_color=Colors.DANGER if activo else Colors.SUCCESS,
-                icon_size=18,
-                tooltip="Desactivar" if activo else "Activar",
-                on_click=lambda e, x=u: self._cambiar_estado(x),
+        if not es_cuenta_protegida and not es_cuenta_propia:
+            acciones.append(
+                ft.IconButton(
+                    ft.Icons.BLOCK_ROUNDED if activo else ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED,
+                    icon_color=Colors.DANGER if activo else Colors.SUCCESS,
+                    icon_size=18,
+                    tooltip="Desactivar" if activo else "Activar",
+                    on_click=lambda e, x=u: self._cambiar_estado(x),
+                )
             )
-        )
+
+        # Sin botones queda una celda vacía y eso se lee como un error de la
+        # app. Se dice por qué, que es la diferencia entre "no se puede" y
+        # "algo se rompió".
+        if not acciones:
+            motivo = ("Sólo un dueño" if es_cuenta_protegida else "Tu propia cuenta")
+            acciones.append(
+                ft.Text(motivo, color=Colors.TEXT_MUTED, size=11,
+                        tooltip=("Sólo un dueño puede operar sobre la cuenta de "
+                                 "un dueño." if es_cuenta_protegida else
+                                 "Nadie modifica el estado de su propia cuenta: "
+                                 "quedarías afuera del sistema."))
+            )
 
         # Aviso de que todavía no cambió la contraseña inicial. Es informativo
         # y aparece al lado del estado porque es exactamente eso: un estado

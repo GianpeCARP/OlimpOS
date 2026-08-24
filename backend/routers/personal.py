@@ -35,7 +35,7 @@ sería crear una cuenta que el login rechaza por no tener roles.
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from auth import generar_password_temporal, generar_username, hashear_password
 from database import get_db
@@ -127,7 +127,19 @@ def listar_personal(
     Lista el personal. Alcanza con LECTURA: el Recepcionista ve la grilla pero
     no puede dar de alta ni de baja (eso es exclusivo del Dueño).
     """
-    empleados = db.query(Empleado).order_by(Empleado.id_empleado).all()
+    # Misma carga anticipada que en /usuarios y /socios: el rol de un empleado
+    # se deriva de cual de los tres subtipos tiene fila, y con carga perezosa
+    # eso eran tres consultas por empleado. Ver CARGA_DE_ROLES en
+    # routers/usuarios.py.
+    empleados = (db.query(Empleado)
+                 .options(
+                     selectinload(Empleado.persona),
+                     selectinload(Empleado.entrenador),
+                     selectinload(Empleado.nutricionista),
+                     selectinload(Empleado.recepcionista),
+                 )
+                 .order_by(Empleado.id_empleado)
+                 .all())
     return [_a_empleado_out(e) for e in empleados]
 
 

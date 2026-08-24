@@ -24,6 +24,8 @@ Gemelo de `services/api.ts` en la PWA: mismo rol, mismo contrato.
 """
 
 import os
+import threading
+import time
 
 import requests
 from dotenv import load_dotenv
@@ -57,9 +59,17 @@ def guardar_token(token: str) -> None:
 
 
 def limpiar_token() -> None:
-    """Se llama en el logout. Sin esto, la sesión siguiente heredaría el token."""
+    """
+    Se llama en el logout. Sin esto, la sesión siguiente heredaría el token.
+
+    Tira también el cache de lecturas, y eso NO es opcional: las respuestas
+    guardadas se trajeron con los permisos de la sesión que se está cerrando.
+    Sin este borrado, un Recepcionista que entrara después del Dueño podría
+    leer del cache una respuesta que a él el backend le habría negado.
+    """
     global _token
     _token = None
+    limpiar_cache()
 
 
 def hay_token() -> bool:
@@ -146,19 +156,219 @@ def _pedir(metodo: str, path: str, json_body: dict | None = None) -> dict:
     return _procesar(respuesta)
 
 
-def _get(path: str) -> dict:
-    return _pedir("GET", path)
+# =============================================================================
+# CACHE DE LECTURAS  (servir-y-refrescar)
+# =============================================================================
+#
+# LOS NUMEROS QUE JUSTIFICAN ESTO, medidos contra la base real:
+#
+#     SELECT 1 en una conexion ya abierta ......  44 ms   <- piso fisico (RTT)
+#     Abrir una conexion NUEVA (TLS + auth) .... 825 ms
+#     GET /socios completo (6 consultas) ....... 450 ms
+#     GET /personal ............................ 570 ms
+#
+# La base esta en Neon, region sa-east-1. Esos 44 ms son la velocidad de la luz
+# hasta Sao Paulo y no se pueden bajar desde el codigo: lo unico que se puede
+# hacer es preguntar MENOS veces y NO ESPERAR la respuesta.
+#
+# POR QUE NO ALCANZABA EL CACHE CON TTL A SECAS
+# =============================================
+# La primera version guardaba la respuesta 15 segundos y despues la tiraba. El
+# sintoma que dejaba es exactamente el que se reporto:
+#
+#     "si cambias entre paneles rapido cargan al toque, pero si esperas un rato
+#      vuelve la tardanza, y a veces aparece de la nada"
+#
+# Claro: dentro de la ventana habia cache y era instantaneo; pasada la ventana
+# se volvia a esperar los 450 ms completos. El cache escondia el problema en
+# vez de resolverlo, y encima lo volvia impredecible — la misma accion tardaba
+# distinto segun cuanto habias tardado vos en hacerla.
+#
+# COMO FUNCIONA AHORA
+# ===================
+# Se sirve SIEMPRE lo que hay en cache, al instante, aunque este vencido. Si
+# esta vencido, ademas se dispara un refresco EN SEGUNDO PLANO que actualiza la
+# entrada para la proxima vez. La pantalla nunca espera a la red: en el peor
+# caso muestra datos de hace un minuto y se corrige sola.
+#
+#     primera visita  -> se espera (no hay nada que mostrar)
+#     resto           -> instantaneo, siempre
+#
+# Es el patron "stale-while-revalidate" de HTTP, y encaja porque los datos de
+# este sistema son de lectura frecuente y escritura rara: la grilla de socios
+# se mira cien veces por cada vez que se da de alta a alguien.
+#
+# LO QUE ESCRIBE, INVALIDA TODO
+# =============================
+# Cualquier POST/PUT/DELETE borra el cache entero, no solo la ruta que toco. Es
+# a proposito: cobrar una membresia cambia /socios (el estado del socio),
+# /cobros/socio/{id}, /dashboard/stats y /cobros/deudas a la vez. Invalidar
+# "solo lo relacionado" exigiria un mapa de dependencias entre rutas mantenido
+# a mano, y el dia que alguien agregue un endpoint y se olvide de anotarlo, la
+# pantalla mostraria un dato viejo DESPUES de cobrar — que es el unico momento
+# en que un dato viejo es inaceptable. Tirar todo cuesta un pedido de mas y no
+# se puede olvidar.
+#
+# Por eso tambien el refresco en segundo plano NO pisa una entrada si mientras
+# tanto hubo una escritura: se compara la "generacion" del cache.
+
+# Cuanto tarda una entrada en considerarse vieja. Pasado esto se sigue
+# sirviendo igual, pero se refresca por atras.
+FRESCURA = 30
+
+_cache: dict[str, tuple[float, dict]] = {}
+_refrescando: set[str] = set()
+_candado = threading.Lock()
+
+# Sube en cada escritura y en cada logout. Un refresco en vuelo que termina
+# despues de una escritura descarta su resultado en vez de resucitar un dato
+# viejo.
+_generacion = 0
+
+
+def limpiar_cache() -> None:
+    """
+    Tira el cache entero. La llaman todas las escrituras y el logout.
+
+    Sube la generacion para que los refrescos que ya estaban en vuelo no
+    escriban su resultado: salieron antes del cambio, asi que traen datos
+    anteriores.
+    """
+    global _generacion
+    with _candado:
+        _cache.clear()
+        _generacion += 1
+
+
+def _refrescar_en_segundo_plano(path: str, generacion: int) -> None:
+    """Vuelve a pedir `path` sin que nadie espere, y actualiza el cache."""
+    try:
+        respuesta = _pedir("GET", path)
+        if not respuesta.get("ok"):
+            return
+        with _candado:
+            # Si hubo una escritura mientras esto viajaba, lo que trae ya es
+            # viejo: se descarta.
+            if generacion == _generacion:
+                _cache[path] = (time.monotonic(), respuesta)
+    except Exception:  # noqa: BLE001
+        # Un refresco que falla no es noticia: se sigue sirviendo lo que hay y
+        # el proximo intento lo arregla. Propagar el error desde un hilo de
+        # fondo mataria la app por algo que el usuario no pidio.
+        pass
+    finally:
+        with _candado:
+            _refrescando.discard(path)
+
+
+def _get(path: str, cachear: bool = True, frescura: float | None = None) -> dict:
+    """
+    GET que devuelve al instante si ya se pidio antes.
+
+    `cachear=False` para lo que no debe guardarse nunca. `frescura` para las
+    rutas que envejecen mas rapido que el resto (el panel del mostrador).
+    """
+    if not cachear:
+        return _pedir("GET", path)
+
+    limite = FRESCURA if frescura is None else frescura
+
+    with _candado:
+        guardado = _cache.get(path)
+        generacion = _generacion
+
+    if guardado is not None:
+        cuando, respuesta = guardado
+        if time.monotonic() - cuando > limite:
+            # Vencido: se devuelve igual y se refresca por atras. Un solo hilo
+            # por ruta — sin este control, entrar y salir de un panel diez
+            # veces dispararia diez pedidos identicos.
+            with _candado:
+                if path not in _refrescando:
+                    _refrescando.add(path)
+                    threading.Thread(
+                        target=_refrescar_en_segundo_plano,
+                        args=(path, generacion),
+                        name=f"refrescar{path}",
+                        daemon=True,
+                    ).start()
+        return respuesta
+
+    # Primera vez: no hay nada que mostrar, hay que esperar.
+    respuesta = _pedir("GET", path)
+    # Solo se cachean las respuestas OK: cachear un error dejaria la pantalla
+    # rota aunque el backend ya se hubiera recuperado.
+    if respuesta.get("ok"):
+        with _candado:
+            if generacion == _generacion:
+                _cache[path] = (time.monotonic(), respuesta)
+    return respuesta
+
+
+# Lo que se pide apenas alguien entra, en paralelo y sin que nadie espere.
+#
+# Con servir-y-refrescar, la unica pantalla que todavia se siente lenta es la
+# PRIMERA que se abre de cada seccion: no hay nada en cache y hay que ir a
+# buscarlo. Precargar mueve esa espera al momento del login —donde la persona
+# ya esta esperando— y hace que la primera visita a cada panel tambien sea
+# instantanea.
+#
+# Van en HILOS PARALELOS y no en serie: son ocho pedidos de ~400ms cada uno.
+# En serie serian mas de tres segundos; en paralelo, lo que tarde el mas lento,
+# porque el tiempo es de RED y no de CPU (por eso el GIL de Python no molesta
+# acá: los hilos estan esperando el socket, no calculando).
+#
+# La lista es de rutas y no de funciones a proposito: si una ruta cambia de
+# nombre, esto deja de precargarla y la app sigue andando igual, solo que un
+# poco mas lenta la primera vez. Un error acá nunca debe impedir entrar.
+RUTAS_A_PRECARGAR = (
+    # Primero el panel del mostrador: es donde aterriza el Recepcionista, o sea
+    # la primera pantalla que alguien ve al entrar en el caso mas comun.
+    "/recepcion/panel",
+    "/socios",
+    "/personal",
+    "/usuarios",
+    "/rutinas",
+    "/nutricion",
+    "/cobros/tipos-membresia",
+    "/dashboard/stats",
+    "/dashboard/actividad",
+    "/dashboard/socios-recientes",
+    "/asistencia/hoy",
+    "/promociones?solo_vigentes=true",
+)
+
+
+def precargar(rutas=RUTAS_A_PRECARGAR) -> None:
+    """
+    Pide en paralelo lo que las pantallas van a necesitar. No bloquea.
+
+    Se llama despues del login. Cada pedido que falle (por permisos, por
+    ejemplo: un Entrenador no puede ver /usuarios) simplemente no queda en
+    cache — `_get` ya se encarga de no guardar respuestas con error, asi que
+    un 403 acá no deja nada roto ni molesta a nadie.
+    """
+    for ruta in rutas:
+        threading.Thread(
+            target=_get,
+            args=(ruta,),
+            name=f"precarga{ruta}",
+            daemon=True,
+        ).start()
 
 
 def _post(path: str, body: dict | None = None) -> dict:
+    limpiar_cache()
     return _pedir("POST", path, body)
 
 
 def _put(path: str, body: dict) -> dict:
+    limpiar_cache()
     return _pedir("PUT", path, body)
 
 
 def _delete(path: str) -> dict:
+    limpiar_cache()
     return _pedir("DELETE", path)
 
 
@@ -455,7 +665,20 @@ def obtener_socios_recientes() -> dict:
 # =============================================================================
 
 def obtener_panel_recepcion() -> dict:
-    return _get("/recepcion/panel")
+    """
+    El panel del mostrador.
+
+    Cachea como el resto, pero con una frescura MUCHO mas corta: es la
+    pantalla que se usa para decidir "a este lo dejo entrar", y los proximos
+    turnos y quien acaba de fichar cambian mientras alguien la mira.
+
+    La primera version de esto no cacheaba nada, y era el unico panel que
+    seguia tardando medio segundo en abrir. Con servir-y-refrescar se abre al
+    instante y el refresco de fondo la deja al dia en menos de un segundo, que
+    para un mostrador es lo mismo que "en vivo". El boton de refrescar de la
+    pantalla sigue estando para cuando alguien quiera forzarlo.
+    """
+    return _get("/recepcion/panel", frescura=5)
 
 
 def obtener_turno_detalle(id_turno: int) -> dict:
@@ -497,3 +720,92 @@ def asignar_entrenador(id_socio: int, id_entrenador: int) -> dict:
 
 def finalizar_asignacion_entrenador(id_asignacion: int) -> dict:
     return _post(f"/socios/entrenadores/asignaciones/{id_asignacion}/finalizar")
+
+
+# =============================================================================
+# HISTORIAL MÉDICO
+# =============================================================================
+#
+# Estos endpoints NO cuelgan de la sección Socios aunque tres de las cinco
+# rutas empiecen con /socios. El backend los puso en su propio router porque
+# el guard es distinto: `VER_HISTORIAL_MEDICO`, la única acción donde el
+# Recepcionista queda por debajo del Entrenador y del Nutricionista.
+#
+# Importa para la vista: el mostrador entra a Socios con acceso TOTAL, así que
+# no alcanza con haber llegado a la pantalla para mostrar el botón. Hay que
+# preguntar por la acción, no por la sección.
+
+def obtener_catalogo_patologias() -> dict:
+    return _get("/patologias")
+
+
+def crear_patologia(nombre: str, descripcion: str | None = None) -> dict:
+    return _post("/patologias", {"nombre": nombre, "descripcion": descripcion})
+
+
+def obtener_patologias_de_socio(id_socio: int) -> dict:
+    return _get(f"/socios/{id_socio}/patologias")
+
+
+def asignar_patologia(id_socio: int, datos: dict) -> dict:
+    return _post(f"/socios/{id_socio}/patologias", datos)
+
+
+def editar_patologia_de_socio(id_socio: int, id_patologia: int, datos: dict) -> dict:
+    # El PUT pide el cuerpo completo de AsignarPatologiaRequest, `id_patologia`
+    # incluido, aunque ya venga en la URL. Mandarlo igual y no armar un cuerpo
+    # parcial: Pydantic lo exige y sin él vuelve un 422.
+    return _put(f"/socios/{id_socio}/patologias/{id_patologia}", datos)
+
+
+def quitar_patologia(id_socio: int, id_patologia: int) -> dict:
+    return _delete(f"/socios/{id_socio}/patologias/{id_patologia}")
+
+
+# =============================================================================
+# PROMOCIONES
+# =============================================================================
+#
+# Descuentos sobre el precio de lista. Dos permisos distintos y la diferencia
+# es el punto:
+#
+#     crear / editar / dar de baja  ->  Accion.GESTION_PROMOCIONES (solo Dueño)
+#     listar                        ->  Seccion.COBROS (+ Recepcionista)
+#
+# Definir un descuento es una decisión de negocio; aplicarlo al cobrar es
+# operativo. El Recepcionista tiene que poder VER las vigentes —si no, no puede
+# elegir ninguna en el mostrador— pero no inventarlas.
+#
+# EL DESCUENTO NO SE CALCULA ACÁ. Para saber cuánto sale un plan con una promo
+# se llama a `vista_previa_descuento`, que le pregunta al backend. Hacer la
+# multiplicación del lado del cliente dejaría la fórmula —con su piso en cero y
+# su redondeo— escrita en tres lugares: acá, en la PWA y en el backend.
+
+def obtener_promociones(solo_vigentes: bool = False) -> dict:
+    sufijo = "?solo_vigentes=true" if solo_vigentes else ""
+    return _get(f"/promociones{sufijo}")
+
+
+def crear_promocion(datos: dict) -> dict:
+    return _post("/promociones", datos)
+
+
+def editar_promocion(id_promocion: int, datos: dict) -> dict:
+    return _put(f"/promociones/{id_promocion}", datos)
+
+
+def dar_de_baja_promocion(id_promocion: int) -> dict:
+    return _post(f"/promociones/{id_promocion}/baja")
+
+
+def reactivar_promocion(id_promocion: int) -> dict:
+    return _post(f"/promociones/{id_promocion}/reactivar")
+
+
+def uso_de_promocion(id_promocion: int) -> dict:
+    return _get(f"/promociones/{id_promocion}/uso")
+
+
+def vista_previa_descuento(id_promocion: int, id_tipo_membresia: int) -> dict:
+    return _get(f"/promociones/{id_promocion}/vista-previa"
+                f"?id_tipo_membresia={id_tipo_membresia}")

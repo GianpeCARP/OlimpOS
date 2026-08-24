@@ -34,14 +34,20 @@ from sqlalchemy.orm import Session
 from database import get_db
 from deudas import generar_deudas
 from models import (
-    Deuda, InscripcionActividad, Membresia, Pago, PlanActividad, Socio,
-    TipoMembresia,
+    Deuda, InscripcionActividad, Membresia, Pago, PlanActividad, Promocion,
+    Socio, TipoMembresia,
 )
 from permisos import Acceso, Accion, Seccion
 from schemas import (
     CobrarRequest, CobroResponse, DeudaOut, EstadoCuentaOut, GeneracionDeudasOut, InscripcionOut, MembresiaOut, PagarDeudaRequest, PagoOut, TipoMembresiaCrear, TipoMembresiaOut,
 )
 from security import Sesion, requiere_accion, requiere_seccion
+
+# El calculo del descuento vive en el router de promociones y se importa: es la
+# UNICA definicion de cuanto descuenta una promo. Duplicarla aca haria que el
+# dia que cambie una regla, la vista previa muestre un numero y el cobro
+# registre otro.
+from routers.promociones import esta_vigente, precio_con_promo
 
 router = APIRouter(prefix="/cobros", tags=["Cobros"])
 
@@ -300,6 +306,51 @@ def cobrar(
             )
         precio = datos.monto_manual
 
+    # --- La promoción -------------------------------------------------------
+    # El descuento se recalcula acá con el id que mandó el cliente, nunca con
+    # un monto que venga en el pedido. Es la misma regla que rige todo este
+    # archivo: el monto lo calcula el backend.
+    promocion = None
+    precio_lista_original = precio
+    descuento_aplicado = 0.0
+    if datos.id_promocion is not None:
+        if datos.monto_manual is not None:
+            # No hay respuesta obvia a "¿el descuento va sobre el monto manual
+            # o sobre el de lista?", y elegir una en silencio dejaría cobros
+            # que nadie puede explicar seis meses después. Que decida quien
+            # cobra.
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=("Elegí una sola cosa: un monto manual o una promoción, "
+                        "no las dos."),
+            )
+
+        promocion = db.get(Promocion, datos.id_promocion)
+        if promocion is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                detail="Esa promoción no existe.")
+        if not esta_vigente(promocion):
+            # Un solo mensaje para los dos motivos (apagada o fuera de fecha)
+            # sería más corto, pero el mostrador necesita saber cuál es: una se
+            # arregla reactivándola y la otra cambiándole las fechas.
+            motivo = ("está dada de baja" if not promocion.activo
+                      else f"vale del {promocion.fecha_inicio} al {promocion.fecha_fin}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"La promoción «{promocion.nombre}» {motivo}.",
+            )
+        # Una promo de otra sede no aplica acá. id_sede en None significa que
+        # vale en todas.
+        if promocion.id_sede is not None and promocion.id_sede != socio.id_sede:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(f"La promoción «{promocion.nombre}» es de otra sede y no "
+                        f"se puede aplicar a este socio."),
+            )
+
+        precio_lista_original = precio
+        descuento_aplicado, precio = precio_con_promo(precio, promocion)
+
     # --- Comprobante duplicado ---------------------------------------------
     # UNIQUE en el esquema; se chequea antes para dar un mensaje claro. Es lo
     # que evita registrar dos veces el mismo cobro por un doble click.
@@ -349,6 +400,11 @@ def cobrar(
     membresia = Membresia(
         id_socio=socio.id_socio,
         id_tipo_membresia=tipo.id_tipo_membresia,
+        # Se guarda CUAL promo se aplico, ademas del precio ya descontado. El
+        # precio solo no alcanza: dentro de seis meses, "$24.000 en vez de
+        # $30.000" no dice si fue un descuento, un error de tipeo o un precio
+        # pactado a mano. Con la FK, la respuesta esta en la fila.
+        id_promocion=promocion.id_promocion if promocion else None,
         precio_pactado=precio,
         fecha_inicio=inicio,
         fecha_vencimiento=inicio + timedelta(days=tipo.duracion_dias),
@@ -461,6 +517,9 @@ def cobrar(
         deudas_saldadas=[_a_deuda_out(d) for d in saldadas],
         total=precio,
         mensaje=" ".join(partes),
+        promocion=promocion.nombre if promocion else None,
+        precio_lista=precio_lista_original if promocion else None,
+        descuento=descuento_aplicado if promocion else None,
     )
 
 

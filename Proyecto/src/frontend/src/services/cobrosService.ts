@@ -170,6 +170,14 @@ export interface CobroRealizado {
   deudasSaldadas: number;
   total: number;
   mensaje: string;
+  /**
+   * Qué promoción se aplicó y cuánto ahorró. Van aparte de `total` porque el
+   * comprobante muestra las tres cifras —lista, descuento y final— y con el
+   * total solo no se puede reconstruir cuánto se descontó.
+   */
+  promocion?: string;
+  precioLista?: number;
+  descuento?: number;
 }
 
 interface CobroApi {
@@ -191,6 +199,9 @@ interface CobroApi {
   deudas_saldadas: DeudaApi[];
   total: number;
   mensaje: string;
+  promocion: string | null;
+  precio_lista: number | null;
+  descuento: number | null;
 }
 
 /**
@@ -211,7 +222,17 @@ export async function cobrar(
   idSocio: number,
   idTipoMembresia: number,
   metodo: MetodoPago,
-  opciones: { idPlanActividad?: number; numeroComprobante?: string } = {},
+  opciones: {
+    idPlanActividad?: number;
+    numeroComprobante?: string;
+    /**
+     * Descuento a aplicar. Viaja el ID y NO el monto ya descontado: si el
+     * cliente mandara el precio final, cualquiera con la consola abierta se
+     * regalaría la membresía. El backend busca la promo, verifica que esté
+     * vigente y recalcula.
+     */
+    idPromocion?: number;
+  } = {},
 ): Promise<CobroRealizado> {
   const d = await pedir<CobroApi>('/cobros', {
     metodo: 'POST',
@@ -221,6 +242,7 @@ export async function cobrar(
       metodo,
       id_plan_actividad: opciones.idPlanActividad ?? null,
       numero_comprobante: opciones.numeroComprobante ?? null,
+      id_promocion: opciones.idPromocion ?? null,
       saldar_deudas: true,
     },
   });
@@ -245,6 +267,9 @@ export async function cobrar(
     deudasSaldadas: d.deudas_saldadas.length,
     total: d.total,
     mensaje: d.mensaje,
+    promocion: d.promocion ?? undefined,
+    precioLista: d.precio_lista ?? undefined,
+    descuento: d.descuento ?? undefined,
   };
 }
 

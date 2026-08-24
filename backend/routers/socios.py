@@ -34,7 +34,7 @@ una Persona sin ficha ni una ficha sin cuenta.
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from auth import generar_password_temporal, generar_username, hashear_password
 from database import get_db
@@ -136,6 +136,90 @@ def _telefono_principal(db: Session, id_persona: int) -> str | None:
     return telefono.numero if telefono else None
 
 
+def _listar_socios_en_lote(db: Session, consulta) -> list[SocioOut]:
+    """
+    Arma la grilla de socios con un numero FIJO de consultas.
+
+    POR QUE NO SE REUSA _a_socio_out EN UN BUCLE
+    ============================================
+    Porque hace CUATRO consultas por socio: la membresia vigente, el telefono
+    principal, `persona.usuario` y `membresia.tipo`. Con 3 socios eran 14
+    consultas y 1,4 segundos; con 100 socios serian ~400 y la pantalla tardaria
+    medio minuto. Y el costo no es la base: es la RED. Neon esta remoto y cada
+    ida y vuelta cuesta ~50ms, asi que lo unico que importa es cuantas veces se
+    pregunta, no que tan pesada es cada pregunta.
+
+    Aca se pregunta cinco veces en total, sin importar cuantas filas haya:
+    socios, personas (con telefonos y usuario), y membresias (con su tipo).
+
+    `_a_socio_out` se queda para el socio de a UNO —alta, edicion, baja— donde
+    cuatro consultas estan bien y el codigo se lee mejor. Los dos caminos
+    tienen que dar lo MISMO: si cambia una regla de derivacion (el estado, el
+    plan), va en `_estado_socio`, que los dos llaman.
+    """
+    socios = (consulta
+              .options(
+                  # Solo relaciones que EXISTEN. Se verificaron con
+                  # sqlalchemy.inspect(Socio).relationships: la primera version
+                  # de esto invento `Socio.membresias`, el endpoint devolvia 500
+                  # y —como Flet traduce el error a una lista vacia— la grilla
+                  # se veia "vacia pero funcionando", que es peor que un error.
+                  selectinload(Socio.persona).selectinload(Persona.telefonos),
+                  selectinload(Socio.persona).selectinload(Persona.usuario),
+              )
+              .all())
+    if not socios:
+        return []
+
+    ids = [s.id_socio for s in socios]
+
+    # TODAS las membresias de esos socios en una sola consulta, ya ordenadas
+    # igual que en `_membresia_vigente`. Al recorrerlas se queda la PRIMERA de
+    # cada socio, que por ese orden es la vigente: mismo criterio, una consulta.
+    vigentes: dict[int, Membresia] = {}
+    filas = (db.query(Membresia)
+             .options(selectinload(Membresia.tipo))
+             .filter(Membresia.id_socio.in_(ids))
+             .order_by(Membresia.fecha_inicio.desc(),
+                       Membresia.id_membresia.desc())
+             .all())
+    for m in filas:
+        vigentes.setdefault(m.id_socio, m)
+
+    salida = []
+    for socio in socios:
+        persona = socio.persona
+        membresia = vigentes.get(socio.id_socio)
+
+        # El principal, o el primero que haya — mismo orden que
+        # `_telefono_principal`, pero sobre la lista ya cargada.
+        telefonos = sorted(persona.telefonos,
+                           key=lambda x: (not bool(x.principal), x.id_telefono))
+        telefono = telefonos[0].numero if telefonos else None
+
+        salida.append(SocioOut(
+            id_socio=socio.id_socio,
+            id_persona=socio.id_persona,
+            id_sede=socio.id_sede,
+            numero_socio=socio.numero_socio,
+            fecha_alta=socio.fecha_alta,
+            objetivo=socio.objetivo,
+            observaciones=socio.observaciones,
+            activo=bool(socio.activo),
+            dni=persona.dni,
+            nombre=persona.nombre,
+            apellido=persona.apellido,
+            email=persona.email,
+            telefono=telefono,
+            tiene_cuenta=persona.usuario is not None,
+            id_tipo_membresia=membresia.id_tipo_membresia if membresia else None,
+            plan=(membresia.tipo.nombre if membresia and membresia.tipo else "Sin plan"),
+            estado=_estado_socio(socio, membresia),
+            vencimiento=membresia.fecha_vencimiento if membresia else None,
+        ))
+    return salida
+
+
 def _a_socio_out(db: Session, socio: Socio) -> SocioOut:
     persona = socio.persona
     membresia = _membresia_vigente(db, socio.id_socio)
@@ -171,8 +255,7 @@ def listar_socios(
     Lista los socios. Alcanza con acceso de LECTURA a la sección: un
     Entrenador necesita ver a quién le asigna una rutina.
     """
-    socios = db.query(Socio).order_by(Socio.id_socio.desc()).all()
-    return [_a_socio_out(db, s) for s in socios]
+    return _listar_socios_en_lote(db, db.query(Socio).order_by(Socio.id_socio.desc()))
 
 
 @router.post("", response_model=SocioAltaResponse, status_code=status.HTTP_201_CREATED)
@@ -695,4 +778,6 @@ def socios_del_entrenador(
                       AsignacionEntrenador.estado == "ACTIVA",
                       Socio.activo.is_(True))
               .all())
-    return [_a_socio_out(db, s) for s in socios]
+    # Mismo camino en lote que /socios: son las dos grillas del sistema.
+    return _listar_socios_en_lote(db, db.query(Socio).filter(
+        Socio.id_socio.in_([s.id_socio for s in socios])))

@@ -122,6 +122,13 @@ class AppState:
             "id_socio": datos.get("idSocio"),
         }
         self.username_pendiente_cambio = None
+
+        # Traer en paralelo lo que las pantallas van a pedir. No bloquea: la
+        # sesion se abre igual y los datos van llegando al cache mientras la
+        # persona mira la primera pantalla. Es lo que hace que la primera
+        # visita a cada panel tambien sea instantanea y no solo las siguientes.
+        api_client.precargar()
+
         return {"ok": True, "requiere_cambio": False}
 
     def cambiar_password(self, password_actual: str, password_nueva: str) -> dict:
@@ -211,6 +218,27 @@ class AppState:
     def puede(self, accion: str) -> bool:
         """¿Puede ejecutar esta acción puntual? (dar de alta, cobrar, ...)"""
         return permisos.puede_accion(self.get_user_roles(), accion)
+
+    def get_user_username(self) -> str:
+        """El username de la sesión, para las reglas de FILA de Usuarios."""
+        if self.current_user:
+            return self.current_user.get("username", "")
+        return ""
+
+    def puede_editar_duenos(self) -> bool:
+        """
+        ¿Esta sesión puede operar sobre la cuenta de un Dueño?
+
+        Sólo un Dueño. Es una regla de FILA y no de sección, así que no vive en
+        la matriz de permisos: el Recepcionista tiene Usuarios en TOTAL y la
+        acción `gestionUsuarios` en true, y aun así no puede tocar esa cuenta.
+        Lo que lo limita es de quién es la fila, y eso la matriz no lo sabe.
+
+        Espejo de `esCuentaDeMayorJerarquia` en config.ts de la PWA, y de
+        `_validar_jerarquia` en backend/routers/usuarios.py — que es el que de
+        verdad lo impide. Esto sólo decide qué se DIBUJA.
+        """
+        return permisos.Rol.DUENO in self.get_user_roles()
 
     def secciones_visibles(self) -> list[str]:
         """Las rutas que esta sesión puede abrir. La usa el sidebar."""
@@ -463,6 +491,30 @@ class AppState:
             "nuevos_mes": metrica("nuevosMes"),
         }
 
+    def get_socios_recientes(self) -> list[dict]:
+        """
+        Los últimos socios, para la tarjeta del Dashboard.
+
+        Endpoint DEDICADO y no `get_socios()[:4]`, que es lo que hacía esta
+        pantalla: traerse la grilla entera para mostrar cuatro filas costaba un
+        pedido de ~0,9s sobre los tres que ya hace el Dashboard, y era el que
+        más pesaba en el 1,8s que tardaba en abrir.
+
+        `/dashboard/socios-recientes` ya existía y la PWA ya lo usaba
+        (dashboardService.ts). Acá estaba sin usar: otra asimetría entre
+        gemelas, no una decisión.
+        """
+        datos = self._datos(api_client.obtener_socios_recientes(), [])
+        return [
+            {
+                "id": s.get("idSocio"),
+                "nombre": s.get("nombre", "—"),
+                "plan": s.get("plan", "Sin plan"),
+                "estado": s.get("estado", "—"),
+            }
+            for s in datos
+        ]
+
     def get_actividad_reciente(self) -> list[dict]:
         """
         Feed del dashboard. El backend manda la fecha cruda y acá se convierte
@@ -697,19 +749,26 @@ class AppState:
     # ── Cobros ────────────────────────────────────────────────────────────────
 
     def cobrar_membresia(self, id_socio: int, id_tipo: int, metodo_display: str,
-                          comprobante: str | None = None) -> dict:
+                          comprobante: str | None = None,
+                          id_promocion: int | None = None) -> dict:
         """
         Cobra una membresía.
 
         NO manda el monto: lo calcula el backend a partir del plan. Si viniera
         de acá, cualquiera con la app abierta podría cobrar $1 una membresía de
         $30.000 — y en la base quedaría un pago perfectamente válido.
+
+        Con `id_promocion` aplica un descuento, y vale lo mismo: viaja el ID,
+        nunca el precio ya descontado. El backend busca la promo, verifica que
+        esté vigente y recalcula. Mandar el monto final sería el mismo agujero
+        con otro nombre.
         """
         return self._resultado(api_client.cobrar({
             "id_socio": id_socio,
             "id_tipo_membresia": id_tipo,
             "metodo": METODO_PAGO_BACKEND.get(metodo_display, "EFECTIVO"),
             "numero_comprobante": comprobante or None,
+            "id_promocion": id_promocion,
         }))
 
     def comprar_plan_actividad(self, id_socio: int, id_plan: int,
@@ -1138,6 +1197,242 @@ class AppState:
             api_client.finalizar_asignacion_entrenador(id_asignacion),
             "Listo. La asignación queda en el historial, no se borra.",
         )
+
+    # ── Historial médico ──────────────────────────────────────────────────────
+    #
+    # Es un catálogo y no un campo de texto libre por 1FN: "asma, rodilla
+    # operada, hipertensión" en una sola celda no se puede contar ni filtrar, y
+    # cada quien lo escribe distinto. Con el catálogo, "cuántos socios tienen
+    # asma" es una consulta.
+    #
+    # Ojo con el campo `observaciones` de Socio, que YA existe en el formulario
+    # de alta y dice "Lesiones, restricciones...". No es lo mismo y conviene no
+    # confundirlos: aquel es una nota suelta del mostrador, esto es el dato
+    # estructurado que el entrenador filtra. Se dejan los dos porque sacar el
+    # de Socio rompería fichas ya cargadas.
+
+    def get_catalogo_patologias(self) -> list[dict]:
+        """Las condiciones que el gimnasio registra, para el selector."""
+        datos = self._datos(api_client.obtener_catalogo_patologias(), [])
+        return [
+            {
+                "id": p["id_patologia"],
+                "nombre": p["nombre"],
+                "descripcion": p.get("descripcion") or "",
+            }
+            for p in datos
+        ]
+
+    def crear_patologia(self, nombre: str, descripcion: str | None = None) -> dict:
+        return self._resultado(
+            api_client.crear_patologia(nombre, descripcion),
+            "Condición agregada al catálogo.",
+        )
+
+    def get_patologias_de_socio(self, id_socio: int) -> list[dict]:
+        """
+        Las condiciones de un socio.
+
+        Se guarda la fecha DOS veces: `desde` ya formateada para mostrar y
+        `fecha_iso` cruda. El diálogo de edición necesita la cruda para
+        devolvérsela al backend, y volver a parsear "11/08/2026" para eso sería
+        deshacer a mano lo que `_fecha` acaba de hacer.
+        """
+        datos = self._datos(api_client.obtener_patologias_de_socio(id_socio), [])
+        return [
+            {
+                "id": p["id_patologia"],
+                "nombre": p["nombre"],
+                "descripcion": p.get("descripcion") or "",
+                "desde": self._fecha(p.get("fecha_diagnostico")),
+                "fecha_iso": p.get("fecha_diagnostico") or "",
+                "observaciones": p.get("observaciones") or "",
+            }
+            for p in datos
+        ]
+
+    def asignar_patologia(self, id_socio: int, id_patologia: int,
+                           fecha: str | None = None,
+                           observaciones: str | None = None) -> dict:
+        return self._resultado(
+            api_client.asignar_patologia(id_socio, {
+                "id_patologia": id_patologia,
+                "fecha_diagnostico": fecha or None,
+                "observaciones": observaciones or None,
+            }),
+            "Condición registrada.",
+        )
+
+    def editar_patologia_de_socio(self, id_socio: int, id_patologia: int,
+                                   fecha: str | None = None,
+                                   observaciones: str | None = None) -> dict:
+        """
+        Cambia fecha y observaciones. Existe separado del alta porque las
+        observaciones cambian más que el diagnóstico —una lesión que mejora,
+        una medicación que se ajusta— y borrar para recargar perdería la fecha
+        original.
+        """
+        return self._resultado(
+            api_client.editar_patologia_de_socio(id_socio, id_patologia, {
+                "id_patologia": id_patologia,
+                "fecha_diagnostico": fecha or None,
+                "observaciones": observaciones or None,
+            }),
+            "Condición actualizada.",
+        )
+
+    def quitar_patologia(self, id_socio: int, id_patologia: int) -> dict:
+        """
+        Acá SÍ se borra la fila, a diferencia de casi todo el resto del sistema.
+        No es un hecho histórico: es el estado de salud ACTUAL. Una lesión que
+        se curó no es "una lesión finalizada" que convenga arrastrar, y guardar
+        condiciones médicas viejas de alguien es justamente el tipo de dato que
+        no conviene acumular sin motivo.
+        """
+        return self._resultado(
+            api_client.quitar_patologia(id_socio, id_patologia),
+            "Condición eliminada de la ficha.",
+        )
+
+
+    # ── Promociones ───────────────────────────────────────────────────────────
+    #
+    # Descuentos sobre el precio de lista. LISTARLAS pide la sección Cobros
+    # (Dueño + Recepcionista, porque el mostrador tiene que poder elegir una);
+    # CREARLAS pide la acción GESTION_PROMOCIONES, que solo tiene el Dueño.
+    #
+    # Ningún método de acá multiplica nada: para saber cuánto sale un plan con
+    # una promo está `vista_previa_descuento`, que le pregunta al backend. La
+    # fórmula vive en un solo lugar y no en tres.
+
+    def get_promociones(self, solo_vigentes: bool = False) -> list[dict]:
+        """
+        El catálogo de descuentos.
+
+        Sin filtro trae TODAS, incluidas las apagadas y las vencidas: el panel
+        de administración las necesita para reactivar una del año pasado en vez
+        de recargarla. `solo_vigentes` es lo que pide el selector del mostrador,
+        que no tiene por qué ofrecer una promo de enero en marzo.
+        """
+        datos = self._datos(api_client.obtener_promociones(solo_vigentes), [])
+        return [
+            {
+                "id": p["id_promocion"],
+                "nombre": p["nombre"],
+                "descripcion": p.get("descripcion") or "",
+                "porcentaje": p.get("porcentaje_descuento"),
+                "monto_fijo": p.get("monto_fijo_descuento"),
+                "desde": self._fecha(p.get("fecha_inicio")),
+                "hasta": self._fecha(p.get("fecha_fin")),
+                # Crudas además de formateadas: el formulario de edición las
+                # necesita en ISO para devolvérselas al backend, y volver a
+                # parsear "11/08/2026" sería deshacer a mano lo que _fecha
+                # acaba de hacer. Mismo criterio que en las patologías.
+                "desde_iso": p.get("fecha_inicio") or "",
+                "hasta_iso": p.get("fecha_fin") or "",
+                "activo": bool(p.get("activo")),
+                # Activa Y en fecha. Son dos cosas distintas y por eso viajan
+                # separadas: una promo apagada se arregla reactivándola y una
+                # vencida cambiándole las fechas.
+                "vigente": bool(p.get("vigente")),
+                "etiqueta": p.get("etiqueta") or "",
+            }
+            for p in datos
+        ]
+
+    @staticmethod
+    def _cuerpo_promocion(nombre: str, descripcion: str | None,
+                           es_porcentaje: bool, valor: float,
+                           desde_iso: str, hasta_iso: str) -> dict:
+        """
+        Arma el cuerpo mandando UNO solo de los dos descuentos.
+
+        El otro va en None EXPLÍCITO y no omitido: al editar, cambiar una promo
+        de porcentaje a monto fijo tiene que LIMPIAR el campo viejo. Si se
+        omitiera, los dos quedarían cargados y el cálculo tomaría el porcentaje
+        viejo para siempre.
+        """
+        return {
+            "nombre": nombre.strip(),
+            "descripcion": (descripcion or "").strip() or None,
+            "porcentaje_descuento": valor if es_porcentaje else None,
+            "monto_fijo_descuento": None if es_porcentaje else valor,
+            "fecha_inicio": desde_iso,
+            "fecha_fin": hasta_iso,
+        }
+
+    def crear_promocion(self, nombre: str, descripcion: str | None,
+                         es_porcentaje: bool, valor: float,
+                         desde_iso: str, hasta_iso: str) -> dict:
+        return self._resultado(
+            api_client.crear_promocion(self._cuerpo_promocion(
+                nombre, descripcion, es_porcentaje, valor, desde_iso, hasta_iso)),
+            "Promoción creada.",
+        )
+
+    def editar_promocion(self, id_promocion: int, nombre: str,
+                          descripcion: str | None, es_porcentaje: bool,
+                          valor: float, desde_iso: str, hasta_iso: str) -> dict:
+        """
+        Edita una promoción.
+
+        NO recalcula lo ya cobrado: Membresia.precio_pactado guarda el monto
+        que se cobró de verdad. Si editar la promo cambiara el historial de
+        plata, ese historial cambiaría solo — que es exactamente lo que el
+        resto del sistema evita.
+        """
+        return self._resultado(
+            api_client.editar_promocion(id_promocion, self._cuerpo_promocion(
+                nombre, descripcion, es_porcentaje, valor, desde_iso, hasta_iso)),
+            "Promoción actualizada.",
+        )
+
+    def dar_de_baja_promocion(self, id_promocion: int) -> dict:
+        """
+        La apaga. NO borra la fila: la referencian las membresías cobradas con
+        ella, y ese historial es el que responde "¿por qué a este socio le
+        cobramos $24.000 en vez de $30.000?".
+        """
+        return self._resultado(api_client.dar_de_baja_promocion(id_promocion),
+                                "Promoción dada de baja.")
+
+    def reactivar_promocion(self, id_promocion: int) -> dict:
+        """
+        La vuelve a encender. Ojo: no le mueve las fechas, así que una vencida
+        queda activa pero sigue sin poder aplicarse. Extender una promoción es
+        cambiarle la fecha de fin, una decisión explícita, y no un efecto
+        secundario de volver a encenderla.
+        """
+        return self._resultado(api_client.reactivar_promocion(id_promocion),
+                                "Promoción reactivada.")
+
+    def uso_de_promocion(self, id_promocion: int) -> str:
+        """Cuántas membresías se cobraron con ella. Para decidir antes de apagarla."""
+        datos = self._datos(api_client.uso_de_promocion(id_promocion), {})
+        return datos.get("mensaje", "") if isinstance(datos, dict) else ""
+
+    def vista_previa_descuento(self, id_promocion: int, id_tipo: int) -> dict | None:
+        """
+        Cuánto saldría cobrar ese plan con esa promo. No cobra nada.
+
+        Es un viaje al servidor para una multiplicación, y vale la pena: es lo
+        que garantiza que el número que ve el mostrador antes de cobrar sea el
+        mismo que el backend va a registrar.
+
+        Devuelve None si falla, y la pantalla simplemente no muestra la vista
+        previa. No usa `_resultado` porque acá no hay nada que informarle al
+        usuario: es una consulta de apoyo, no una acción suya.
+        """
+        respuesta = api_client.vista_previa_descuento(id_promocion, id_tipo)
+        if not respuesta.get("ok"):
+            return None
+        datos = respuesta.get("data") or {}
+        return {
+            "lista": float(datos.get("precio_lista", 0)),
+            "descuento": float(datos.get("descuento", 0)),
+            "final": float(datos.get("precio_final", 0)),
+            "promocion": datos.get("promocion", ""),
+        }
 
 
 # ── Instancia global única ─────────────────────────────────────────────────────

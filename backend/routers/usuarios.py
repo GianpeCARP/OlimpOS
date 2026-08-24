@@ -40,11 +40,11 @@ cumplida.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from auth import generar_password_temporal, generar_username, hashear_password
 from database import get_db
-from models import Persona, Rol, Usuario, roles_de_persona
+from models import Empleado, Persona, Rol, Usuario, roles_de_persona
 from notificaciones import enviar_credenciales
 from permisos import Accion, Seccion
 from schemas import (
@@ -59,6 +59,34 @@ router = APIRouter(prefix="/usuarios", tags=["Usuarios del sistema"])
 # =============================================================================
 # HELPERS
 # =============================================================================
+
+# =============================================================================
+# CARGA ANTICIPADA DE LOS ROLES
+# =============================================================================
+#
+# `roles_de_persona()` deriva los roles leyendo SEIS relaciones de la Persona
+# (dueno, socio, empleado, y de empleado sus tres subtipos). Con carga perezosa
+# eso es una consulta por relacion POR FILA: el listado de 8 cuentas hacia 45
+# consultas a Neon y tardaba 2,1 segundos. Con 100 socios serian 600.
+#
+# Medido, no estimado: 8 cuentas -> 45 consultas -> 2,88s. Cada viaje a Neon
+# cuesta ~40ms de red, asi que el problema no es la base, es la cantidad de
+# idas y vueltas.
+#
+# `selectinload` las trae en un puñado de consultas extra con `IN (...)`, sin
+# importar cuantas filas haya. Se elige sobre `joinedload` porque son
+# relaciones uno-a-uno en cadena y el JOIN multiple duplicaria filas.
+#
+# OJO: esto hay que repetirlo en CADA listado que llame a roles_de_persona.
+# Hoy son tres: /usuarios, /socios y /personal.
+CARGA_DE_ROLES = (
+    selectinload(Persona.dueno),
+    selectinload(Persona.socio),
+    selectinload(Persona.empleado).selectinload(Empleado.entrenador),
+    selectinload(Persona.empleado).selectinload(Empleado.nutricionista),
+    selectinload(Persona.empleado).selectinload(Empleado.recepcionista),
+)
+
 
 def _a_usuario_out(usuario: Usuario) -> UsuarioAdminOut:
     persona = usuario.persona
@@ -129,8 +157,16 @@ def listar_usuarios(
     db: Session = Depends(get_db),
     sesion: Sesion = Depends(requiere_seccion(Seccion.USUARIOS)),
 ):
-    """Lista todas las cuentas del sistema, con su estado y sus roles."""
-    usuarios = db.query(Usuario).order_by(Usuario.id_usuario).all()
+    """
+    Lista todas las cuentas del sistema, con su estado y sus roles.
+
+    La carga anticipada no es una optimizacion prematura: sin ella este
+    endpoint hacia 45 consultas para 8 cuentas (ver CARGA_DE_ROLES arriba).
+    """
+    usuarios = (db.query(Usuario)
+                .options(selectinload(Usuario.persona).options(*CARGA_DE_ROLES))
+                .order_by(Usuario.id_usuario)
+                .all())
     return [_a_usuario_out(u) for u in usuarios]
 
 
@@ -152,7 +188,10 @@ def listar_personas_sin_cuenta(
     "personas-sin-cuenta" como si fuera un id y respondería un error de
     validación.
     """
-    personas = db.query(Persona).filter(Persona.usuario == None).all()  # noqa: E711
+    personas = (db.query(Persona)
+                .options(*CARGA_DE_ROLES)
+                .filter(Persona.usuario == None)  # noqa: E711
+                .all())
 
     salida = []
     for p in personas:

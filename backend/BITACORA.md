@@ -434,3 +434,441 @@ dos veces la solución fue un `db.flush()` en el lugar exacto.
 - **`CLAUDE.md`**: tiene al menos dos afirmaciones vencidas (los permisos y
   las escrituras de Flet marcadas como `TODO`). Conviene actualizarlo antes
   que la bitácora, porque es el archivo que se carga en cada sesión.
+
+---
+
+## 13. Se cerró la lista de la §12 — estado al 2026-08-24
+
+La sección 12 terminaba con cinco pendientes. Cuatro están cerrados; el quinto
+sigue esperando algo que no es código.
+
+| Pendiente de la §12 | Estado |
+|---|---|
+| UI de patologías (no existía en ninguna app) | **cerrado** |
+| "Entrenador a cargo" en la PWA (sólo estaba en Flet) | **cerrado** |
+| `Promocion` modelada y sin usar | **cerrado** |
+| `Consulta_Cruzada`: 37 tablas en el DDL, 38 en Neon | **cerrado** |
+| Mercado Pago sin credenciales | **sigue abierto** (no depende del código) |
+
+| | |
+|---|---|
+| Endpoints | **138** en 15 routers (+ el `GET /` de salud, que va sobre `app`) |
+| Tablas | **37** en `models.py`, **37** en `schema.sql`, **37** en Neon |
+| Suites de integración | **9** |
+
+### El agujero que sólo se ve cuando dibujás la pantalla
+
+`POST /portal/mis-patologias` existía desde la §11 y estaba bien pensado: el
+socio declara sus propias condiciones sin pasar por el mostrador —donde además
+el Recepcionista no debería enterarse—. Pero ese endpoint pide un
+`id_patologia`, y el catálogo se listaba únicamente en `GET /patologias`, que
+exige `VER_HISTORIAL_MEDICO`. El rol Socio tiene **todas** las acciones en
+false. Verificado ejecutando, no leyendo:
+
+    puede_accion([SOCIO], VER_HISTORIAL_MEDICO)  ->  False
+
+O sea: el socio podía declarar una condición, pero no había forma de averiguar
+qué número mandarle. Un endpoint completo e inusable.
+
+**Por qué no lo detectó la suite.** `test_patologias.py` ya cubría el caso —el
+paso 9 hacía que el socio cargara "Asma"— pero le pasaba el `ID_ASMA` que había
+leído **el entrenador**, por una variable de Python. En la app real esa variable
+no existe. La prueba compartía entre dos sesiones un dato que en producción no
+comparten.
+
+La lección no es "la suite estaba mal escrita". Es que **una prueba que arma su
+escenario con un solo token no puede detectar un permiso faltante entre dos
+roles**: el guard nunca se ejerce porque el dato viaja por el costado. Los tres
+agujeros de la §12 aparecieron corriendo; éste apareció recién al intentar
+dibujar el selector, que es un paso más adelante que correr.
+
+El arreglo fue `GET /portal/catalogo-patologias`, guardado por
+`Seccion.MI_PERFIL`. **No** se le aflojó el permiso a `GET /patologias`, y eso
+importa: esa acción no significa "ver la lista de enfermedades que existen",
+significa ver el historial médico de OTRA persona, y es la única de la matriz
+donde el Recepcionista queda por debajo del Entrenador. Abrirla habría dado de
+paso al mostrador exactamente el acceso que el docstring de
+`routers/patologias.py` explica en detalle por qué no debe tener.
+
+Y no es la primera vez que el portal necesita republicar un catálogo:
+`/portal/mi-cuota/planes` ya existía por lo mismo —duplica
+`/cobros/tipos-membresia`, que el socio no puede tocar—. El patrón quedó
+establecido: **cuando el portal necesita un catálogo que vive detrás de un
+permiso de gestión, se republica recortado; no se afloja el permiso del otro
+lado.**
+
+### Tres bugs que sólo se veían haciendo clic
+
+Apareció porque alguien intentó entrar a Flet como recepcionista y la app dijo:
+
+    The application encountered an error: 'NoneType' object is not callable
+
+`_load_main_app` (login.py) arma la pantalla inicial así:
+
+    linea 266:  vista_inicial = router.view_class(inicial)
+    linea 267:  initial_content = vista_inicial(page=page, router=router).build()
+    ...
+    linea 284:  router.setup(content_ref)
+
+Y `setup()` era quien llamaba a `_register_views()`, o sea quien llenaba el mapa
+de rutas. **Dieciocho líneas después de usarlo.** El mapa siempre estaba vacío,
+`view_class` devolvía `None`, y la línea siguiente hacía `None(page=...)`.
+
+Rompía a los cuatro roles, no sólo al recepcionista — el que reportó fue el
+primero en intentarlo:
+
+    dueno          -> dashboard   view_class -> None
+    recepcionista  -> recepcion   view_class -> None
+    entrenador     -> socios      view_class -> None
+    nutricionista  -> socios      view_class -> None
+
+Se podía arreglar subiendo el `setup()` en login.py, pero eso deja la trampa
+armada para el próximo. **El problema de fondo era que `setup()` hacía dos cosas
+sin relación**: guardar las referencias del layout Y registrar las vistas.
+Registrar no necesita ninguna referencia, así que atarlo a ese momento era la
+causa. El arreglo es que `view_class` registre al primer uso (con
+`_register_views` idempotente), y que `navigate` pase por ahí en vez de leer
+`_view_map` directo. Con eso el orden deja de importar y no queda una segunda
+forma de romperlo desde otro archivo.
+
+**Lo que esto agrega a la regla del proyecto.** La §12 decía "casi todos los
+bugs aparecieron corriendo, no leyendo". Este bug estaba en el camino MÁS
+transitado de la app —entrar— y sobrevivió a `compileall`, a nueve suites de
+integración y a que la app arrancara sin un solo warning. Porque las suites
+prueban el backend por HTTP y no tocan el router de Flet, y **una app que
+arranca no es una app en la que se pueda entrar**. La única forma de encontrarlo
+era hacer clic en "Ingresar".
+
+Apenas se pudo entrar, el segundo clic —al Dashboard— tiró otro:
+
+    TypeError: '>=' not supported between instances of 'NoneType' and 'int'
+
+`_texto_delta` hacía `delta_pct >= 0`, y el backend manda `delta_pct` en **None**
+cuando el mes anterior fue cero. Eso no era un descuido del backend: está
+documentado en el docstring de `_delta` (`routers/dashboard.py`) desde que se
+escribió, con su razón —dividir daría infinito, y mostrar "+100%" al pasar de 0
+a 1 socio sería inventar un dato— y hasta con la conclusión escrita: *"La vista,
+con None, no muestra nada, que es lo honesto."*
+
+**El contrato estaba completo; faltaba implementada una de las dos mitades.** Y
+la PWA sí la tenía (`textoDelta` en `DashboardView.tsx` devuelve `undefined`), o
+sea que era una **asimetría entre gemelas**, no una decisión. Con una base sin
+historial —o sea, en cualquier demo— las cuatro métricas vienen en None y el
+Dashboard no abría nunca.
+
+Eso motivó buscar el resto de la familia en vez de arreglar de a uno, y apareció
+el tercero: **Nutrición** hacía `sum(cals)//len(cals)` sobre la lista de planes.
+Sin planes cargados, `ZeroDivisionError` —y `min`/`max` un `ValueError`—, así que
+la sección entera no abría para **ningún** rol. Otra vez la PWA ya lo resolvía
+(`calorias.length > 0 ? ... : 0`) y la gemela no.
+
+**La herramienta que faltaba.** Los tres tienen la misma forma: revientan al
+CONSTRUIR una vista, con datos que el backend devuelve legítimamente. Ni
+`compileall` ni las suites pueden verlos —las suites prueban el backend por
+HTTP, nunca instancian una vista de Flet— así que se agregó
+`Proyeto-Python/Proyecto/pruebas_vistas.py`: entra con cada rol y llama a
+`build()` de cada sección que ese rol puede ver. Son 25 combinaciones y tarda
+segundos.
+
+No verifica que la pantalla se vea bien; verifica que se pueda **abrir**, que es
+justo lo que fallaba. Encontró el de Nutrición sola, y conviene correrla también
+**con la base vacía**, que es el escenario donde estos tres se disparan y el que
+va a ver cualquiera que arranque el proyecto de cero.
+
+
+### Y dos que `compileall` y `tsc` dan por buenos
+
+**1. `input_field` usado sin importar, en Flet.** `compileall` compila el
+archivo sin quejarse: el nombre sólo se resuelve al ejecutar la función que lo
+usa, o sea al abrir el diálogo. Es exactamente lo que el `CLAUDE.md` ya
+advertía ("un nombre usado sólo dentro de una función tampoco lo detecta el
+import — eso ya mordió dos veces"). Se encontró con un chequeo AST que compara
+los nombres cargados contra los importados y los ligados localmente.
+
+**2. Un `useEffect` que leía `tipoElegido` antes de su `const`, en la PWA.**
+`tsc` lo da por válido —la referencia es correcta para el compilador— pero el
+array de dependencias se evalúa **durante** el render, así que en ejecución era
+un `ReferenceError` por TDZ. Se arregló moviendo el efecto después de la
+declaración, con un comentario que explica por qué no puede ir arriba con los
+demás.
+
+Y una tercera, del entorno y no del código, que costó una corrida entera de
+suite con tres fallos falsos: **el backend viejo seguía escuchando en el 8000.**
+El `uvicorn` nuevo no pudo tomar el puerto y murió en silencio, así que la suite
+corrió contra código anterior al cambio y reportó como roto un endpoint que
+estaba bien. Se detectó comparando `openapi.json`: 130 endpoints contra los 131
+de entonces. Desde ahí, la regla es **verificar la versión del backend antes de
+correr una suite**, no después de leer los fallos.
+
+Las tres, juntas: *"compilar no es correr"* ya estaba anotado. Lo que faltaba
+era su continuación — **correr no alcanza si no verificás contra qué corrés, y
+que el proceso levante no significa que la pantalla funcione.**
+
+### Dos scripts que faltaban en `pruebas/`
+
+Ninguno es una suite. Se agregaron porque el trabajo de esta etapa los necesitó
+de verdad, no por prolijidad.
+
+**`vaciar_base.py`** — deja la base en las 6 filas de entrega. El `CLAUDE.md`
+decía desde la §10 que "entre suite y suite hay que vaciar la base" y no decía
+cómo: se hacía a mano. A mano significa que cada vez queda un poco distinto —
+una corrida a medias deja tres Patologías y dos Empleados, la siguiente suite
+choca contra un DNI repetido, y el fallo parece un bug del código que se acaba
+de escribir.
+
+Usa `TRUNCATE ... RESTART IDENTITY CASCADE` sobre todas las tablas en UNA sola
+sentencia, y las tres cosas son necesarias: `RESTART IDENTITY` porque las suites
+imprimen ids y comparar dos corridas es imposible si una arranca en
+`id_socio=1` y la otra en 47; `CASCADE` por las 70 foreign keys; y una sola
+sentencia porque entre las tablas hay ciclos de FK y truncarlas de a una falla
+igual.
+
+**`escenario_demo.py`** — carga 4 empleados, 3 socios, 5 patologías, 3
+promociones y un cobro con descuento. Existe porque con la base vacía las
+pantallas nuevas **no muestran nada** y no hay forma de ver si quedaron bien.
+
+Se mantiene SEPARADO de las suites a propósito. Una suite que además deje datos
+lindos para mirar termina siendo dos cosas a medias, y ninguna suite debería
+depender de un escenario que alguien puede editar para que "se vea mejor".
+
+Las contraseñas de esas cuentas están en
+`backend/CONTRASEÑAS PARA TESTEO Y ACTUALIZADAS.txt`, junto con dos avisos que
+costaron tiempo: que `vaciar_base.py` pisa la contraseña del dueño, y que a los
+5 intentos fallidos la cuenta se **bloquea** devolviendo el mismo mensaje que
+una contraseña equivocada —a propósito, para no revelar el estado de una cuenta
+ajena, pero eso significa que desde afuera no se distingue "me equivoqué" de "ya
+está bloqueada".
+
+### `Promocion`: el caso inverso a `Consulta_Cruzada`
+
+La §12 dejó las dos anotadas juntas, pero se resolvieron al revés, y el criterio
+es el mismo que la masterclass del modelo de datos ya aplicaba: **una tabla se
+justifica por uso o por estructura, nunca por intención.**
+
+`Consulta_Cruzada` no tenía ninguna de las dos: era hoja *y* nadie la usaba. Se
+borró de Neon y ahora el DDL y la base coinciden **nombre por nombre** —
+comparado por nombre y no por cantidad, que es lo que la §11 no había hecho.
+
+`Promocion` no tenía uso pero **sí** estructura: `Membresia.id_promocion` la
+referencia. Borrarla habría sido además una migración sobre la tabla de plata.
+Así que se le dio el uso que le faltaba.
+
+**El reparto de permisos es el diseño, no un detalle:**
+
+    Listar, vista previa                  ->  Seccion.COBROS  (Dueño + Recepcionista)
+    Crear, editar, baja, reactivar, uso   ->  Accion.GESTION_PROMOCIONES  (solo Dueño)
+
+Definir un descuento es una decisión de negocio; aplicarlo al cobrar es
+operativo. Si listar exigiera la acción, el selector del mostrador le daría 403
+al Recepcionista y la función quedaría sólo para quien menos atiende el
+mostrador. Es el mismo reparto que ya regía la lista de precios
+(`POST /cobros/tipos-membresia`).
+
+**El cálculo vive en un solo lugar.** `precio_con_promo` está en
+`routers/promociones.py` y `cobros.py` la **importa**. Por eso también existe
+`GET /promociones/{id}/vista-previa`: la alternativa era mandarle el porcentaje
+a cada app y que multiplicaran, y ahí la fórmula —con su piso en cero y su
+redondeo— quedaba escrita en tres lugares. Es lo que garantiza que el número que
+el mostrador ve antes de cobrar sea el que el backend registra.
+
+Cuatro decisiones que quedaron en los comentarios:
+
+- **`id_promocion` y `monto_manual` son excluyentes.** No hay respuesta obvia a
+  "¿el descuento va sobre el monto manual o sobre el de lista?", y elegir una en
+  silencio dejaría cobros que nadie puede explicar seis meses después.
+- **`activo` y `vigente` son cosas distintas.** Una promo de enero sigue con
+  `activo=true` en marzo. Reactivar una vencida la deja activa pero NO
+  aplicable, y el backend lo avisa: extender una promoción es cambiarle la fecha
+  de fin, una decisión explícita, no un efecto secundario de encenderla.
+- **Editar no recalcula lo ya cobrado.** `precio_pactado` guarda el monto real.
+  Mismo criterio que "nada se borra" del encabezado de `cobros.py`.
+- **`Membresia` guarda CUÁL promo fue**, además del precio ya descontado. Con el
+  precio solo, dentro de seis meses "$24.000 en vez de $30.000" no dice si fue
+  un descuento, un error de tipeo o un precio pactado a mano.
+
+### Lo que falta ahora
+
+- **Mercado Pago**: lo único del backend que no se probó contra el servicio
+  real, y no depende del código. Falta lo anotado en `backend/.env.example`: un
+  `ACCESS_TOKEN`, el secreto del webhook y una **URL pública** — Mercado Pago no
+  le puede avisar a `127.0.0.1` que un pago se acreditó. Mientras tanto hay un
+  modo simulado que permite recorrer el flujo entero y que se niega a activarse
+  si detecta un token real cargado.
+- **La base no está en estado de entrega**: tiene el escenario de demo.
+  `vaciar_base.py --si` la devuelve a las 6 filas.
+
+---
+
+## 14. Rendimiento: por qué la app se sentía lenta, y qué era en realidad
+
+Esta sección existe porque el reporte fue "cambiar de panel tarda 2 segundos" y
+la causa **no era el código de las pantallas ni Python**. Vale la pena escribir
+el recorrido completo, porque el instinto —"Python es lento, habrá que
+reescribirlo"— apuntaba al lugar equivocado.
+
+### Los cuatro números que explican todo
+
+Medidos contra la base real, no estimados:
+
+    SELECT 1 en una conexión YA abierta ......  44 ms
+    Abrir una conexión NUEVA (TLS + auth) .... 825 ms
+    GET /socios (6 consultas) ................ 450 ms
+    GET /personal ............................ 570 ms
+
+La base está en Neon, región **sa-east-1 (São Paulo)**. Esos 44 ms son el
+tiempo de ida y vuelta por cable: es un piso físico y ningún lenguaje lo baja.
+Durante toda la request el proceso está **esperando un socket**, no calculando
+— por eso reescribir esto en otro lenguaje daría exactamente los mismos 44 ms,
+y por eso el GIL tampoco molesta: los hilos que agregamos después esperan red.
+
+La conclusión que ordena todo el trabajo: **lo único que se puede hacer es
+preguntar menos veces y no esperar la respuesta.**
+
+### El bug que producía el síntoma exacto
+
+El reporte tenía un detalle que era la pista entera:
+
+> "si cambio de panel rápido carga al toque, pero si espero un rato vuelve la
+> tardanza, y a veces aparece de la nada"
+
+`database.py` creaba el engine con `pool_pre_ping=True` y nada más, o sea con
+`pool_recycle=-1`: **las conexiones no se reciclan nunca**. Quedan en el pool
+hasta que alguien del otro lado las cierra —Neon por inactividad, o el NAT del
+router por no ver tráfico—. Cuando eso pasa, `pool_pre_ping` detecta la
+conexión muerta y reconecta de forma transparente: la app no falla, pero esa
+request paga los 825 ms. Y como cada conexión del pool muere en un momento
+distinto, la lentitud aparecía "de la nada".
+
+Tres piezas lo cierran, y cada una tapa un agujero distinto:
+
+| Pieza | Qué evita |
+|---|---|
+| `pool_recycle=240` | reciclar cuando lo decidimos nosotros (entre requests) y no cuando lo decide la red (en medio de una) |
+| keepalives de TCP | que el NAT dé por muerta una conexión ociosa; es el caso peor, porque está "viva" para nosotros y cortada del otro lado |
+| latido cada 2 min | que Neon **suspenda el compute** del plan gratuito, cuyo despertar cuesta segundos |
+
+El latido va en un hilo daemon y no en una tarea async: SQLAlchemy acá es
+síncrono, y meterlo en el event loop lo bloquearía durante el RTT.
+
+Después de esto los tiempos pasaron de erráticos a **estables** (min ≈ max),
+que es la señal de que ya no se reconecta.
+
+### Menos viajes: dos N+1 que costaban más que todo lo demás
+
+**`/usuarios`.** `roles_de_persona()` deriva el rol leyendo SEIS relaciones de
+la Persona. Con carga perezosa eso es una consulta por relación **por fila**:
+
+    8 cuentas -> 45 consultas -> 2,88 s
+
+Con `selectinload` bajó a 0,54 s. Con 100 socios habrían sido 600 consultas.
+
+**`/socios`.** Peor todavía: `_a_socio_out` hacía cuatro consultas por socio
+(membresía vigente, teléfono principal, `persona.usuario`, `membresia.tipo`).
+Se reescribió el listado en lote —número fijo de consultas, sin importar
+cuántas filas— y se verificó que devuelve **exactamente lo mismo** comparando
+los `model_dump()` de las dos implementaciones:
+
+    uno por uno    14 consultas   0,68 s
+    en lote         6 consultas   0,34 s
+
+`_a_socio_out` se conservó para el socio de a uno (alta, edición, baja), donde
+cuatro consultas están bien y el código se lee mejor. Los dos caminos comparten
+`_estado_socio`, así que una regla de derivación no puede divergir.
+
+### El cambio de arquitectura: la UI no espera a la red
+
+Con todo lo anterior, un panel seguía tardando ~450 ms. La primera respuesta
+fue un caché con TTL de 15 segundos, y **fue un error**: producía exactamente
+la queja original. Dentro de la ventana era instantáneo; fuera de ella se
+pagaban los 450 ms completos. Escondía el problema y encima lo volvía
+impredecible — la misma acción tardaba distinto según cuánto habías tardado vos
+en hacerla.
+
+Lo que funciona es **servir-y-refrescar** (`stale-while-revalidate`): se
+devuelve siempre lo que hay en caché al instante, aunque esté vencido, y si
+está vencido se dispara un refresco en segundo plano. La pantalla nunca espera
+a la red; en el peor caso muestra datos de hace un minuto y se corrige sola.
+
+Encaja porque los datos de este sistema son de **lectura frecuente y escritura
+rara**: la grilla de socios se mira cien veces por cada alta.
+
+Dos detalles que no son opcionales:
+
+- **Cualquier escritura invalida TODO el caché**, no sólo la ruta que tocó.
+  Cobrar una membresía cambia `/socios`, `/cobros/socio/{id}`,
+  `/dashboard/stats` y `/cobros/deudas` a la vez. Invalidar "sólo lo
+  relacionado" exigiría un mapa de dependencias mantenido a mano, y el día que
+  alguien agregue un endpoint y se olvide de anotarlo, la pantalla mostraría un
+  dato viejo **después de cobrar** — el único momento en que eso es
+  inaceptable. Además hay un contador de generación: un refresco en vuelo que
+  termina después de una escritura descarta su resultado en vez de resucitar un
+  dato viejo.
+- **El logout tira el caché.** Las respuestas guardadas se trajeron con los
+  permisos de la sesión que se cierra; sin ese borrado, un Recepcionista que
+  entrara después del Dueño podría leer del caché algo que a él el backend le
+  habría negado.
+
+Y para que la PRIMERA visita también sea instantánea, el login dispara una
+**precarga en paralelo** de las doce rutas que las pantallas van a pedir. En
+serie serían más de tres segundos; en paralelo, lo que tarde la más lenta.
+
+### El resultado
+
+    seccion         1a vez      2a   tras 35s
+    dashboard           9 ms    2 ms     3 ms
+    recepcion           1 ms    1 ms     3 ms
+    socios              3 ms    1 ms     2 ms
+    personal            1 ms    1 ms     2 ms
+    usuarios            3 ms    3 ms     4 ms
+    TOTAL              19 ms    9 ms    18 ms
+
+Recorrer los nueve paneles pasó de **4175 ms a 19 ms**, y el caso que fallaba
+—esperar un rato y volver— también quedó instantáneo.
+
+Recepción es el único con frescura corta (5 s) en vez de 30: es el panel del
+mostrador y su valor es estar al día. Abre al instante igual.
+
+### La cuarta copia de la matriz de permisos
+
+Aparte del rendimiento, se encontró que `views/usuarios.py` tenía un
+diccionario `PERMISOS_RESUMEN` escrito a mano: una **cuarta** copia de los
+permisos, además de `app/permisos.py`, `backend/permisos.py` y `config.ts`.
+`check_permisos.py` no la miraba porque no era una matriz sino una lista
+suelta. Estaba mal para **los cuatro roles**:
+
+| Rol | Decía | Realidad |
+|---|---|---|
+| Recepcionista | omitía Usuarios, Rutinas, Nutrición, Personal y Recepción; decía Actividades | tiene las cinco primeras; Actividades no |
+| Entrenador | Dashboard, Asistencia, Actividades | ninguna de las tres |
+| Nutricionista | Dashboard | no la ve |
+| Dueño | faltaba Recepción | la ve |
+
+El comentario viejo decía "si las dos se contradicen, manda el backend". Es
+cierto, pero no alcanza: esa tarjeta existe para **explicarle** a alguien qué
+puede hacer cada rol, y una explicación equivocada es peor que ninguna — manda
+a discutir con la app en vez de leerla.
+
+Ahora se **deriva de la matriz** y marca con `*` las secciones de sólo lectura,
+porque "ve Personal" y "puede tocar Personal" no son lo mismo. No hay nada que
+sincronizar: el problema se eliminó de raíz en vez de agregarle un chequeo.
+
+### Y las reglas de FILA en Usuarios
+
+La vista de Flet dibujaba los tres botones de acción en **todas** las filas,
+incluida la del Dueño —que es la primera de la grilla—. El Recepcionista
+apretaba, el backend le devolvía 403 (correctamente: `_validar_jerarquia`) y se
+iba con la idea de que no podía modificar nada. Podía: todas las demás.
+
+La PWA ya tenía los dos guards (`esCuentaDeMayorJerarquia`,
+`esCuentaPropiaRestringida`). Flet no: otra asimetría entre gemelas. Se copió
+la misma decisión, omitiendo los botones y diciendo el motivo en su lugar,
+porque una celda vacía se lee como un error de la app.
+
+### Dónde está el límite real
+
+Los 44 ms de RTT siguen ahí; lo que cambió es que nada espera por ellos. Si
+alguna vez hace falta que la primera carga tras un arranque en frío también sea
+instantánea, la única palanca que queda es **acercar la base**: un Postgres
+local en el gimnasio baja el RTT a ~1 ms. Eso ya estaba contemplado desde el
+principio — el docstring de `database.py` dice que ese cambio no toca una línea
+de código, sólo `DATABASE_URL`.

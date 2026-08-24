@@ -8,6 +8,7 @@ import { useAuthStore } from '../../store/authStore';
 import { formatearFecha } from '../../utils/format';
 import { parsearFecha } from '../../utils/fechas';
 import { InfoPill } from '../rutinas/InfoPill';
+import { MiEntrenadorCard } from './MiEntrenadorCard';
 import { SinSocioEnSesion } from './SinSocioEnSesion';
 
 // Vista 2 del portal (docs/prompt_portal_socio.md). SOLO LECTURA: no hay un
@@ -148,6 +149,12 @@ export function MiRutinaView() {
         {/* Estado vacío: es un caso normal, no un error. El socio recién
             anotado todavía no tiene rutina y el mensaje tiene que decirle
             qué va a pasar, no sonar a que algo falló. */}
+        {/* Fuera de los dos bloques de abajo a proposito: se dibuja tenga o
+            no rutina. Un socio recien anotado suele tener entrenador y
+            todavia ninguna rutina, y es justo el que mas necesita saber a
+            quien preguntarle. */}
+        {!error && cargado && <MiEntrenadorCard />}
+
         {!error && cargado && !rutina && (
           <SectionCard>
             <div className="flex flex-col items-center gap-3 py-8 text-center">

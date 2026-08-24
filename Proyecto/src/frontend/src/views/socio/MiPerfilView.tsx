@@ -18,6 +18,7 @@ import { useAuthStore } from '../../store/authStore';
 import { useUiStore } from '../../store/uiStore';
 import { formatearFecha, formatearFechaConAnio } from '../../utils/format';
 import { parsearFecha } from '../../utils/fechas';
+import { MisCondicionesCard } from './MisCondicionesCard';
 import { SinSocioEnSesion } from './SinSocioEnSesion';
 
 // Vista 1 del portal (docs/prompt_portal_socio.md).
@@ -27,13 +28,17 @@ import { SinSocioEnSesion } from './SinSocioEnSesion';
 // SinSocioEnSesion, y no es un componente de diseño sino un estado de error
 // que sólo puede pasar en estas rutas.
 //
-// La vista está partida en dos bloques a propósito, y el orden importa:
+// La vista está partida en bloques a propósito, y el orden importa:
 //
 //   1. "Tus datos" — SOLO LECTURA. Lo que el socio no puede cambiar (dni,
 //      nombre, sede, plan, número de socio). Va primero porque es lo que
 //      viene a consultar.
-//   2. "Datos de contacto" — el ÚNICO formulario. Todo lo editable junto,
-//      separado visualmente del bloque de arriba.
+//   2. "Datos de contacto" — el formulario de la ficha. Todo lo editable
+//      junto, separado visualmente del bloque de arriba.
+//   3. "Tu salud" — sus patologías. Va último porque es lo que menos se
+//      toca: se declara una vez y no se vuelve. Es un componente aparte
+//      (MisCondicionesCard) porque habla con otros endpoints y con su propio
+//      estado de carga.
 //
 // Esa separación no es estética: si los campos editables y los fijos
 // estuvieran mezclados en una sola grilla, la diferencia entre "no lo podés
@@ -293,6 +298,11 @@ export function MiPerfilView() {
                 </div>
               </SectionCard>
             </form>
+
+            {/* Trae sus propios datos y su propio estado de carga: no depende
+                de `perfil`, así que un fallo del endpoint de patologías deja
+                el resto de la pantalla en pie en vez de tumbarla entera. */}
+            <MisCondicionesCard />
           </>
         )}
       </div>

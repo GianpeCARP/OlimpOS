@@ -967,3 +967,159 @@ export async function getPlanesDisponibles(): Promise<PlanDisponible[]> {
     precio: Number(p.precio),
   }));
 }
+
+// =========================================================================
+// MIS CONDICIONES DE SALUD
+// =========================================================================
+//
+// El socio ve y administra las SUYAS. No usa la acción `verHistorialMedico`
+// —esa es para ver las de OTROS, y el socio no la tiene— sino su propia
+// sección MI_PERFIL. Es la misma distinción de siempre en este archivo:
+// mirar la ficha ajena y mirar la propia son permisos distintos.
+//
+// Que el socio pueda CARGARLAS es deliberado y va en la dirección de que se
+// maneje solo: "soy asmático" es algo que él sabe y el gimnasio necesita, y
+// obligarlo a ir al mostrador a contarlo —donde además el recepcionista no
+// debería enterarse— sería exactamente al revés.
+//
+// Estas funciones NO están en patologiasService: aquél habla con
+// /patologias y /socios/{id}/patologias, que exigen `verHistorialMedico`.
+// Llamarlas desde el portal daría 403. Misma tabla, otro permiso, otro
+// service — igual que pasa con las cuotas.
+
+export interface MiCondicion {
+  idPatologia: number;
+  nombre: string;
+  descripcion?: string;
+  /** ISO (yyyy-mm-dd). */
+  fechaDiagnostico?: string;
+  observaciones?: string;
+}
+
+interface MiCondicionApi {
+  id_patologia: number;
+  nombre: string;
+  descripcion: string | null;
+  fecha_diagnostico: string | null;
+  observaciones: string | null;
+}
+
+function aMiCondicion(p: MiCondicionApi): MiCondicion {
+  return {
+    idPatologia: p.id_patologia,
+    nombre: p.nombre,
+    descripcion: p.descripcion ?? undefined,
+    fechaDiagnostico: p.fecha_diagnostico ?? undefined,
+    observaciones: p.observaciones ?? undefined,
+  };
+}
+
+export async function getMisCondiciones(): Promise<MiCondicion[]> {
+  const datos = await pedir<MiCondicionApi[]>('/portal/mis-patologias');
+  return datos.map(aMiCondicion);
+}
+
+export interface CondicionDelCatalogo {
+  idPatologia: number;
+  nombre: string;
+  descripcion?: string;
+}
+
+/**
+ * El catálogo, recortado para el portal.
+ *
+ * Endpoint propio y no /patologias: ese exige `verHistorialMedico`, que el
+ * socio tiene en false como todas las acciones. Mismo motivo por el que
+ * getPlanesDisponibles no usa /cobros/tipos-membresia.
+ */
+export async function getCatalogoDeCondiciones(): Promise<CondicionDelCatalogo[]> {
+  const datos = await pedir<MiCondicionApi[]>('/portal/catalogo-patologias');
+  return datos.map((p) => ({
+    idPatologia: p.id_patologia,
+    nombre: p.nombre,
+    descripcion: p.descripcion ?? undefined,
+  }));
+}
+
+/**
+ * Declara una condición propia.
+ *
+ * Sólo del catálogo: no se acepta texto libre. Si tiene algo que no está en
+ * la lista, lo carga un entrenador o un nutricionista al catálogo primero.
+ * Dejar escribir libremente lo rompería con veinte formas de escribir "asma"
+ * y volvería inútil poder contar cuántos socios la tienen — que es todo el
+ * motivo de que sea una tabla y no un varchar.
+ */
+export async function agregarMiCondicion(datos: {
+  idPatologia: number;
+  fechaDiagnostico?: string;
+  observaciones?: string;
+}): Promise<MiCondicion> {
+  const respuesta = await pedir<MiCondicionApi>('/portal/mis-patologias', {
+    metodo: 'POST',
+    cuerpo: {
+      id_patologia: datos.idPatologia,
+      fecha_diagnostico: datos.fechaDiagnostico || null,
+      observaciones: datos.observaciones?.trim() || null,
+    },
+  });
+  return aMiCondicion(respuesta);
+}
+
+/**
+ * Se saca una condición.
+ *
+ * No hay "editar" del lado del socio —el backend expone el PUT sólo para el
+ * staff—, así que corregir una observación es quitarla y volver a cargarla.
+ * Se pierde la fecha original, que es justamente lo que el PUT evita del otro
+ * lado; queda anotado como asimetría conocida y no como olvido.
+ */
+export async function quitarMiCondicion(idPatologia: number): Promise<void> {
+  await pedir<void>(`/portal/mis-patologias/${idPatologia}`, { metodo: 'DELETE' });
+}
+
+// =========================================================================
+// MI ENTRENADOR
+// =========================================================================
+//
+// Quién lo entrena HOY. A diferencia del endpoint del personal, acá el
+// backend NO devuelve el historial: al socio le interesa a quién preguntarle
+// hoy, no quién lo entrenaba en marzo. Ese dato es del gimnasio —sirve para
+// auditar y para que un entrenador nuevo se ponga al día— y no aporta nada en
+// la app de quien entrena.
+//
+// Va bajo la sección MI_RUTINA y no una propia: el entrenador a cargo es
+// parte de la misma pregunta que "cuál es mi rutina", y crear una sección
+// sólo para esto obligaría a sumarla a las tres copias de la matriz de
+// permisos para una pantalla que no existe.
+//
+// OJO, NO CONFUNDIR con `MiRutina.entrenador`: ese es quien ARMÓ el plan, un
+// dato de la rutina. Esto es quien está a cargo del socio, y pueden ser
+// personas distintas — o puede haber entrenador a cargo sin ninguna rutina
+// asignada todavía.
+
+export interface MiEntrenador {
+  idAsignacion: number;
+  idEntrenador: number;
+  nombre: string;
+  especialidad?: string;
+  /** ISO (yyyy-mm-dd). */
+  desde: string;
+}
+
+export async function getMisEntrenadores(): Promise<MiEntrenador[]> {
+  const datos = await pedir<Array<{
+    id_asignacion: number;
+    id_entrenador: number;
+    entrenador: string;
+    especialidad: string | null;
+    fecha_inicio: string;
+  }>>('/portal/mi-entrenador');
+  return datos.map((a) => ({
+    idAsignacion: a.id_asignacion,
+    idEntrenador: a.id_entrenador,
+    nombre: a.entrenador,
+    especialidad: a.especialidad ?? undefined,
+    desde: a.fecha_inicio,
+  }));
+}

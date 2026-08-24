@@ -1,4 +1,4 @@
-import { Pencil, RotateCcw, UserX } from 'lucide-react';
+import { Dumbbell, Pencil, RotateCcw, Stethoscope, UserX } from 'lucide-react';
 import { StatusBadge } from '../../components/ui';
 import { EstadoSocio } from '../../config';
 import type { SocioListado } from '../../services/sociosService';
@@ -15,9 +15,19 @@ interface SocioTableRowProps {
   puedeEditar: boolean;
   /** Acción `altaBajaSocios` de la matriz de permisos. */
   puedeAltaBaja: boolean;
+  /**
+   * Acción `verHistorialMedico`. Va separada de `puedeEditar` porque no se
+   * deduce del acceso a la sección: el Recepcionista tiene Socios en TOTAL y
+   * esta acción en false, y el Entrenador está justo al revés —Socios en
+   * LECTURA y la acción en true—. Es la única de la matriz donde el mostrador
+   * queda por debajo del Entrenador.
+   */
+  puedeVerHistorialMedico: boolean;
   onEditar: () => void;
+  onEntrenadores: () => void;
   onDarDeBaja: () => void;
   onActivar: () => void;
+  onHistorialMedico: () => void;
 }
 
 function iniciales(socio: SocioListado): string {
@@ -28,9 +38,12 @@ export function SocioTableRow({
   socio,
   puedeEditar,
   puedeAltaBaja,
+  puedeVerHistorialMedico,
   onEditar,
+  onEntrenadores,
   onDarDeBaja,
   onActivar,
+  onHistorialMedico,
 }: SocioTableRowProps) {
   const yaDeBaja = socio.estado === EstadoSocio.DE_BAJA;
 
@@ -67,6 +80,33 @@ export function SocioTableRow({
               className="rounded-md p-2 text-text-muted hover:bg-surface-card hover:text-text-main"
             >
               <Pencil size={16} />
+            </button>
+          )}
+          {/* Este SÍ se muestra a todos los que ven la grilla, incluido el
+              Entrenador que la tiene en LECTURA: quién entrena a quién no es
+              un dato sensible, y esconderlo justo al entrenador sería
+              esconderle lo suyo. Lo que se restringe adentro del modal son
+              los controles de asignar y finalizar. */}
+          <button
+            type="button"
+            onClick={onEntrenadores}
+            title="Entrenadores a cargo"
+            className="rounded-md p-2 text-text-muted hover:bg-surface-card hover:text-primary-volt"
+          >
+            <Dumbbell size={16} />
+          </button>
+          {/* Se OMITE, no se deshabilita, para quien no tenga la acción. Un
+              botón gris que no responde igual delata que el socio tiene algo
+              cargado, y el punto de que el Recepcionista no vea esto es que no
+              se entere. */}
+          {puedeVerHistorialMedico && (
+            <button
+              type="button"
+              onClick={onHistorialMedico}
+              title="Historial médico"
+              className="rounded-md p-2 text-text-muted hover:bg-surface-card hover:text-primary-volt"
+            >
+              <Stethoscope size={16} />
             </button>
           )}
           {/* Un solo botón que cambia de acción según el estado: UserX para

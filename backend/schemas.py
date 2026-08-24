@@ -18,7 +18,7 @@ frontends.
 from datetime import date, datetime, time  # noqa: F401  (los usan los *Out)
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 
 # =============================================================================
@@ -394,6 +394,90 @@ class TipoMembresiaOut(BaseModel):
     activo: bool
 
 
+# =============================================================================
+# PROMOCIONES
+# =============================================================================
+#
+# Un descuento por PORCENTAJE o por MONTO FIJO, con ventana de fechas.
+#
+# Las dos columnas del modelo son nullables porque una promoción usa una u
+# otra, nunca las dos. Eso el esquema no lo puede exigir solo, así que la
+# validación de "exactamente una" vive acá: sin ella se podría cargar una
+# promo con los dos campos y nadie sabría cuál gana al cobrar, o con ninguno
+# y sería un descuento de cero disfrazado de descuento.
+
+
+class PromocionBase(BaseModel):
+    nombre: str = Field(min_length=2, max_length=100)
+    descripcion: str | None = None
+    porcentaje_descuento: float | None = Field(default=None, gt=0, le=100)
+    monto_fijo_descuento: float | None = Field(default=None, gt=0)
+    fecha_inicio: date
+    fecha_fin: date
+    # None = vale en todas las sedes. Con una sede sola hoy da igual, pero la
+    # columna existe y llenarla mal ahora obligaría a migrar después.
+    id_sede: int | None = None
+
+    @model_validator(mode="after")
+    def _una_sola_forma_de_descuento(self):
+        tiene_porcentaje = self.porcentaje_descuento is not None
+        tiene_monto = self.monto_fijo_descuento is not None
+        if tiene_porcentaje and tiene_monto:
+            raise ValueError(
+                "Elegí una sola forma de descuento: porcentaje O monto fijo, "
+                "no las dos."
+            )
+        if not tiene_porcentaje and not tiene_monto:
+            raise ValueError(
+                "La promoción necesita un descuento: un porcentaje o un monto fijo."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _la_ventana_tiene_sentido(self):
+        # Se admite fecha_inicio == fecha_fin: una promo de un solo día es
+        # normal. Lo que no puede es terminar antes de empezar.
+        if self.fecha_fin < self.fecha_inicio:
+            raise ValueError("La promoción no puede terminar antes de empezar.")
+        return self
+
+
+class PromocionCrear(PromocionBase):
+    pass
+
+
+class PromocionEditar(PromocionBase):
+    pass
+
+
+class PromocionOut(BaseModel):
+    id_promocion: int
+    nombre: str
+    descripcion: str | None = None
+    porcentaje_descuento: float | None = None
+    monto_fijo_descuento: float | None = None
+    fecha_inicio: date
+    fecha_fin: date
+    id_sede: int | None = None
+    activo: bool
+    # Derivado, no una columna: activa Y dentro de la ventana de fechas. Lo
+    # calcula el backend por el mismo motivo que `estado` y `plan` del socio —
+    # es una regla de negocio, y derivarla en cada cliente sería mantenerla en
+    # tres lugares. Ver el comentario de sociosService.ts.
+    vigente: bool
+    # Ya armado ("20% OFF", "$5.000 OFF") para no repetir el formateo en las
+    # dos apps.
+    etiqueta: str
+
+
+class VistaPreviaDescuento(BaseModel):
+    """Lo que saldría cobrar un plan con una promo, sin cobrar nada."""
+    precio_lista: float
+    descuento: float
+    precio_final: float
+    promocion: str
+
+
 class CobrarRequest(BaseModel):
     """
     Un cobro de membresía en el mostrador.
@@ -417,6 +501,18 @@ class CobrarRequest(BaseModel):
     # Cobrarlos por separado dejaría una ventana en la que el plan quedó pago
     # pero sin membresía a la que colgarse.
     id_plan_actividad: int | None = None
+    # Descuento a aplicar sobre el precio de lista.
+    #
+    # Va el ID y NO el monto ya descontado, por la misma razon por la que no
+    # viaja el precio: si el cliente mandara "descuento: 29000", cualquiera
+    # con la consola abierta se regalaria la membresia. El backend busca la
+    # promo, verifica que este vigente y recalcula.
+    #
+    # Excluyente con monto_manual: son dos formas distintas de apartarse del
+    # precio de lista y combinarlas no tiene una respuesta obvia (,se
+    # descuenta sobre el monto manual o sobre el de lista?). El router
+    # rechaza el pedido en vez de elegir por su cuenta.
+    id_promocion: int | None = None
 
 
 class PagoOut(BaseModel):
@@ -476,6 +572,12 @@ class CobroResponse(BaseModel):
     deudas_saldadas: list[DeudaOut] = []
     total: float
     mensaje: str
+    # Que promo se aplico y cuanto ahorro. Van aparte de `total` porque el
+    # comprobante tiene que poder mostrar las tres cifras —lista, descuento y
+    # final— y con el total solo no se puede reconstruir cuanto se descontó.
+    promocion: str | None = None
+    precio_lista: float | None = None
+    descuento: float | None = None
 
 
 class PagarDeudaRequest(BaseModel):

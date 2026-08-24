@@ -13,6 +13,7 @@ Arranque:
     Docs  -> http://127.0.0.1:8000/docs
 """
 
+import threading
 import os
 from contextlib import asynccontextmanager
 
@@ -21,7 +22,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from csrf import middleware_csrf
-from database import Base, SessionLocal, engine
+from sqlalchemy import text
+from database import Base, SessionLocal, calentar_pool, engine
 from seeder import ejecutar_seeder
 from deudas import generar_deudas
 from turnos import generar_turnos
@@ -53,6 +55,47 @@ def _origenes_cors() -> list[str]:
     return origenes
 
 
+# =============================================================================
+# LATIDO CONTRA LA SUSPENSIÓN DE NEON
+# =============================================================================
+#
+# Neon (plan gratuito) SUSPENDE el compute tras unos minutos sin consultas, y
+# despertarlo cuesta segundos. Sumado a los 825 ms que cuesta abrir una
+# conexión nueva, es lo que hacía que la app estuviera rápida mientras se la
+# usaba seguido y lenta al volver después de un rato — el sintoma exacto que
+# se reportó: "a veces la tardanza aparece de la nada".
+#
+# Un `SELECT 1` cada dos minutos alcanza para las dos cosas: mantiene el
+# compute despierto y hace que las conexiones del pool no queden ociosas el
+# tiempo suficiente como para que alguien del otro lado las corte.
+#
+# POR QUÉ UN HILO Y NO UNA TAREA ASYNC: SQLAlchemy acá es SÍNCRONO. Meterlo en
+# el event loop bloquearía el loop entero durante el RTT (~44 ms) cada dos
+# minutos. Un hilo daemon no molesta a nadie y muere solo cuando el proceso
+# termina, sin necesidad de cancelarlo.
+#
+# El costo es ridículo comparado con lo que evita: 30 consultas por hora contra
+# despertar el compute en medio de un cobro.
+SEGUNDOS_ENTRE_LATIDOS = 120
+
+_latido_activo = threading.Event()
+
+
+def _latido():
+    """Mantiene despierto el compute de Neon y vivas las conexiones del pool."""
+    while not _latido_activo.wait(SEGUNDOS_ENTRE_LATIDOS):
+        try:
+            with engine.connect() as con:
+                con.execute(text("SELECT 1"))
+        except Exception:  # noqa: BLE001
+            # Que falle un latido no es noticia: puede ser un corte de red de
+            # un segundo. El próximo lo vuelve a intentar, y si la base está
+            # de verdad caída el usuario se entera por la pantalla, que es
+            # donde corresponde. Un log acá por cada latido fallido llenaría
+            # la consola de ruido durante un corte.
+            pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -72,6 +115,13 @@ async def lifespan(app: FastAPI):
     # que un arranque contra una base vacía no explote — y para cumplir la
     # norma del profe de que el sistema se auto-configure al arrancar.
     Base.metadata.create_all(bind=engine)
+
+    # Abrir conexiones AHORA para que el primero que use la app no pague los
+    # 825 ms del handshake TLS contra Neon. Ver database.calentar_pool.
+    calentar_pool()
+
+    # Y mantenerlas vivas mientras el backend esté arriba.
+    threading.Thread(target=_latido, name="latido-neon", daemon=True).start()
 
     db = SessionLocal()
     try:
@@ -112,6 +162,9 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # Corta el latido al apagar: sin esto el hilo sigue consultando
+    # mientras uvicorn intenta cerrar.
+    _latido_activo.set()
     # (Nada que limpiar al apagar: el engine cierra su pool solo.)
 
 
@@ -157,7 +210,7 @@ app.middleware("http")(middleware_csrf)
 #
 from routers import (  # noqa: E402  (tras crear `app`)
     actividades, asistencia, auth_router, cobros, dashboard, nutricion,
-    pagos_online, patologias, personal, portal, recepcion, rutinas, socios,
+    pagos_online, patologias, personal, portal, promociones, recepcion, rutinas, socios,
     usuarios,
 )
 
@@ -175,6 +228,7 @@ app.include_router(usuarios.router)
 # Aparte de /socios: su guard es VER_HISTORIAL_MEDICO, que el
 # Recepcionista NO tiene. Ver el docstring del modulo.
 app.include_router(patologias.router)
+app.include_router(promociones.router)
 # El portal va último: son las rutas del socio, y tenerlas juntas al final de
 # /docs deja claro que son un grupo aparte del resto (gestión).
 app.include_router(portal.router)

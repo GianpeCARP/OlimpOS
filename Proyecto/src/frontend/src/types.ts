@@ -47,7 +47,12 @@ export interface Socio {
   id_socio: number;
   id_persona: number; // FK -> Persona, unique, not null
   id_sede: number; // FK -> Sede, not null
-  id_entrenador_a_cargo?: number; // FK -> Entrenador, opcional
+  // NO hay `id_entrenador_a_cargo`. La tenia, y la migracion 003 la saco:
+  // era un campo de valor unico para un hecho que en la realidad es
+  // MULTIPLE (uno de musculacion y otro de funcional a la vez) y
+  // CAMBIANTE (reasignar pisaba el anterior y se perdia el historial).
+  // Hoy vive en Asignacion_Entrenador; se lee con listarEntrenadoresDeSocio
+  // de sociosService. Mismo comentario que models.py del backend.
   numero_socio?: string; // varchar(20), unique
   codigo_rfid?: string; // varchar(50), unique — nullable: no todo gimnasio usa RFID (ver Asistencia.metodo_registro)
   fecha_alta: string; // date, not null

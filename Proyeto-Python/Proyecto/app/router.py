@@ -56,7 +56,13 @@ class Router:
         Los imports aquí evitan dependencias circulares: si se hicieran en el
         nivel superior del módulo, algunos archivos se cargarían antes de que
         sus dependencias estén disponibles.
+
+        Es IDEMPOTENTE: se puede llamar de más sin costo. Eso es lo que permite
+        que `view_class` lo invoque por su cuenta sin coordinarse con setup().
         """
+        if self._view_map:
+            return
+
         from app.views.dashboard    import DashboardView
         from app.views.recepcion    import RecepcionView
         from app.views.socios       import SociosView
@@ -91,7 +97,26 @@ class Router:
         DashboardView a mano: cuál es esa pantalla ahora depende del rol, y
         con un import fijo un Entrenador seguiría entrando al Dashboard aunque
         no pueda verlo.
+
+        REGISTRA EL MAPA SI ESTÁ VACÍO, y ese `if` es el arreglo de un bug que
+        rompía el login de TODOS los roles:
+
+        `_load_main_app` de login.py llama a esto para armar la pantalla
+        inicial, y llama a `setup()` —que es quien llenaba el mapa— dieciocho
+        líneas MÁS ABAJO, recién cuando el shell ya está en la página. O sea que
+        acá el mapa siempre estaba vacío, `view_class` devolvía None, y la línea
+        siguiente hacía `None(page=..., router=...)`:
+
+            TypeError: 'NoneType' object is not callable
+
+        Se podría haber arreglado subiendo el `setup()` en login.py, pero el
+        problema de fondo es que `setup()` hace dos cosas sin relación: guardar
+        las referencias del layout Y registrar las vistas. Registrar no necesita
+        ninguna referencia, así que atarlo a ese momento era la causa. Con el
+        registro al primer uso, el orden deja de importar y no hay una segunda
+        forma de volver a romperlo desde otro archivo.
         """
+        self._register_views()
         return self._view_map.get(route)
 
     # ── Navegación ────────────────────────────────────────────────────────────
@@ -151,8 +176,10 @@ class Router:
         if self._content_ref is None or self._content_ref.current is None:
             return
 
-        # Obtiene la clase de vista desde el mapa de rutas
-        view_class = self._view_map.get(route)
+        # Obtiene la clase de vista por el MISMO camino que usa el login, y no
+        # leyendo _view_map directo: así las dos entradas comparten el registro
+        # perezoso y no hay una que funcione y otra que no según el orden.
+        view_class = self.view_class(route)
         if view_class is None:
             return  # Ruta desconocida — no hace nada
 

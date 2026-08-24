@@ -265,3 +265,119 @@ export async function reactivarSocio(idSocio: number): Promise<SocioListado> {
   const datos = await pedir<SocioApi>(`/socios/${idSocio}/reactivar`, { metodo: 'POST' });
   return aSocioListado(datos);
 }
+
+// =========================================================================
+// ENTRENADOR A CARGO
+// =========================================================================
+//
+// Quién entrena a quién. Vive en Asignacion_Entrenador desde la migración 003,
+// que sacó la vieja columna Socio.id_entrenador_a_cargo.
+//
+// Esa columna cometía el mismo error que Telefono ya evitaba: meter en un
+// campo de valor único un hecho que en la realidad es MÚLTIPLE —un socio puede
+// tener a la vez uno de musculación y otro de funcional— y CAMBIANTE, porque
+// reasignar pisaba el valor anterior y el historial se perdía.
+//
+// DOS PERMISOS DISTINTOS, y no es un detalle:
+//   - LEER la lista pide sólo la sección SOCIOS (el Entrenador la tiene en
+//     LECTURA), así que la ve todo el que ve la grilla.
+//   - ASIGNAR y FINALIZAR piden la acción `gestionRutinas`, NO
+//     `altaBajaSocios`. Asignar un entrenador no es un dato administrativo del
+//     socio, es una decisión de entrenamiento — y así la tienen el Dueño, el
+//     Recepcionista y el propio Entrenador, que es quien toma un cliente
+//     nuevo. No hay escalación en dejárselo al entrenador: ya ve a todos los
+//     socios en LECTURA, así que asignarse uno no le muestra nada nuevo.
+//
+// Gemelo de la sección ENTRENADOR A CARGO de `app/api_client.py` en Flet.
+
+export interface AsignacionEntrenador {
+  idAsignacion: number;
+  idSocio: number;
+  idEntrenador: number;
+  entrenador: string;
+  especialidad?: string;
+  /** ISO (yyyy-mm-dd). */
+  fechaInicio: string;
+  /** undefined mientras sigue entrenándolo. */
+  fechaFin?: string;
+  estado: string;
+  /** Derivado de `estado`, que es lo que mira la vista en todos lados. */
+  activa: boolean;
+}
+
+interface AsignacionEntrenadorApi {
+  id_asignacion: number;
+  id_socio: number;
+  id_entrenador: number;
+  entrenador: string;
+  especialidad: string | null;
+  fecha_inicio: string;
+  fecha_fin: string | null;
+  estado: string;
+}
+
+function aAsignacion(a: AsignacionEntrenadorApi): AsignacionEntrenador {
+  return {
+    idAsignacion: a.id_asignacion,
+    idSocio: a.id_socio,
+    idEntrenador: a.id_entrenador,
+    entrenador: a.entrenador,
+    especialidad: a.especialidad ?? undefined,
+    fechaInicio: a.fecha_inicio,
+    fechaFin: a.fecha_fin ?? undefined,
+    estado: a.estado,
+    activa: a.estado === 'ACTIVA',
+  };
+}
+
+/**
+ * Los entrenadores de un socio, CON historial.
+ *
+ * Trae también las finalizadas y es deliberado: ese historial es el motivo por
+ * el que esto es una tabla y no la columna que había antes. Con la columna,
+ * reasignar borraba al anterior y nadie podía responder "¿quién lo entrenaba
+ * en marzo?".
+ */
+export async function listarEntrenadoresDeSocio(
+  idSocio: number,
+): Promise<AsignacionEntrenador[]> {
+  const datos = await pedir<AsignacionEntrenadorApi[]>(`/socios/${idSocio}/entrenadores`);
+  return datos.map(aAsignacion);
+}
+
+/**
+ * Le pone un entrenador a cargo.
+ *
+ * SE PERMITEN VARIOS A LA VEZ — es la diferencia deliberada con las rutinas y
+ * las dietas, que admiten una sola activa. Lo que sí rechaza el backend (409)
+ * es asignar dos veces al MISMO: eso no es "dos entrenadores", es la misma
+ * relación duplicada, y después nadie sabría cuál de las dos filas finalizar.
+ */
+export async function asignarEntrenador(
+  idSocio: number,
+  idEntrenador: number,
+): Promise<AsignacionEntrenador> {
+  const datos = await pedir<AsignacionEntrenadorApi>(`/socios/${idSocio}/entrenadores`, {
+    metodo: 'POST',
+    cuerpo: { id_entrenador: idEntrenador },
+  });
+  return aAsignacion(datos);
+}
+
+/**
+ * Termina la relación. NO borra la fila: queda con su fecha_fin y sigue
+ * explicando quién entrenaba a quién en ese período.
+ *
+ * La ruta va por /socios/entrenadores/asignaciones/{id} y no bajo el id del
+ * socio: el id de la asignación ya lo identifica, y pedir los dos permitiría
+ * mandar una combinación inconsistente.
+ */
+export async function finalizarAsignacionEntrenador(
+  idAsignacion: number,
+): Promise<AsignacionEntrenador> {
+  const datos = await pedir<AsignacionEntrenadorApi>(
+    `/socios/entrenadores/asignaciones/${idAsignacion}/finalizar`,
+    { metodo: 'POST' },
+  );
+  return aAsignacion(datos);
+}

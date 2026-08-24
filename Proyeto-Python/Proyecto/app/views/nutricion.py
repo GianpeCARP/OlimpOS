@@ -47,15 +47,29 @@ class NutricionView:
         )
 
         # ── Resumen calórico ───────────────────────────────────────────────────
-        # Calcula estadísticas a partir de la lista de planes para mostrar KPIs
+        # Calcula estadísticas a partir de la lista de planes para mostrar KPIs.
+        #
+        # LOS TRES GUARDAS DE LISTA VACIA NO SON PARANOIA: sin planes cargados
+        # —o sea, en una base recien entregada— `sum(cals)//len(cals)` tiraba
+        # ZeroDivisionError y `min`/`max` un ValueError, y la pantalla entera de
+        # Nutricion no abria para NINGUN rol. Se encontro con pruebas_vistas.py,
+        # que construye cada vista con cada rol.
+        #
+        # Se muestra 0 en vez de esconder el bloque para que las dos apps se
+        # comporten igual: NutricionView.tsx ya resolvia esto con
+        # `calorias.length > 0 ? ... : 0`, y la regla del proyecto es que la
+        # gemela no invente su propia respuesta.
         cals = [p["calorias"] for p in planes]  # Lista de calorías de todos los planes
+        promedio = sum(cals) // len(cals) if cals else 0
+        minimo = min(cals) if cals else 0
+        maximo = max(cals) if cals else 0
         summary = ft.Container(
             content=ft.Row([
-                _cal_stat("Promedio Cal.",  f"{sum(cals)//len(cals)} kcal",
+                _cal_stat("Promedio Cal.",  f"{promedio} kcal",
                           ft.Icons.LOCAL_FIRE_DEPARTMENT_ROUNDED, Colors.ACCENT),
-                _cal_stat("Plan más bajo",  f"{min(cals)} kcal",
+                _cal_stat("Plan más bajo",  f"{minimo} kcal",
                           ft.Icons.ARROW_DOWNWARD_ROUNDED, Colors.INFO),
-                _cal_stat("Plan más alto",  f"{max(cals)} kcal",
+                _cal_stat("Plan más alto",  f"{maximo} kcal",
                           ft.Icons.ARROW_UPWARD_ROUNDED, Colors.SUCCESS),
                 _cal_stat("Total asignados",
                           f"{sum(p['asignados'] for p in planes)} socios",
