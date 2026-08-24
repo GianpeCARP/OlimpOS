@@ -155,7 +155,7 @@ export function MisTurnosView() {
         }
       />
 
-      <div className="space-y-4 p-8">
+      <div className="space-y-4 p-4 md:p-8">
         {error && (
           <SectionCard>
             <p className="mb-4 font-body text-sm text-status-danger">{error}</p>

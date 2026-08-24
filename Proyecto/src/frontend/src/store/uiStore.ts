@@ -33,6 +33,19 @@ interface DialogState {
 }
 
 interface UiState {
+  /**
+   * Si el menu lateral esta abierto EN MOBILE. En pantallas grandes la
+   * sidebar esta siempre visible y este valor se ignora.
+   *
+   * Vive en el store y no en AppLayout porque quien lo abre es el boton del
+   * Topbar, y el Topbar lo arma cada vista por su cuenta (asi lo pide
+   * layout.md). Pasarlo por props obligaria a que las ~15 vistas lo
+   * reenvien, y alcanzaria con que una se olvide para que ahi no se pueda
+   * abrir el menu.
+   */
+  menuAbierto: boolean;
+  abrirMenu: () => void;
+  cerrarMenu: () => void;
   snackbar: SnackbarState;
   dialog: DialogState;
   /** `duracionMs` en SNACK_PERSISTENTE deja el mensaje hasta que lo cierren. */
@@ -43,6 +56,9 @@ interface UiState {
 }
 
 export const useUiStore = create<UiState>((set) => ({
+  menuAbierto: false,
+  abrirMenu: () => set({ menuAbierto: true }),
+  cerrarMenu: () => set({ menuAbierto: false }),
   snackbar: { open: false, message: '', color: colors.statusOk },
   dialog: { open: false, title: '', message: '', onConfirm: null },
 

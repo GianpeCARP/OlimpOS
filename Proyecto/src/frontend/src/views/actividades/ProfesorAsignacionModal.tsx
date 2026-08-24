@@ -145,7 +145,7 @@ export function ProfesorAsignacionModal({ actividad, onClose, onCambio }: Profes
           <button
             type="button"
             onClick={cerrar}
-            className="rounded-md px-4 py-2 font-body text-sm text-text-secondary hover:text-text-main"
+            className="shrink-0 rounded-md px-4 py-2 font-body text-sm whitespace-nowrap text-text-secondary hover:text-text-main"
           >
             Cerrar
           </button>

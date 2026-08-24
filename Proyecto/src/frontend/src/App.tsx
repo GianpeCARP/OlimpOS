@@ -40,7 +40,10 @@ import { APP_NAME, Routes } from './config';
 // segundos en despertar tras un rato sin uso).
 function Rehidratando() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-base">
+    // min-h-full en vez de min-h-screen, por lo mismo que AppLayout: en iOS
+    // `100vh` es mas alto que lo visible y la pantalla de carga quedaba
+    // centrada respecto de un alto que no existe.
+    <div className="flex min-h-full items-center justify-center bg-surface-base">
       <p className="font-heading text-3xl font-extrabold text-text-main">{APP_NAME}</p>
     </div>
   );

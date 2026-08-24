@@ -1,9 +1,24 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- El icono de la pestana.
+         Estaba apuntando a /favicon.svg, que es el logo POR DEFECTO DE VITE:
+         el rayo violeta (#863bff / #7e14ff). No tenia nada que ver con
+         OlimpOS y era lo que se veia al lado del titulo.
+         Los PNG de /icons/ si son el logo real y ya estaban generados; lo
+         unico que faltaba era usarlos. -->
+    <link rel="icon" type="image/png" sizes="196x196" href="/icons/favicon-196.png" />
+    <!-- iOS ignora rel="icon" para el acceso directo en la pantalla de
+         inicio: usa apple-touch-icon. Sin esta linea, al agregar la app al
+         inicio el iPhone genera una miniatura de la pagina en vez del logo. -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-icon-180.png" />
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Tine la barra del navegador en Android y la de estado con la app
+         instalada. Mismo volt que el manifiesto y que index.css. -->
+    <meta name="theme-color" content="#C6F135" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

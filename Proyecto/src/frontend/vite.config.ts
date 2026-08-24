@@ -58,33 +58,86 @@ export default defineConfig(({ mode }) => {
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      // devOptions APAGADO a proposito.
+      //
+      // Con `enabled: true` el plugin sirve el manifiesto y registra un
+      // service worker tambien en desarrollo. Se probo y se volvio atras por
+      // dos razones:
+      //
+      // 1. NO SIRVE PARA NADA sobre HTTP. Chrome y Safari exigen contexto
+      //    seguro (HTTPS o localhost) para ofrecer "Instalar app", asi que
+      //    abriendo la PWA por la IP de la red —http://192.168.x.x:5173— el
+      //    manifiesto se sirve pero la opcion no aparece igual.
+      //
+      // 2. EL SERVICE WORKER CACHEA, y en desarrollo eso es un problema: un
+      //    arreglo de CSS o de JS puede no verse en el telefono porque el SW
+      //    devuelve la version vieja, y se termina depurando un bug que ya
+      //    estaba resuelto.
+      //
+      // Para probar la instalacion de verdad, sin exponer nada a internet:
+      // Chrome trata `localhost` como contexto seguro aunque sea HTTP, asi
+      // que con el celular por USB y port forwarding en chrome://inspect
+      // (5173 -> localhost:5173) se abre como http://localhost:5173 y
+      // funciona todo. En ese caso, volver a poner `enabled: true` aca.
+      //
+      // En produccion no hace falta ninguna de las dos cosas: `vite build`
+      // genera el manifiesto y el SW siempre.
+
       manifest: {
         name: 'OlimpOS',
         short_name: 'OlimpOS',
-        theme_color: '#aa3bff',
-        background_color: '#ffffff',
+        // Kinetic Carbon, no los colores por defecto de la plantilla.
+        //
+        // Estaban en violeta (#aa3bff) y blanco, que no existen en la paleta.
+        // No es cosmetico: `background_color` es lo que pinta la pantalla de
+        // arranque cuando se abre la app instalada, asi que la app dark-only
+        // arrancaba con un flash BLANCO antes de dibujar nada. Y `theme_color`
+        // tine la barra de estado del celular, que quedaba violeta sobre una
+        // app verde y gris.
+        //
+        // Los dos salen de src/index.css (bloque @theme). Si cambia la paleta,
+        // cambian aca — es la misma regla que ata index.css con config.py de
+        // Flet: el mismo color vive en varios archivos y hay que moverlos
+        // juntos.
+        theme_color: '#C6F135',
+        background_color: '#15171C',
         display: 'standalone',
+        // CUATRO archivos y no dos, y ahi esta el motivo de que el logo se
+        // viera chico: antes el MISMO png servia para `any` y para
+        // `maskable`.
+        //
+        // Un icono `maskable` lo recorta el sistema con la forma que quiera
+        // (circulo, cuadrado redondeado, gota), asi que su contenido tiene
+        // que caber en un circulo del 80% del lado. Para un logo cuadrado eso
+        // es 80/raiz(2) = 56% del ancho. Un archivo que cumple esa regla se ve
+        // BIEN recortado y RIDICULAMENTE chico cuando el sistema lo usa como
+        // icono normal, que es lo que estaba pasando.
+        //
+        // Separados, cada uno hace lo suyo: los `any` llenan el cuadro al 92%
+        // y son transparentes; los `maskable` van al 58% sobre el fondo de la
+        // app. Se generan desde el logo original con el script
+        // scratchpad/generar_iconos.ps1.
         icons: [
           {
-            src: 'icons/manifest-icon-192.maskable.png',
+            src: 'icons/icon-192.png',
             sizes: '192x192',
             type: 'image/png',
             purpose: 'any',
           },
           {
-            src: 'icons/manifest-icon-192.maskable.png',
-            sizes: '192x192',
-            type: 'image/png',
-            purpose: 'maskable',
-          },
-          {
-            src: 'icons/manifest-icon-512.maskable.png',
+            src: 'icons/icon-512.png',
             sizes: '512x512',
             type: 'image/png',
             purpose: 'any',
           },
           {
-            src: 'icons/manifest-icon-512.maskable.png',
+            src: 'icons/maskable-192.png',
+            sizes: '192x192',
+            type: 'image/png',
+            purpose: 'maskable',
+          },
+          {
+            src: 'icons/maskable-512.png',
             sizes: '512x512',
             type: 'image/png',
             purpose: 'maskable',

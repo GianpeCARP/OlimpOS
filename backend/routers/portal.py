@@ -1209,7 +1209,52 @@ def _a_congelamiento_out(c) -> CongelamientoOut:
 # para una decisión de negocio.
 DIAS_MINIMO_CONGELAMIENTO = 7      # menos que una semana no vale la burocracia
 DIAS_MAXIMO_POR_VEZ = 90
-DIAS_MAXIMO_POR_ANIO = 90          # sumando todos los del año
+
+# El tope acumulado y la ventana en la que se mide.
+#
+# LA VENTANA ES MÓVIL —los últimos 365 días— Y NO EL AÑO CALENDARIO, y ese
+# cambio cierra un agujero real. Con año calendario, alguien que congelaba el
+# 1 de diciembre consumía el cupo de ESE año; el 2 de enero el contador
+# arrancaba de cero y podía pedir otros 90. Resultado: 180 días corridos
+# congelado, sin romper ninguna regla.
+#
+# El 31 de diciembre no significa nada para el negocio: lo que el gimnasio
+# quiere limitar es cuánto tiempo puede estar pausado alguien en un período
+# razonable, y eso no se reinicia porque cambie el almanaque.
+#
+# El costo de esto para el gimnasio es concreto: 90 días de pausa son 3
+# renovaciones menos al año (9 en vez de 12), o sea un 25% menos de
+# facturación de ese socio. Se acepta porque la alternativa a congelar no es
+# "sigue pagando sin venir", es que se dé de baja — y ahí se pierde el 100%.
+DIAS_MAXIMO_EN_VENTANA = 90
+VENTANA_CONGELAMIENTO_DIAS = 365
+
+
+def _dias_congelados_en_ventana(db: Session, id_socio: int, hoy: date) -> int:
+    """
+    Días ya consumidos en los últimos VENTANA_CONGELAMIENTO_DIAS.
+
+    Cuenta `dias_aplicados` —los días REALES que se sumaron al vencimiento— y
+    no los pedidos. Alguien que pidió 30 y volvió a los 10 gastó 10 de su
+    cupo, no 30: sería injusto cobrarle días que no usó.
+
+    Sólo mira los FINALIZADO. Los ACTIVO no se cuentan porque todavía no se
+    sabe cuántos días van a ser —eso se decide al reanudar— y además no hacen
+    falta: no se puede pedir una pausa nueva teniendo una activa, así que
+    nunca hay una sin contar al momento de validar.
+
+    Vive en una función y no dentro del endpoint para que la regla exista en
+    UN solo lugar: la valida el POST de congelar y la puede consultar
+    cualquier pantalla que quiera mostrar el saldo.
+    """
+    desde = hoy - timedelta(days=VENTANA_CONGELAMIENTO_DIAS)
+    return int(
+        (db.query(func.coalesce(func.sum(Congelamiento.dias_aplicados), 0))
+         .filter(Congelamiento.id_socio == id_socio,
+                 Congelamiento.estado == "FINALIZADO",
+                 Congelamiento.fecha_inicio >= desde)
+         .scalar()) or 0
+    )
 
 
 def _congelamiento_vigente(db: Session, id_socio: int) -> Congelamiento | None:
@@ -1266,11 +1311,18 @@ def mis_congelamientos(
     sesion: Sesion = Depends(requiere_seccion(Seccion.MI_CUOTA)),
 ):
     """
-    El historial de pausas, y cuántos días le quedan disponibles este año.
+    El historial de pausas del socio.
 
-    Se devuelve el saldo y no sólo la lista porque es lo que el socio quiere
-    saber antes de pedir: "¿me alcanza para el viaje?". Que lo calcule la app
-    sumando la lista sería repetir la regla del tope en el cliente.
+    OJO: devuelve la LISTA, no el saldo. El docstring viejo decía que también
+    daba "cuántos días le quedan disponibles este año" y no era cierto — la
+    respuesta siempre fue una lista de CongelamientoOut. Se corrige el texto
+    en vez de agregar el campo para no cambiarle la forma a la respuesta, que
+    ya consumen las dos apps.
+
+    Si en algún momento hace falta mostrar el saldo, la cuenta ya está hecha
+    en `_dias_congelados_en_ventana`: hay que exponerla, no reimplementarla en
+    el cliente. Sumar la lista del lado de la app repetiría la regla del tope
+    en tres lugares y el día que cambie de 90 a 120, dos se olvidan.
     """
     socio = _mi_socio(db, sesion)
     _congelamiento_vigente(db, socio.id_socio)   # cierra el vencido, si hay
@@ -1342,20 +1394,27 @@ def congelar_mi_membresia(
             detail=f"La pausa máxima es de {DIAS_MAXIMO_POR_VEZ} días por vez.",
         )
 
-    # El tope anual mira los días ya USADOS (los aplicados) más los pedidos.
-    # Se cuentan por año calendario de la fecha de inicio, que es lo que
-    # entiende cualquiera: "este año ya congelaste X días".
-    usados = (db.query(func.coalesce(func.sum(Congelamiento.dias_aplicados), 0))
-              .filter(Congelamiento.id_socio == socio.id_socio,
-                      Congelamiento.estado == "FINALIZADO",
-                      Congelamiento.fecha_inicio >= date(hoy.year, 1, 1))
-              .scalar()) or 0
-    if usados + dias > DIAS_MAXIMO_POR_ANIO:
+    # El tope mira los días ya USADOS en los últimos 12 meses más los que se
+    # están pidiendo ahora. Ver el comentario de VENTANA_CONGELAMIENTO_DIAS:
+    # la ventana es móvil justamente para que no se pueda encadenar diciembre
+    # con enero y estar 180 días seguidos en pausa.
+    usados = _dias_congelados_en_ventana(db, socio.id_socio, hoy)
+    if usados + dias > DIAS_MAXIMO_EN_VENTANA:
+        restantes = max(0, DIAS_MAXIMO_EN_VENTANA - usados)
+        # Se dice DESDE CUÁNDO se cuenta, no sólo el número. Sin eso, alguien
+        # que congeló en marzo y en noviembre recibe un "ya usaste 90" que le
+        # parece un error del sistema: en su cabeza esas pausas son de "años"
+        # distintos.
+        desde = hoy - timedelta(days=VENTANA_CONGELAMIENTO_DIAS)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(f"Este año ya congelaste {usados} días y el máximo son "
-                    f"{DIAS_MAXIMO_POR_ANIO}. Te quedan "
-                    f"{max(0, DIAS_MAXIMO_POR_ANIO - usados)}."),
+            detail=(f"En los últimos 12 meses (desde el "
+                    f"{desde.strftime('%d/%m/%Y')}) ya congelaste {usados} días, "
+                    f"y el máximo son {DIAS_MAXIMO_EN_VENTANA}. "
+                    + (f"Te quedan {restantes}."
+                       if restantes else
+                       "No te queda ninguno; el cupo se va liberando a medida "
+                       "que las pausas viejas cumplen el año.")),
         )
 
     congelamiento = Congelamiento(

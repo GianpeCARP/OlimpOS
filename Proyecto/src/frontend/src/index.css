@@ -37,10 +37,52 @@
   color-scheme: dark;
 }
 
+/* =========================================================================
+   ALTURA DEL VIEWPORT EN MOBILE
+   =========================================================================
+   `100vh` MIENTE en Safari de iOS: incluye el alto de la barra de
+   direcciones, que se esconde al scrollear. O sea que el contenedor queda
+   mas alto que lo que se ve, y el final del contenido queda DEBAJO de la
+   interfaz del navegador — al bajar rapido "no se llega al limite", que es
+   exactamente lo que se reporto en un iPhone.
+
+   `100dvh` (dynamic viewport height) es el alto REAL disponible en cada
+   momento, y se ajusta solo cuando la barra aparece o desaparece. Existe
+   justamente para esto.
+
+   Se deja `height: 100%` como base y se pisa con dvh solo donde el navegador
+   lo soporta: si algun dia esto corre en un navegador viejo, cae en el
+   comportamiento de antes en vez de quedarse sin altura. */
 html,
 body,
 #root {
+  height: 100%;
   min-height: 100%;
+}
+
+@supports (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
+}
+
+/* =========================================================================
+   NADA DE "TIRAR PARA RECARGAR"
+   =========================================================================
+   Sin esto, cuando el scroll de adentro llega al tope, el gesto SIGUE de
+   largo hacia el documento y Safari lo interpreta como pull-to-refresh: la
+   pagina se recarga sola en medio de un scroll rapido. En una app que se usa
+   con una mano en el gimnasio eso es inaceptable — y peor durante un
+   circuito, donde recargar significa perder el progreso.
+
+   `none` corta las dos cosas: el encadenamiento del scroll y el gesto de
+   recarga. El scroll de cada panel sigue funcionando igual; lo unico que
+   desaparece es el rebote que se propaga al documento. */
+html,
+body {
+  overscroll-behavior: none;
 }
 
 body {

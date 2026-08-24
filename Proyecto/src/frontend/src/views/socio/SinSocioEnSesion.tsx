@@ -20,7 +20,7 @@ export function SinSocioEnSesion({ titulo }: { titulo: string }) {
   return (
     <div>
       <Topbar title={titulo} />
-      <div className="p-8">
+      <div className="p-4 md:p-8">
         <SectionCard>
           <div className="flex items-start gap-3">
             <AlertTriangle size={18} color={colors.statusWarn} className="mt-0.5 shrink-0" />
