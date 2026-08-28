@@ -48,6 +48,12 @@ componente `.tsx` de la PWA es gemelo. Si tocás uno, mirá el otro.
   musculación y otro de funcional es normal, no un error de datos) y las
   finalizadas quedan en el historial. En la PWA el socio lo ve en "Mi rutina"
   (`MiEntrenadorCard`).
+- **Circuito de ejercicios** en la PWA: el socio toca "Comenzar entrenamiento"
+  en Mi rutina y la pantalla lo lleva ejercicio por ejercicio con el descanso
+  cronometrado. **Todo del lado del cliente** —no toca el backend— porque un
+  cronómetro que necesita servidor falla justo cuando el wifi del gimnasio anda
+  mal. Es un MODO de Mi rutina y no una sección ni una ruta: como estado, el
+  botón de atrás del celular no puede sacarte en medio de una serie.
 - **Promociones** en las dos, dentro de Cobros. Ojo con el reparto de permisos,
   que es el diseño y no un detalle: **listar** pide la sección COBROS (para que
   el Recepcionista pueda elegir una al cobrar) y **crear/editar/dar de baja**
@@ -87,7 +93,8 @@ saberlo porque las notas viejas pedían explícitamente no tocarlas:
 
 Lo que sí falta está en `backend/BITACORA.md` **§13**: sólo Mercado Pago, y no
 depende del código (falta el token, el secreto del webhook y una URL pública).
-El trabajo de rendimiento está en la **§14**.
+El trabajo de rendimiento está en la **§14**, y el circuito más todo lo de
+mobile en la **§15**.
 Los cuatro pendientes que listaba la §12 —UI de patologías, entrenador a cargo
 en la PWA, `Promocion` sin usar y la divergencia de `Consulta_Cruzada`— están
 cerrados.
@@ -148,6 +155,52 @@ Todas se encontraron **corriendo la app**, no leyendo el código:
    Entra con cada rol y llama a `build()` de cada sección que ese rol ve (25
    combinaciones, segundos). Correla **también con la base vacía**: es donde
    estos tres se disparan, y lo que va a ver cualquiera que arranque de cero.
+
+---
+
+## La PWA en el teléfono (es donde se usa de verdad)
+
+El portal del socio se usa en un celular parado en el gimnasio. Cuatro bugs
+llegaron a producción por probarse siempre en pantalla grande, y **ninguno lo
+detecta `tsc`, `oxlint` ni las suites** — son estilos que funcionan por
+accidente cuando sobra ancho. Están cerrados; lo que sigue es para no
+reabrirlos:
+
+1. **`h-screen` (=`100vh`) MIENTE en iOS.** Incluye la barra de direcciones,
+   que se esconde al scrollear, así que el final del contenido queda debajo de
+   ella. Va **`100dvh`**, definido en `index.css` sobre `html/body/#root`; los
+   contenedores heredan con `h-full`.
+2. **`overscroll-behavior: none`** en `html/body` y `overscroll-contain` en el
+   área de contenido. Sin eso, el gesto sigue de largo al documento y Safari lo
+   toma como *pull-to-refresh*: la página se recarga sola. En el circuito eso
+   es perder el progreso.
+3. **Los botones llevan `shrink-0` + `whitespace-nowrap`.** Son flex items y
+   `flex-shrink` vale 1: en pantalla angosta el contenedor los comprime por
+   debajo de su contenido y les recorta la etiqueta (el bug se veía como un
+   botón reducido a la letra "G").
+4. **La sidebar es un cajón deslizante en mobile** (`fixed` + `translate`, con
+   hamburguesa en el Topbar) y vuelve a ser columna desde `md`. Con 260px fijos
+   dejaba ~120px de contenido en un teléfono.
+
+> **Chrome en iOS es Safari por dentro.** Apple obliga a WebKit, así que
+> probar "en otro navegador" del iPhone no descarta nada: para eso hay que ir a
+> Android o a la compu.
+
+> **Forzar el ancho de un CONTENEDOR no simula un teléfono.** Los media queries
+> miran el VIEWPORT. Sirve para probar el ancho de un botón, no el layout.
+
+**Los íconos** son cuatro archivos y no dos a propósito: un `maskable` lo
+recorta el sistema a un círculo del 80%, así que su contenido debe caber en el
+56% del lado — y un archivo que cumple eso se ve diminuto usado como icono
+normal. Los `any` van transparentes; el de iOS va **con** fondo porque iOS
+compone la transparencia sobre negro. Se regeneran con
+`Proyecto/src/frontend/scripts/generar_iconos.ps1` desde el logo de
+`Proyeto-Python/Proyecto/assets/`.
+
+**`devOptions` del plugin PWA queda APAGADO.** Sobre HTTP no habilita instalar
+nada igual (hace falta contexto seguro) y el service worker cachea código viejo
+en desarrollo. Para probar la instalación: celular por USB y *port forwarding*
+en `chrome://inspect`, porque `localhost` sí es contexto seguro.
 
 ---
 
@@ -308,12 +361,17 @@ Credenciales: **`admin/admin123` y `trainer/train123` YA NO EXISTEN.** Eran de
 la época de los datos en memoria y no hay ninguna cuenta así en la base. Las
 reales están en `backend/CONTRASEÑAS PARA TESTEO Y ACTUALIZADAS.txt`.
 
-Para verla en el navegador **no toques `main.py`**: hacé un envoltorio que
-importe su `main()` y lo lance con otra vista. Un detalle que cuesta media hora
-si se pisa: **ese archivo no puede llamarse `flet_web.py`** — Flet hace
+Para verla en el navegador **no toques `main.py`**: usá el envoltorio que ya
+está hecho, `scripts/lanzar_flet_navegador.py`, que importa su `main()` y lo
+lanza con otra vista. Su docstring anota las dos trampas que ya costaron
+tiempo: **el archivo no puede llamarse `flet_web.py`** —Flet hace
 `from flet_web.fastapi import ...` para servir por HTTP, el directorio del
-script va primero en `sys.path`, y termina importándose el envoltorio en vez del
-paquete (`asyncio.run() cannot be called from a running event loop`).
+script va primero en `sys.path`, y termina importándose el envoltorio en vez
+del paquete (`asyncio.run() cannot be called from a running event loop`)— y
+**`assets_dir` tiene que ser ABSOLUTO**, porque Flet lo resuelve contra el
+directorio del script y no contra el cwd: con la ruta relativa servía el
+`index.html` para cualquier archivo y el logo del sidebar quedaba vacío sin
+dar 404.
 
 ---
 

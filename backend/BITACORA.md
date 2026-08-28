@@ -872,3 +872,214 @@ instantánea, la única palanca que queda es **acercar la base**: un Postgres
 local en el gimnasio baja el RTT a ~1 ms. Eso ya estaba contemplado desde el
 principio — el docstring de `database.py` dice que ese cambio no toca una línea
 de código, sólo `DATABASE_URL`.
+
+---
+
+## 15. El portal del socio en el teléfono, y el circuito
+
+Hasta acá la PWA se había mirado siempre en una pantalla grande. La primera
+vez que se abrió en un iPhone aparecieron cuatro problemas, y ninguno se
+podía ver en la computadora. Vale la pena escribirlos porque los cuatro son
+de la misma familia: **estilos que funcionan por accidente cuando sobra
+ancho.**
+
+### Los cuatro bugs de mobile
+
+**1. La sidebar se comía el 80% de la pantalla.** Era de 260px fijos con
+`shrink-0`. En un teléfono de ~380px eso dejaba ~120px para el contenido:
+ilegible.
+
+`shrink-0` estaba BIEN puesto para escritorio —sin él las etiquetas se
+apretaban contra los íconos— pero en mobile el problema no es que se encoja:
+es que **no debería ocupar lugar**. Ahora es un cajón deslizante (`fixed` +
+`translate`) con hamburguesa en el Topbar, velo para cerrar tocando afuera, y
+se cierra al elegir sección. Desde `md` vuelve a ser exactamente lo que era.
+
+El velo no es decoración: sin él la única forma de cerrar el menú sería elegir
+una sección, y quien lo abrió por error quedaba atrapado.
+
+**2. El scroll no llegaba al final.** El layout usaba `h-screen`, o sea
+`100vh`. En Safari de iOS **`100vh` miente**: incluye el alto de la barra de
+direcciones, que se esconde al scrollear. El contenedor quedaba más alto que
+lo visible y el final del contenido terminaba debajo de la interfaz del
+navegador.
+
+Se cambió por **`100dvh`** (*dynamic viewport height*), que es el alto real
+disponible en cada momento. Existe exactamente para esto. Queda
+`height: 100%` de base dentro de un `@supports`, para que un navegador viejo
+caiga al comportamiento anterior en vez de quedarse sin altura.
+
+**3. La página se recargaba sola.** Sin `overscroll-behavior`, al llegar al
+tope el gesto seguía de largo hacia el documento y Safari lo tomaba como
+*pull-to-refresh*. Va `none` en `html/body` y `overscroll-contain` en el área
+de contenido — **las dos**, porque el gesto puede nacer adentro o afuera del
+panel. En el circuito eso importa el doble: una recarga accidental significa
+perder el progreso.
+
+**4. El botón se veía como una "G".** `PrimaryButton` es un flex item y
+`flex-shrink` vale 1 por defecto: en una pantalla angosta el contenedor lo
+comprimía **por debajo de su contenido** y le recortaba el texto.
+"Guardando…" entraba y "Guardar cambios" no.
+
+`shrink-0` + `whitespace-nowrap`. El criterio: **un botón primario nunca
+debería ceder ancho** — si algo se achica en una fila, es el texto de al lado,
+no la acción. Se aplicó también a los botones de texto ("Cancelar") de los 16
+modales, porque es el mismo bug con otra ropa.
+
+> **Chrome en iOS es Safari por dentro.** Apple obliga a que todo navegador en
+> iOS use WebKit, así que Chrome, Firefox y Edge son el mismo motor con otra
+> carrocería. Si algo se rompe en el iPhone, **no tiene sentido probar otro
+> navegador ahí**: para descartar que sea de WebKit hay que probarlo en
+> Android o en la compu.
+
+### Los íconos: el de la pestaña era el de Vite
+
+`index.html` apuntaba a `/favicon.svg`, el rayo violeta por defecto de Vite
+(`#863bff`). Los PNG de `/icons/` **sí** eran el logo real, sólo que nadie los
+usaba.
+
+Además tenían dos problemas propios:
+
+- **Fondo negro pegado.** El logo original es transparente; el fondo se lo
+  agregó el generador que se usó en su momento.
+- **Se veían chicos**, y por un motivo que no es obvio: el **mismo archivo**
+  servía para `purpose: "any"` y `purpose: "maskable"`. Un icono *maskable* lo
+  recorta el sistema con la forma que quiera, así que su contenido tiene que
+  caber en un círculo del 80% del lado — para un logo cuadrado, 80/√2 ≈ **56%
+  del ancho**. Un archivo que cumple esa regla se ve bien recortado y
+  **ridículamente chico** cuando el sistema lo usa como icono normal.
+
+Ahora son cuatro archivos: los `any` al 92% y transparentes, los `maskable` al
+58% sobre el fondo de la app, y el de iOS **con** fondo porque **iOS no
+respeta la transparencia** (compone sobre negro puro). Se regeneran desde el
+logo con un script de PowerShell.
+
+El manifiesto también tenía `theme_color` violeta y `background_color`
+**blanco**: la app *dark-only* arrancaba con un flash blanco.
+
+> **`devOptions` del plugin PWA queda APAGADO.** Se probó encendido y se
+> volvió atrás: sobre HTTP no habilita instalar nada igual —los navegadores
+> exigen contexto seguro— y el service worker **cachea código viejo en
+> desarrollo**, que es lo que hace perder una tarde depurando un bug ya
+> resuelto. Para probar la instalación sin HTTPS ni exponer nada: el celular
+> por USB y *port forwarding* en `chrome://inspect`, porque `localhost` sí
+> cuenta como contexto seguro.
+
+### Congelamiento: el tope pasa a ventana móvil
+
+El tope de 90 días contaba por **año calendario**, así que quien congelaba 90
+días desde el 1 de diciembre consumía el cupo de ese año y el 2 de enero tenía
+otros 90: **180 días corridos** sin romper ninguna regla.
+
+El 31 de diciembre no significa nada para el negocio. Lo que el gimnasio
+limita es cuánto tiempo puede estar pausado alguien en un período razonable, y
+eso no se reinicia porque cambie el almanaque. Ahora
+`_dias_congelados_en_ventana()` mira los últimos 365 días, en una función sola
+para que la regla exista en un lugar.
+
+El mensaje de error dice **desde cuándo** se cuenta: sin eso, quien congeló en
+marzo y vuelve en noviembre recibe un "ya usaste 90" que le parece un error
+del sistema — en su cabeza esas pausas son de años distintos.
+
+**La economía, que conviene tener escrita.** Congelar no devuelve nada: el
+gimnasio ya tiene la plata y sólo se corre la fecha de vencimiento. El costo
+real es la **cadencia de renovación**: 90 días de pausa son 3 renovaciones
+menos al año (9 en vez de 12), un **-25%** de la facturación de ese socio. Se
+acepta porque la alternativa a congelar no es "sigue pagando sin venir", es
+que **se dé de baja** — y ahí se pierde el 100%. El punto de equilibrio es que
+más del 25% de los que congelarían se irían del todo, y en un gimnasio eso se
+cumple de sobra.
+
+### El circuito de ejercicios
+
+El socio abre la app en el gimnasio, toca **"Comenzar entrenamiento"** y la
+pantalla lo lleva ejercicio por ejercicio con el descanso cronometrado.
+
+**Todo del lado del cliente, y es una decisión, no un atajo.** Un cronómetro
+que necesita servidor es un cronómetro que falla cuando el wifi del gimnasio
+anda mal — que es exactamente cuando se lo está usando. Los datos que necesita
+(series, repeticiones, peso, descanso) ya venían en la rutina que cargó el
+entrenador: no hizo falta ni una tabla ni un endpoint nuevo.
+
+**Por qué NO es una sección del menú.** Las secciones son entradas de la
+matriz de permisos, copiada en tres lugares que `check_permisos.py` verifica:
+sumar una obligaría a tocar las tres. Y el circuito no existe sin una rutina,
+así que una sección aparte estaría vacía justo para el socio que todavía no
+tiene una asignada — el que más se confunde. Es el mismo criterio por el que
+`/portal/mi-entrenador` vive bajo `MI_RUTINA`.
+
+Es un **modo de Mi rutina, no una ruta**: como estado y no como URL, el botón
+de atrás del celular no puede sacarte del circuito en medio de una serie.
+
+La lógica vive en `useCircuito.ts`, separada de `CircuitoView.tsx`, para poder
+razonar "en qué serie voy, cuándo arranca el descanso, qué pasa si vuelvo
+después de bloquear el teléfono" sin JSX en el medio.
+
+**Las tres decisiones de uso**, que salen de imaginar a alguien parado en el
+gimnasio con las manos ocupadas y el pulso a 150:
+
+1. **Un** botón grande y todo lo demás chico: cerrar la serie tiene que poder
+   tocarse sin mirar.
+2. **El descanso arranca solo.** Cada toque de más entre serie y serie es uno
+   que no se va a dar.
+3. Números grandes, para leerlos con el teléfono apoyado en el banco.
+
+**Cuatro detalles que no se ven pero deciden si sirve:**
+
+- **El descanso guarda CUÁNDO TERMINA, no cuántos segundos faltan.** Con un
+  contador que se decrementa el reloj se atrasa, porque el navegador
+  ralentiza los timers de una pestaña en segundo plano: bloquear el teléfono
+  durante el descanso dejaba el número congelado.
+- **Saltear un ejercicio lo manda al final, no lo pierde.** Un circuito que
+  obliga al orden exacto es uno que se abandona en el ejercicio 3 porque la
+  máquina estaba ocupada.
+- **El progreso va a `localStorage`**, así que atender un mensaje no lo
+  pierde. Vence a las 6 horas —para no retomar el circuito de anteayer— y sólo
+  se restaura si coinciden rutina Y día.
+- **Vibra al terminar el descanso, no suena.** Con la música del gimnasio un
+  beep no se escucha y el teléfono suele estar en el bolsillo.
+
+**Dos APIs con requisitos distintos, y por eso se tratan distinto:**
+
+| API | Contexto seguro | Qué se hizo |
+|---|---|---|
+| Fullscreen | **No** lo exige | Se usa siempre; sólo pide un gesto, que es el propio botón |
+| Screen Wake Lock | **Sí** lo exige | Detrás de detección de soporte: hoy no corre por la IP de la red, y en producción con HTTPS va a funcionar sin tocar una línea |
+
+**La tipografía se rehízo mobile-first**, y el número lo explica solo: a 36px
+el nombre "Aperturas con mancuernas" necesita **394px** y en un iPhone hay
+**345** disponibles. Se partía en dos líneas y empujaba los puntos de serie
+fuera de vista. A 30px mide **328** y entra en una sola. Ahora los tamaños
+base son los del teléfono y crecen recién en `md`.
+
+Además el centro es scrolleable: `justify-center` a secas recorta por arriba
+**y** por abajo sin dejar scrollear cuando el contenido no entra.
+
+`escenario_demo.py` carga una rutina "Full body 2 días" con 8 ejercicios,
+porque sin rutina el circuito no se puede ni mirar. Los descansos son de
+30-45s a propósito: para probarlo sin esperar dos minutos.
+
+### La lección de esta etapa
+
+Las anteriores fueron *"compilar no es correr"*, *"correr no alcanza si no
+verificás contra qué corrés"* y *"que el proceso levante no significa que la
+pantalla funcione"*. Esta agrega la cuarta:
+
+> **Una pantalla que anda en la computadora no dice nada sobre el teléfono.**
+
+Los cuatro bugs de mobile eran invisibles con ancho de sobra, y ninguno lo
+hubiera encontrado `tsc`, `oxlint` ni las suites. Y una advertencia sobre cómo
+verificar: forzar el ancho de un CONTENEDOR **no** simula un teléfono, porque
+los *media queries* miran el **viewport**. Sirve para probar el ancho de un
+botón (que no depende del breakpoint) pero no el layout.
+
+### Lo que falta ahora
+
+- **Mercado Pago**, y sigue sin depender del código: falta el `ACCESS_TOKEN`,
+  el secreto del webhook y una URL pública.
+- **Probar el circuito en un teléfono de verdad.** Se verificó en el navegador
+  —el recorrido completo y las dos pantallas a 393px sin desbordes— pero si el
+  botón cae cómodo para el pulgar y si la vibración se siente sólo se sabe ahí.
+- Dos decisiones comerciales abiertas sobre el congelamiento: un mínimo de
+  días activos entre pausas, y un cargo administrativo. Ninguna es un bug; la
+  segunda **auto-selecciona los casos genuinos**, que es su verdadero valor.
