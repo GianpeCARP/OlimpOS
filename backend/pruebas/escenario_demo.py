@@ -196,11 +196,92 @@ for socio, patologia, fecha, obs in asignaciones_pat:
         "observaciones": obs}, tok=STAFF)
     print(f"   {socio}: {patologia} ({s})")
 
+# --- Rutina -----------------------------------------------------------------
+# Sin esto el CIRCUITO no se puede ni mirar: es la funcion estrella del portal
+# del socio y necesita una rutina con ejercicios para tener algo que recorrer.
+#
+# Los valores estan elegidos para que el circuito se vea INTERESANTE, no para
+# que sea un plan de entrenamiento realista:
+#   - Distinta cantidad de series por ejercicio (2, 3 y 4), asi se ven los
+#     puntitos de progreso cambiar.
+#   - Descansos cortos (30-45s), para no tener que esperar dos minutos
+#     mirando el contador mientras se prueba.
+#   - Uno con observaciones, que en el circuito sale en amarillo.
+#   - DOS dias, para que se vea que cada uno arranca su propio circuito.
+print("\n5. Rutina y ejercicios")
+
+ejercicios_base = [
+    ("Sentadilla con barra", "Piernas", True),
+    ("Prensa 45", "Piernas", True),
+    ("Peso muerto rumano", "Piernas", False),
+    ("Press banca", "Pecho", True),
+    ("Aperturas con mancuernas", "Pecho", False),
+    ("Remo con barra", "Espalda", False),
+    ("Dominadas asistidas", "Espalda", True),
+    ("Press militar", "Hombros", False),
+]
+ids_ejercicios = {}
+for nombre, grupo, maquina in ejercicios_base:
+    s, r = pedir("POST", "/rutinas/ejercicios", {
+        "nombre": nombre, "grupo_muscular": grupo,
+        "requiere_maquina": maquina}, tok=STAFF)
+    if s == 201:
+        ids_ejercicios[nombre] = r["id_ejercicio"]
+print(f"   {len(ids_ejercicios)} ejercicios en el catalogo")
+
+# El dueno no es entrenador, asi que Rutina.id_entrenador —que es NOT NULL—
+# hay que mandarlo explicito. Para el, elegir el entrenador a cargo no es
+# suplantar a nadie: es delegar. Lo explica RutinaCrear en schemas.py.
+id_ana = por_nombre.get("Ana")
+
+plan = [
+    # (ejercicio, dia, orden, series, reps, peso, descanso, observaciones)
+    ("Sentadilla con barra", 1, 1, 4, "8-10", 40.0, 45, None),
+    ("Prensa 45",            1, 2, 3, "12",   80.0, 30, None),
+    ("Peso muerto rumano",   1, 3, 3, "10-12", 30.0, 45,
+     "Espalda recta. Si sentis tiron lumbar, bajá el peso."),
+    ("Press banca",          2, 1, 4, "8",    35.0, 45, None),
+    ("Aperturas con mancuernas", 2, 2, 3, "12", 10.0, 30, None),
+    ("Remo con barra",       2, 3, 3, "10",   30.0, 40, None),
+    ("Press militar",        2, 4, 2, "10-12", 20.0, 40, None),
+]
+ejercicios_rutina = []
+for nombre, dia_n, orden, series, reps, peso, descanso, obs in plan:
+    if nombre not in ids_ejercicios:
+        continue
+    ejercicios_rutina.append({
+        "id_ejercicio": ids_ejercicios[nombre],
+        "dia": dia_n, "orden": orden, "series": series,
+        "repeticiones": reps, "peso_sugerido": peso,
+        "descanso_segundos": descanso, "observaciones": obs,
+    })
+
+s, rutina = pedir("POST", "/rutinas", {
+    "nombre": "Full body 2 dias",
+    "objetivo": "Fuerza general",
+    "nivel": "INTERMEDIO",
+    "dias_por_semana": 2,
+    "id_entrenador": id_ana,
+    "ejercicios": ejercicios_rutina,
+}, tok=STAFF)
+
+if s == 201:
+    print(f"   rutina '{rutina['nombre']}' con {len(ejercicios_rutina)} ejercicios en 2 dias")
+    # A los tres socios: cualquiera sirve para probar el circuito, y asi no
+    # hay que acordarse de con cual entrar.
+    for nombre_socio, id_socio in ids_socios.items():
+        s2, _ = pedir("POST", f"/rutinas/{rutina['id_rutina']}/asignar",
+                      {"id_socio": id_socio}, tok=STAFF)
+        print(f"   asignada a {nombre_socio}: {s2}")
+else:
+    print(f"   {s}  {rutina.get('detail')}")
+
+
 # --- Promociones ------------------------------------------------------------
 # Las tres combinaciones que la pantalla tiene que poder mostrar distinto:
 # vigente, activa-pero-fuera-de-fecha, y dada de baja. La del medio es la que
 # confunde si no se la nombra, asi que conviene tenerla cargada para mirarla.
-print("\n5. Promociones")
+print("\n6. Promociones")
 HOY = date.today()
 promos = [
     ("Verano 2026", "20% en planes mensuales", {"porcentaje_descuento": 20},
@@ -233,7 +314,7 @@ if "Black Friday 2025" in ids_promos:
 # Sin esto no hay ninguna membresia que muestre un precio distinto al de lista,
 # y el "por que a este socio le cobramos 24.000 en vez de 30.000" no se puede
 # ver en pantalla.
-print("\n6. Un cobro con promoción aplicada")
+print("\n7. Un cobro con promoción aplicada")
 s, planes = pedir("GET", "/cobros/tipos-membresia", tok=STAFF)
 plan_mensual = next((p for p in planes if p["duracion_dias"] == 30), planes[0] if planes else None)
 if plan_mensual and "Juan" in ids_socios and "Verano 2026" in ids_promos:
@@ -273,4 +354,7 @@ print("            fecha y dada de baja. Con rita.lopez el botón NO aparece,")
 print("            pero SÍ el desplegable de promociones al cobrar.")
 print("  Cobros -> elegí a Juan y una promoción: aparece el renglón con las")
 print("            tres cifras (lista, final y cuánto ahorra).")
+print("  Portal -> Mi rutina -> 'Comenzar entrenamiento': el CIRCUITO, a")
+print("            pantalla completa. Los descansos son de 30-45s para no")
+print("            tener que esperar mientras se prueba.")
 print("=" * 74)

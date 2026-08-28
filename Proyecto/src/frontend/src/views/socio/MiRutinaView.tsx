@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, Calendar, Dumbbell, Target, Timer, User } from 'lucide-react';
+import { AlertTriangle, Calendar, Dumbbell, Play, Target, Timer, User } from 'lucide-react';
 import { LevelBadge, PrimaryButton, SectionCard, Topbar } from '../../components/ui';
 import { colors } from '../../config';
 import { mensajeDeError } from '../../services/api';
-import { getMiRutina, type EjercicioDelDia, type MiRutina } from '../../services/socioService';
+import { getMiRutina, type DiaDeRutina, type EjercicioDelDia, type MiRutina } from '../../services/socioService';
 import { useAuthStore } from '../../store/authStore';
 import { formatearFecha } from '../../utils/format';
 import { parsearFecha } from '../../utils/fechas';
 import { InfoPill } from '../rutinas/InfoPill';
+import { CircuitoView } from './CircuitoView';
 import { MiEntrenadorCard } from './MiEntrenadorCard';
 import { SinSocioEnSesion } from './SinSocioEnSesion';
 
@@ -88,6 +89,15 @@ function Skeleton({ className }: { className: string }) {
 }
 
 export function MiRutinaView() {
+  // El dia que se esta entrenando, o null si se esta mirando la rutina.
+  //
+  // Vive acá y no en una ruta propia (`/mi-rutina/circuito`) a proposito: el
+  // circuito NO es una pantalla a la que se navega, es un modo de esta. Con
+  // una ruta, el boton de atras del celular saldria del circuito en medio de
+  // una serie, y volver a entrar por la URL sin rutina cargada seria una
+  // pantalla vacia que hay que contemplar. Como estado, no existe sin datos.
+  const [entrenando, setEntrenando] = useState<DiaDeRutina | null>(null);
+
   const idSocio = useAuthStore((s) => s.idSocio);
 
   const [rutina, setRutina] = useState<MiRutina | null>(null);
@@ -124,8 +134,22 @@ export function MiRutinaView() {
     return <SinSocioEnSesion titulo="Mi rutina" />;
   }
 
+  // Cuando hay circuito, es LO UNICO que se dibuja: se monta encima de todo
+  // (fixed inset-0) y tapa el menu. No se desmonta MiRutinaView por debajo
+  // para que al salir la pantalla siga donde estaba, sin volver a pedir la
+  // rutina.
   return (
     <div>
+      {entrenando && rutina && (
+        <CircuitoView
+          dia={entrenando}
+          idRutina={rutina.idRutina}
+          nombreRutina={rutina.nombre}
+          etiquetaDia={DIAS_SEMANA[entrenando.dia - 1] ?? `Día ${entrenando.dia}`}
+          onSalir={() => setEntrenando(null)}
+        />
+      )}
+
       <Topbar
         title="Mi rutina"
         subtitle={cargado && rutina ? `Te la armó ${rutina.entrenador}` : undefined}
@@ -230,6 +254,20 @@ export function MiRutinaView() {
             ) : (
               rutina.dias.map((dia) => (
                 <SectionCard key={dia.dia} title={DIAS_SEMANA[dia.dia - 1] ?? `Día ${dia.dia}`}>
+                  {/* Arriba de los ejercicios y ocupando todo el ancho: es la
+                      acción principal de la pantalla en el gimnasio, y quien
+                      llega hasta acá ya sabe qué le toca hoy. Enterrarlo al
+                      final obligaría a scrollear siete ejercicios para
+                      empezar. */}
+                  <button
+                    type="button"
+                    onClick={() => setEntrenando(dia)}
+                    className="mb-4 flex w-full items-center justify-center gap-2 rounded-lg bg-primary-volt py-3.5 font-body text-base font-semibold whitespace-nowrap text-surface-base active:opacity-90"
+                  >
+                    <Play size={18} />
+                    Comenzar entrenamiento
+                  </button>
+
                   <div className="flex flex-col divide-y divide-border-idle">
                     {dia.ejercicios.map((ejercicio) => (
                       <FilaEjercicio key={ejercicio.idRutinaEjercicio} ejercicio={ejercicio} />
