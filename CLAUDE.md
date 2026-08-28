@@ -375,6 +375,50 @@ dar 404.
 
 ---
 
+## Estado del entorno: dos cosas que conviene chequear antes de empezar
+
+No son bugs ni pendientes de código. Son estados en los que la máquina puede
+estar, y confundirlos hace perder tiempo o pisar trabajo ajeno.
+
+### 1. La base puede estar en DOS estados, y no se ve a simple vista
+
+| | Cuándo | Cómo se ve |
+|---|---|---|
+| **Entrega** | 6 filas | Las pantallas están vacías. Sólo existe la cuenta `dueno` |
+| **Demo** | ~70 filas | 4 empleados, 3 socios, rutina, patologías, promociones |
+
+Para saber en cuál estás, desde `backend/`:
+
+```bash
+.venv/Scripts/python.exe pruebas/vaciar_base.py     # SIN --si: sólo informa
+```
+
+Lista las tablas con datos y no toca nada. Con `--si` la deja en las 6 filas
+de entrega; `pruebas/escenario_demo.py` la vuelve a llenar.
+
+> **Las suites necesitan la base VACÍA y la dejan escrita.** Hay que vaciar
+> entre una y otra o la anterior le deja datos a la siguiente y fallan por el
+> escenario, no por un bug. Y **`escenario_demo.py` le cambia la contraseña al
+> `dueno`** (entra con la inicial del `.env` y la cambia): todo eso está
+> anotado en `backend/CONTRASEÑAS PARA TESTEO Y ACTUALIZADAS.txt`, que además
+> es donde va TODA cuenta nueva — el alta devuelve la contraseña temporal una
+> sola vez.
+
+**Antes de dar por buena una prueba contra la base, mirá en qué estado
+está.** Un "no muestra nada" puede ser un bug de la pantalla o simplemente la
+base de entrega, y son dos investigaciones muy distintas.
+
+### 2. Hay borrados sin commitear que NO son de la sesión
+
+`git status` muestra 17 archivos como borrados desde hace varias sesiones:
+`VIEJO/`, `Proyeto-Python/ProyectoDB/` y las fuentes `Syne/`. Son del dueño del
+proyecto y **están sin decidir**: o se commitea la limpieza, o se restauran.
+
+No los toques por tu cuenta. Y ojo con `git add -A` o `git commit -a`: se los
+lleva puestos sin preguntar. Agregá siempre los archivos explícitos que tocaste.
+
+---
+
 ## Git: el proyecto Flet vive en DOS repos
 
 - Monorepo (las dos apps) → `github.com/GianpeCARP/OlimpOS`
