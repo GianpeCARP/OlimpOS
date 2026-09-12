@@ -42,8 +42,8 @@ from permisos import PERMISOS as PY_PERMISOS
 
 _RANGO = {"ninguno": 0, "lectura": 1, "total": 2}
 
-CONFIG_TS = pathlib.Path("../Proyecto/src/frontend/src/config.ts")
-FLET_DIR = pathlib.Path("../Proyeto-Python/Proyecto")
+CONFIG_TS = pathlib.Path("../Proyecto - PWA/src/frontend/src/config.ts")
+FLET_DIR = pathlib.Path("../Flet/Proyecto")
 
 # Secciones que existen SOLO en la app de escritorio, mapeadas a la seccion
 # del backend que en realidad protege sus endpoints.

@@ -40,7 +40,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Dueno, Membresia, Promocion, Sede, TipoMembresia
+from models import Dueno, Pago, Promocion, Sede, TipoMembresia
 from permisos import Accion, Seccion
 from schemas import (
     MensajeResponse, PromocionCrear, PromocionEditar, PromocionOut,
@@ -82,8 +82,6 @@ def etiqueta_de(promo: Promocion) -> str:
         entero = int(porcentaje)
         texto = str(entero) if porcentaje == entero else f"{porcentaje:g}"
         return f"{texto}% OFF"
-    if promo.monto_fijo_descuento is not None:
-        return f"${float(promo.monto_fijo_descuento):,.0f} OFF".replace(",", ".")
     return "sin descuento"
 
 
@@ -98,8 +96,6 @@ def precio_con_promo(precio_lista: float, promo: Promocion) -> tuple[float, floa
     """
     if promo.porcentaje_descuento is not None:
         descuento = precio_lista * float(promo.porcentaje_descuento) / 100
-    elif promo.monto_fijo_descuento is not None:
-        descuento = float(promo.monto_fijo_descuento)
     else:
         descuento = 0.0
 
@@ -114,8 +110,6 @@ def _a_salida(promo: Promocion) -> PromocionOut:
         descripcion=promo.descripcion,
         porcentaje_descuento=(float(promo.porcentaje_descuento)
                               if promo.porcentaje_descuento is not None else None),
-        monto_fijo_descuento=(float(promo.monto_fijo_descuento)
-                              if promo.monto_fijo_descuento is not None else None),
         fecha_inicio=promo.fecha_inicio,
         fecha_fin=promo.fecha_fin,
         id_sede=promo.id_sede,
@@ -251,7 +245,6 @@ def crear_promocion(
         nombre=datos.nombre.strip(),
         descripcion=datos.descripcion,
         porcentaje_descuento=datos.porcentaje_descuento,
-        monto_fijo_descuento=datos.monto_fijo_descuento,
         fecha_inicio=datos.fecha_inicio,
         fecha_fin=datos.fecha_fin,
         activo=True,
@@ -287,12 +280,7 @@ def editar_promocion(
 
     promo.nombre = datos.nombre.strip()
     promo.descripcion = datos.descripcion
-    # Se asignan los DOS aunque uno venga en None: el schema ya garantizó que
-    # exactamente uno tiene valor. Si sólo se asignara el que viene, cambiar
-    # una promo de porcentaje a monto fijo dejaría los dos cargados y el
-    # cálculo tomaría el porcentaje viejo para siempre.
     promo.porcentaje_descuento = datos.porcentaje_descuento
-    promo.monto_fijo_descuento = datos.monto_fijo_descuento
     promo.fecha_inicio = datos.fecha_inicio
     promo.fecha_fin = datos.fecha_fin
     promo.id_sede = datos.id_sede
@@ -424,8 +412,10 @@ def uso_de_la_promocion(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="Esa promoción no existe.")
 
-    usos = (db.query(func.count(Membresia.id_membresia))
-            .filter(Membresia.id_promocion == id_promocion)
+    # La promo aplicada vive en el PAGO (Pago.id_promocion), no en la
+    # membresía: ahí se movió junto con monto_descuento.
+    usos = (db.query(func.count(Pago.id_pago))
+            .filter(Pago.id_promocion == id_promocion)
             .scalar()) or 0
 
     if usos == 0:

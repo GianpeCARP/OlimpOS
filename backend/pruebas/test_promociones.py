@@ -108,13 +108,15 @@ chequear(promo20.get("etiqueta") == "20% OFF", "la etiqueta la arma el backend")
 chequear(promo20.get("vigente") is True, "sale vigente")
 ID_20 = promo20["id_promocion"]
 
-s, promo_fija = pedir("POST", "/promociones", {
-    "nombre": "Traé un amigo", "monto_fijo_descuento": 5000,
+# El monto fijo se eliminó por decisión comercial: TODA promo es porcentual.
+# Esta segunda promo (antes de monto fijo) ahora también es un porcentaje.
+s, promo30 = pedir("POST", "/promociones", {
+    "nombre": "Traé un amigo", "porcentaje_descuento": 30,
     "fecha_inicio": iso(AYER), "fecha_fin": iso(MANANA),
 }, tok=STAFF)
-print(f"   {s}  {promo_fija.get('nombre')}  {promo_fija.get('etiqueta')}")
-chequear(s == 201 and promo_fija.get("etiqueta") == "$5.000 OFF", "monto fijo")
-ID_FIJA = promo_fija["id_promocion"]
+print(f"   {s}  {promo30.get('nombre')}  {promo30.get('etiqueta')}")
+chequear(s == 201 and promo30.get("etiqueta") == "30% OFF", "segunda promo porcentual")
+ID_FIJA = promo30["id_promocion"]
 
 print("\n2. Una VENCIDA (para el paso 8)")
 s, vencida = pedir("POST", "/promociones", {
@@ -130,9 +132,9 @@ ID_VENCIDA = vencida["id_promocion"]
 # -- Validaciones ------------------------------------------------------------
 print("\n3. Lo que NO se acepta")
 casos = [
-    ("los dos descuentos a la vez",
-     {"nombre": "Ambas", "porcentaje_descuento": 10, "monto_fijo_descuento": 100,
-      "fecha_inicio": iso(HOY), "fecha_fin": iso(MANANA)}),
+    # (Ya no existe "los dos descuentos" ni "sin descuento con monto fijo":
+    # el descuento es siempre porcentual y obligatorio. "sin porcentaje" cae
+    # igual, por ser un campo requerido.)
     ("sin ningun descuento",
      {"nombre": "Vacia", "fecha_inicio": iso(HOY), "fecha_fin": iso(MANANA)}),
     ("termina antes de empezar",
@@ -185,9 +187,10 @@ print(f"   {s}  lista={previa.get('precio_lista')}  desc={previa.get('descuento'
 chequear(s == 200, "el mostrador puede consultarla")
 chequear(previa.get("precio_final") == 24000, "20% de 30.000 -> 24.000")
 
-s, previa_fija = pedir("GET", f"/promociones/{ID_FIJA}/vista-previa?id_tipo_membresia={ID_PLAN}",
-                        tok=TOK_RITA)
-chequear(previa_fija.get("precio_final") == 25000, "$5.000 de 30.000 -> 25.000")
+# ID_FIJA ahora es una promo del 30% (el monto fijo se eliminó): 30% de 30.000.
+s, previa_30 = pedir("GET", f"/promociones/{ID_FIJA}/vista-previa?id_tipo_membresia={ID_PLAN}",
+                     tok=TOK_RITA)
+chequear(previa_30.get("precio_final") == 21000, "30% de 30.000 -> 21.000")
 
 print("\n6. Y NO cobro nada (era solo una consulta)")
 s, cuenta = pedir("GET", f"/cobros/socio/{ID_SOCIO}", tok=STAFF)
@@ -278,15 +281,14 @@ chequear(r.get("activo") is True and r.get("vigente") is False,
          "encenderla no le mueve las fechas")
 chequear("fuera de fecha" in str(r.get("etiqueta")), "y el aviso lo dice")
 
-print("\n15. Editar: cambiar de porcentaje a monto fijo limpia el otro campo")
+print("\n15. Editar: cambiar el porcentaje actualiza la etiqueta")
 s, r = pedir("PUT", f"/promociones/{ID_FIJA}", {
     "nombre": "Traé un amigo", "porcentaje_descuento": 15,
     "fecha_inicio": iso(AYER), "fecha_fin": iso(MANANA),
 }, tok=STAFF)
-print(f"   {s}  pct={r.get('porcentaje_descuento')}  fijo={r.get('monto_fijo_descuento')}")
+print(f"   {s}  pct={r.get('porcentaje_descuento')}")
 chequear(s == 200, "editada")
-chequear(r.get("monto_fijo_descuento") is None,
-         "el monto fijo viejo quedo en None, no conviviendo con el porcentaje")
+chequear(float(r.get("porcentaje_descuento")) == 15, "el porcentaje quedó en 15")
 chequear(r.get("etiqueta") == "15% OFF", "y la etiqueta acompaña")
 
 print("\n16. Editar NO recalcula lo ya cobrado")

@@ -95,7 +95,10 @@ personal = [
     ("Ana", "Gomez", "30111222", "Entrenador", {"especialidad": "Musculación"}),
     ("Beto", "Ruiz", "30111333", "Entrenador", {"especialidad": "Funcional"}),
     ("Caro", "Diaz", "30111444", "Nutricionista", {"titulo": "Lic. en Nutrición"}),
-    ("Rita", "Lopez", "30111555", "Recepcionista", {"turno_laboral": "MANANA"}),
+    # La franja laboral es una FK a Franja_Laboral (catálogo); la base vacía no
+    # trae franjas, así que la recepcionista queda sin franja asignada (es
+    # nullable). Si se quiere, se le asigna id_franja_laboral después.
+    ("Rita", "Lopez", "30111555", "Recepcionista", {}),
 ]
 for nombre, apellido, dni, rol, extra in personal:
     cuerpo = {"nombre": nombre, "apellido": apellido, "dni": dni, "rol": rol,
@@ -286,7 +289,7 @@ HOY = date.today()
 promos = [
     ("Verano 2026", "20% en planes mensuales", {"porcentaje_descuento": 20},
      HOY - timedelta(days=10), HOY + timedelta(days=60), "vigente"),
-    ("Traé un amigo", "Descuento fijo por referido", {"monto_fijo_descuento": 5000},
+    ("Traé un amigo", "Descuento por referido", {"porcentaje_descuento": 15},
      HOY - timedelta(days=5), HOY + timedelta(days=30), "vigente"),
     ("Black Friday 2025", "La del año pasado", {"porcentaje_descuento": 50},
      HOY - timedelta(days=300), HOY - timedelta(days=270), "fuera de fecha"),

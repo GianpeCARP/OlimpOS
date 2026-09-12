@@ -2,6 +2,27 @@ CONTRASEÑAS DE TESTEO — OlimpOS
 ================================
 Anotar acá TODA cuenta que se cree, del backend o de cualquiera de las dos apps.
 
+╔════════════════════════════════════════════════════════════════════════════╗
+║ ACTUALIZACIÓN 2026-09-12 — BASE RECONSTRUIDA CON EL SCHEMA NUEVO (41 tablas) ║
+╠════════════════════════════════════════════════════════════════════════════╣
+║ Neon se reseteó desde CERO con D:\OlimpOs\schema.sql + D:\OlimpOs\seed.sql.  ║
+║ Estado actual de la base:                                                    ║
+║   · 41 tablas, sin tabla Deuda, con Contacto_Emergencia / Franja_Laboral /   ║
+║     Catalogo_Comida / Registro_Ejercicio / Registro_Comida.                  ║
+║   · Datos de seed: dueño (Persona/Dueno/Sede), 3 actividades + 9 planes      ║
+║     (incluye "Clase suelta"), 3 tipos de membresía, 3 franjas, 6 patologías, ║
+║     12 ejercicios, 11 platos de catálogo, 4 empleados de ejemplo (SIN cuenta)║
+║     y 1 socio completo: Camila Ríos, DNI 42556677, S-0001 (SIN cuenta).      ║
+║   · 0 filas en Usuario: la cuenta `dueno` la CREA el seeder al primer        ║
+║     arranque del backend, con DUENO_INICIAL_PASSWORD del .env                ║
+║     (hoy: "cambiar-esto-en-el-primer-ingreso") y debe_cambiar_password=true. ║
+║                                                                              ║
+║ LAS CUENTAS DEMO DE ABAJO (ana.gomez, beto.ruiz, caro.diaz, rita.lopez,     ║
+║ juan.perez, lucia.marino, nico.sosa) YA NO EXISTEN: eran del escenario viejo.║
+║ Los 4 empleados del seed nuevo NO tienen cuenta hasta que se les cree una.   ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+
 USERNAME              PASSWORD              ROL            NOTAS
 --------------------  --------------------  -------------  ---------------------------
 dueno                 dueno 1234            Dueño          Entra directo.

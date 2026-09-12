@@ -72,6 +72,11 @@ yoga = acts[0]
 pedir("POST", f"/actividades/{yoga['id_actividad']}/planes",
       {"nombre": "2 por semana", "tipo_limite": "POR_SEMANA", "cantidad": 2,
        "precio": 16000}, tok=STAFF)
+# La clase suelta ahora es un plan más (tipo_limite CLASE_SUELTA): hay que
+# cargarla para poder comprarla, ya no es una columna de la actividad.
+pedir("POST", f"/actividades/{yoga['id_actividad']}/planes",
+      {"nombre": "Clase suelta", "tipo_limite": "CLASE_SUELTA", "cantidad": 1,
+       "precio": 6000}, tok=STAFF)
 
 ini = datetime.now() + timedelta(days=1, hours=2)
 s, turno = pedir("POST", "/actividades/turnos", {
@@ -170,7 +175,11 @@ print("\n8. Catalogo de actividades del socio")
 s, cat = pedir("GET", "/portal/mis-actividades/catalogo", tok=TOK["Ana"])
 chequear(s == 200, "responde")
 for a in cat:
-    print(f"   {a['nombre']}  clase suelta ${a['precio_clase_suelta']:,.0f}")
+    # La clase suelta ya no es una columna de Actividad: es un plan más
+    # (tipo_limite CLASE_SUELTA). Su precio sale de ahí, si está cargado.
+    suelta = next((p for p in a["planes"] if p["tipo_limite"] == "CLASE_SUELTA"), None)
+    etiqueta = f"clase suelta ${suelta['precio']:,.0f}" if suelta else "sin clase suelta"
+    print(f"   {a['nombre']}  {etiqueta}")
     for p in a["planes"]:
         print(f"      plan #{p['id_plan_actividad']} {p['nombre']} ${p['precio']:,.0f}")
 ID_PLAN = cat[0]["planes"][0]["id_plan_actividad"] if cat and cat[0]["planes"] else None

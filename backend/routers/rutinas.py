@@ -356,7 +356,7 @@ def asignar_rutina(
     asignacion = AsignacionRutina(
         id_socio=socio.id_socio,
         id_rutina=id_rutina,
-        id_entrenador=rutina.id_entrenador,
+        # id_entrenador ya no vive en la asignación: sale de Rutina.id_entrenador.
         fecha_inicio=datos.fecha_inicio or hoy,
         fecha_fin=datos.fecha_fin,
         estado="ACTIVA",

@@ -39,8 +39,8 @@ from sqlalchemy.orm import Session, selectinload
 from auth import generar_password_temporal, generar_username, hashear_password
 from database import get_db
 from models import (
-    AsignacionEntrenador, Baja, Entrenador, Membresia, Persona, Sede, Socio,
-    Telefono, Usuario,
+    AsignacionEntrenador, Baja, ContactoEmergencia, Entrenador, Membresia,
+    Persona, Sede, Socio, Telefono, Usuario,
 )
 from notificaciones import enviar_credenciales
 from permisos import Accion, Seccion
@@ -300,15 +300,24 @@ def alta_socio(
             calle=datos.calle,
             numero_calle=datos.numero_calle,
             localidad=datos.localidad,
-            emergencia_nombre=datos.emergencia_nombre,
-            emergencia_telefono=datos.emergencia_telefono,
-            emergencia_parentesco=datos.emergencia_parentesco,
         )
         db.add(persona)
         # flush y no commit: manda el INSERT para que la base asigne el
         # id_persona, pero deja la transacción abierta. Si algo falla más
         # abajo, se deshace todo junto.
         db.flush()
+
+        # El contacto de emergencia ya no es columna de Persona: si vino en el
+        # alta, se crea su fila en Contacto_Emergencia (el principal).
+        if datos.emergencia_nombre or datos.emergencia_telefono:
+            db.add(ContactoEmergencia(
+                id_persona=persona.id_persona,
+                nombre=datos.emergencia_nombre or "",
+                telefono=datos.emergencia_telefono or "",
+                parentesco=datos.emergencia_parentesco,
+                principal=True,
+            ))
+            db.flush()
     elif persona.socio is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

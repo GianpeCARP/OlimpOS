@@ -47,15 +47,18 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import (
-    Actividad, AsignacionDieta, AsignacionEntrenador, AsignacionRutina, Asistencia, Baja, Congelamiento, Deuda, InscripcionActividad, Membresia, Pago, Patologia, Persona, RegistroSalud, Reserva, Socio, SocioPatologia, Telefono, Turno,
+    Actividad, AsignacionDieta, AsignacionEntrenador, AsignacionRutina, Asistencia, Baja, Congelamiento, ContactoEmergencia, InscripcionActividad, Membresia, Pago, Patologia, Persona, RegistroSalud, Reserva, Socio, SocioPatologia, Telefono, Turno,
 )
 from permisos import Seccion
 from schemas import (
-    ActividadOut, AsignacionDietaOut, AsignacionEntrenadorOut, AsignacionRutinaOut, AsignarPatologiaRequest, AsistenciaOut, BajaPropiaRequest, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, CongelamientoOut, CongelarRequest, DietaOut, InscripcionOut, MedicionCrear, MedicionOut, MensajeResponse, MiComidaOut, MiCuotaOut, MiDeudaOut, MiDiaDeDietaOut, MiDietaOut, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRutinaOut, PagoOut, PatologiaDeSocioOut, PatologiaOut, ReservaOut, RutinaOut, TurnoDisponibleOut,
+    ActividadOut, AsignacionDietaOut, AsignacionEntrenadorOut, AsignacionRutinaOut, AsignarPatologiaRequest, AsistenciaOut, BajaPropiaRequest, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, CongelamientoOut, CongelarRequest, DietaOut, InscripcionOut, MedicionCrear, MedicionOut, MensajeResponse, MiComidaOut, MiCuotaOut, MiDiaDeDietaOut, MiDietaOut, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRutinaOut, PagoOut, PatologiaDeSocioOut, PatologiaOut, ReservaOut, RutinaOut, TurnoDisponibleOut,
 )
 from notificaciones import notificar_promocion_lista_espera
 from turnos import ocupacion, promover_de_lista_de_espera
 from security import Sesion, requiere_seccion
+# El saldo del abono se deriva contando Reserva; la fórmula vive en el router
+# de actividades y se importa para no duplicarla.
+from routers.actividades import clases_restantes_de
 
 router = APIRouter(prefix="/portal", tags=["Portal del socio"])
 
@@ -157,6 +160,13 @@ def mi_perfil(
         .first()
     )
 
+    emergencia = (
+        db.query(ContactoEmergencia)
+        .filter(ContactoEmergencia.id_persona == persona.id_persona)
+        .order_by(ContactoEmergencia.principal.desc(), ContactoEmergencia.id_contacto_emergencia)
+        .first()
+    )
+
     # ACTIVA o SUSPENDIDA. Congelar deja la membresía en SUSPENDIDA para que
     # el fichaje y las reservas la rechacen, pero sigue siendo su membresía:
     # buscando sólo la ACTIVA, alguien que pausó su cuota veía su perfil como
@@ -182,9 +192,12 @@ def mi_perfil(
         fecha_alta=socio.fecha_alta,
         objetivo=socio.objetivo,
         sede=socio.sede.nombre if socio.sede else None,
-        emergencia_nombre=persona.emergencia_nombre,
-        emergencia_telefono=persona.emergencia_telefono,
-        emergencia_parentesco=persona.emergencia_parentesco,
+        # El contacto de emergencia ya no vive inline en Persona: está en
+        # Contacto_Emergencia (multivaluado). Para el perfil se muestra el
+        # principal (o el primero que haya).
+        emergencia_nombre=emergencia.nombre if emergencia else None,
+        emergencia_telefono=emergencia.telefono if emergencia else None,
+        emergencia_parentesco=emergencia.parentesco if emergencia else None,
         domicilio=_armar_domicilio(persona),
         plan=plan,
         estado=estado,
@@ -392,12 +405,6 @@ def mi_cuota(
         .first()
     )
 
-    deudas = (
-        db.query(Deuda)
-        .filter(Deuda.id_socio == socio.id_socio, Deuda.estado == "PENDIENTE")
-        .all()
-    )
-
     pagos = (
         db.query(Pago)
         # Los PENDIENTE también, no sólo los confirmados.
@@ -450,29 +457,17 @@ def mi_cuota(
 
     return MiCuotaOut(
         tiene_membresia=membresia is not None,
-        al_dia=bool(membresia) and not deudas and (dias is None or dias >= 0),
+        # "Al día" es tener membresía vigente sin vencer. No hay tabla Deuda:
+        # el estado "debe" es derivable de esto mismo.
+        al_dia=bool(membresia) and (dias is None or dias >= 0),
         plan=plan,
         estado=estado,
         precio_pactado=precio,
         fecha_inicio=inicio,
         fecha_vencimiento=vence,
         dias_restantes=dias,
-        deuda_total=float(sum(d.monto for d in deudas)),
-        deudas=[
-            MiDeudaOut(
-                id_deuda=d.id_deuda,
-                monto=float(d.monto),
-                fecha_generacion=d.fecha_generacion,
-                fecha_vencimiento=d.fecha_vencimiento,
-                # Positivo = días que lleva vencida. Se calcula contra la fecha
-                # del servidor, igual que los días restantes de la membresía.
-                dias_de_atraso=(
-                    (hoy - d.fecha_vencimiento).days if d.fecha_vencimiento else 0
-                ),
-                observaciones=d.observaciones,
-            )
-            for d in deudas
-        ],
+        deuda_total=0.0,
+        deudas=[],
         ultimos_pagos=[
             PagoOut(
                 id_pago=p.id_pago, id_socio=p.id_socio,
@@ -524,8 +519,8 @@ def mis_reservas(
             fecha=r.turno.fecha,
             hora=r.turno.hora,
             estado=r.estado,
-            es_clase_suelta=bool(r.es_clase_suelta),
-            clases_restantes=(r.inscripcion.clases_restantes if r.inscripcion else None),
+            es_clase_suelta=(r.id_inscripcion is None),
+            clases_restantes=clases_restantes_de(db, r.inscripcion),
         )
         for r in reservas
     ]
@@ -597,9 +592,25 @@ def editar_mi_perfil(
     elif datos.email is None:
         persona.email = None
 
-    persona.emergencia_nombre = datos.emergencia_nombre
-    persona.emergencia_telefono = datos.emergencia_telefono
-    persona.emergencia_parentesco = datos.emergencia_parentesco
+    # Contacto de emergencia: ahora vive en Contacto_Emergencia. Se hace
+    # upsert del principal. Si el socio manda nombre y teléfono, se crea o
+    # actualiza esa fila; si limpia el nombre, no borramos el histórico.
+    if datos.emergencia_nombre or datos.emergencia_telefono:
+        emergencia = (db.query(ContactoEmergencia)
+                      .filter(ContactoEmergencia.id_persona == persona.id_persona)
+                      .order_by(ContactoEmergencia.principal.desc(),
+                                ContactoEmergencia.id_contacto_emergencia)
+                      .first())
+        if emergencia is None:
+            emergencia = ContactoEmergencia(id_persona=persona.id_persona,
+                                            nombre=datos.emergencia_nombre or "",
+                                            telefono=datos.emergencia_telefono or "",
+                                            principal=True)
+            db.add(emergencia)
+        else:
+            emergencia.nombre = datos.emergencia_nombre or emergencia.nombre
+            emergencia.telefono = datos.emergencia_telefono or emergencia.telefono
+        emergencia.parentesco = datos.emergencia_parentesco
 
     if datos.telefono is not None:
         numero = datos.telefono.strip()
@@ -726,7 +737,7 @@ def cargar_medicion(
     return MedicionOut.model_validate(medicion)
 
 
-def _a_reserva_out(reserva, turno) -> ReservaOut:
+def _a_reserva_out(db, reserva, turno) -> ReservaOut:
     """
     Arma la respuesta de una reserva del socio.
 
@@ -745,9 +756,8 @@ def _a_reserva_out(reserva, turno) -> ReservaOut:
         fecha=turno.fecha,
         hora=turno.hora,
         estado=reserva.estado,
-        es_clase_suelta=bool(reserva.es_clase_suelta),
-        clases_restantes=(reserva.inscripcion.clases_restantes
-                          if reserva.inscripcion else None),
+        es_clase_suelta=(reserva.id_inscripcion is None),
+        clases_restantes=clases_restantes_de(db, reserva.inscripcion),
     )
 
 # =============================================================================
@@ -857,7 +867,8 @@ def reservar_mi_turno(
     reserva = Reserva(
         id_turno=id_turno,
         id_socio=socio.id_socio,
-        es_clase_suelta=False,
+        # Sin id_inscripcion: esta reserva del portal no descuenta de ningún
+        # abono (igual que antes, cuando es_clase_suelta=False no consumía).
         fecha_reserva=datetime.now(),
         estado="EN_ESPERA" if en_espera else "RESERVADA",
     )
@@ -865,7 +876,7 @@ def reservar_mi_turno(
     db.commit()
     db.refresh(reserva)
 
-    return _a_reserva_out(reserva, turno)
+    return _a_reserva_out(db, reserva, turno)
 
 
 @router.post("/mis-turnos/{id_reserva}/cancelar", response_model=ReservaOut)
@@ -916,8 +927,9 @@ def cancelar_mi_turno(
     reserva.estado = "CANCELADA_SOCIO"
     reserva.fecha_cancelacion = datetime.now()
 
-    if reserva.inscripcion and reserva.inscripcion.clases_restantes is not None and a_tiempo:
-        reserva.inscripcion.clases_restantes += 1
+    # El saldo del abono se cuenta contando Reserva: al cancelar, esta reserva
+    # deja de contar y la clase se libera sola. `a_tiempo` se conserva para la
+    # lista de espera y el criterio de devolución, no para tocar un contador.
 
     promovido = None
     if not estaba_en_espera:
@@ -930,7 +942,7 @@ def cancelar_mi_turno(
         db.refresh(promovido)
         notificar_promocion_lista_espera(promovido, turno, actividad)
 
-    return _a_reserva_out(reserva, turno)
+    return _a_reserva_out(db, reserva, turno)
 
 
 @router.get("/mis-turnos/disponibles", response_model=list[TurnoDisponibleOut])
@@ -1186,6 +1198,17 @@ def catalogo_para_el_socio(
     return salida
 
 
+def _dias_aplicados(c) -> int | None:
+    """
+    Días REALES que sumó (o va a sumar) un congelamiento. Ya no es una columna:
+    se deriva de (fecha_reanudacion - fecha_inicio). None mientras sigue ACTIVO
+    —todavía no se sabe cuántos van a ser—.
+    """
+    if c.fecha_reanudacion is None:
+        return None
+    return max(0, (c.fecha_reanudacion - c.fecha_inicio).days)
+
+
 def _a_congelamiento_out(c) -> CongelamientoOut:
     """`dias_pedidos` va calculado: es lo que el socio pidió, no lo que usó."""
     return CongelamientoOut(
@@ -1193,7 +1216,7 @@ def _a_congelamiento_out(c) -> CongelamientoOut:
         fecha_inicio=c.fecha_inicio,
         fecha_fin=c.fecha_fin,
         fecha_reanudacion=c.fecha_reanudacion,
-        dias_aplicados=c.dias_aplicados,
+        dias_aplicados=_dias_aplicados(c),
         dias_pedidos=(c.fecha_fin - c.fecha_inicio).days,
         motivo=c.motivo,
         estado=c.estado,
@@ -1248,13 +1271,19 @@ def _dias_congelados_en_ventana(db: Session, id_socio: int, hoy: date) -> int:
     cualquier pantalla que quiera mostrar el saldo.
     """
     desde = hoy - timedelta(days=VENTANA_CONGELAMIENTO_DIAS)
-    return int(
-        (db.query(func.coalesce(func.sum(Congelamiento.dias_aplicados), 0))
-         .filter(Congelamiento.id_socio == id_socio,
-                 Congelamiento.estado == "FINALIZADO",
-                 Congelamiento.fecha_inicio >= desde)
-         .scalar()) or 0
+    # dias_aplicados ya no es una columna: se deriva de las fechas, así que la
+    # suma se hace en Python. Además sólo cuentan los de origen SOCIO: los que
+    # impuso el gimnasio (cierre, refacción) NO gastan el cupo voluntario.
+    congelamientos = (
+        db.query(Congelamiento)
+        .join(Membresia, Congelamiento.id_membresia == Membresia.id_membresia)
+        .filter(Membresia.id_socio == id_socio,
+                Congelamiento.estado == "FINALIZADO",
+                Congelamiento.origen == "SOCIO",
+                Congelamiento.fecha_inicio >= desde)
+        .all()
     )
+    return sum((_dias_aplicados(c) or 0) for c in congelamientos)
 
 
 def _congelamiento_vigente(db: Session, id_socio: int) -> Congelamiento | None:
@@ -1268,7 +1297,8 @@ def _congelamiento_vigente(db: Session, id_socio: int) -> Congelamiento | None:
     que nadie se entere.
     """
     activo = (db.query(Congelamiento)
-              .filter(Congelamiento.id_socio == id_socio,
+              .join(Membresia, Congelamiento.id_membresia == Membresia.id_membresia)
+              .filter(Membresia.id_socio == id_socio,
                       Congelamiento.estado == "ACTIVO")
               .first())
     if activo is None:
@@ -1301,7 +1331,8 @@ def _reanudar(db: Session, congelamiento: Congelamiento, hasta: date) -> int:
 
     congelamiento.estado = "FINALIZADO"
     congelamiento.fecha_reanudacion = hasta
-    congelamiento.dias_aplicados = dias
+    # dias_aplicados ya no se guarda: queda derivado de (fecha_reanudacion -
+    # fecha_inicio). Ver _dias_aplicados.
     return dias
 
 
@@ -1327,8 +1358,11 @@ def mis_congelamientos(
     socio = _mi_socio(db, sesion)
     _congelamiento_vigente(db, socio.id_socio)   # cierra el vencido, si hay
 
+    # Congelamiento cuelga de la membresía (ya no tiene id_socio): se llega al
+    # socio por join con Membresia.
     congelamientos = (db.query(Congelamiento)
-                      .filter(Congelamiento.id_socio == socio.id_socio)
+                      .join(Membresia, Congelamiento.id_membresia == Membresia.id_membresia)
+                      .filter(Membresia.id_socio == socio.id_socio)
                       .order_by(Congelamiento.fecha_inicio.desc())
                       .all())
     return [_a_congelamiento_out(c) for c in congelamientos]
@@ -1418,7 +1452,8 @@ def congelar_mi_membresia(
         )
 
     congelamiento = Congelamiento(
-        id_socio=socio.id_socio,
+        # Cuelga de la membresía, no del socio (id_socio se eliminó). origen
+        # queda en 'SOCIO' por defecto: esta pausa la pide el socio.
         id_membresia=membresia.id_membresia,
         fecha_inicio=inicio,
         fecha_fin=datos.fecha_fin,
@@ -1504,7 +1539,6 @@ def darme_de_baja(
     if vigente is not None:
         vigente.estado = "CANCELADO"
         vigente.fecha_reanudacion = hoy
-        vigente.dias_aplicados = 0
 
     socio.activo = False
     db.add(Baja(
@@ -1569,7 +1603,7 @@ def mis_inscripciones(
                      .filter(InscripcionActividad.id_socio == socio.id_socio)
                      .order_by(InscripcionActividad.id_inscripcion.desc())
                      .all())
-    return [_a_inscripcion_out(i) for i in inscripciones]
+    return [_a_inscripcion_out(db, i) for i in inscripciones]
 
 
 @router.post("/mis-actividades/inscripciones/{id_inscripcion}/cancelar",

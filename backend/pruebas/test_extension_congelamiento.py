@@ -29,7 +29,7 @@ import urllib.request
 from datetime import date, timedelta
 
 from database import SessionLocal
-from models import Congelamiento
+from models import Congelamiento, Membresia
 
 
 def pedir(m, p, b=None, tok=None):
@@ -82,8 +82,11 @@ pedir("POST", "/portal/mi-membresia/congelar",
        "motivo": "viaje"}, tok=TOK)
 
 db = SessionLocal()
+# Congelamiento ya no tiene id_socio: cuelga de la membresía. Se llega al
+# socio por join con Membresia.
 cong = (db.query(Congelamiento)
-        .filter(Congelamiento.id_socio == ids, Congelamiento.estado == "ACTIVO")
+        .join(Membresia, Congelamiento.id_membresia == Membresia.id_membresia)
+        .filter(Membresia.id_socio == ids, Congelamiento.estado == "ACTIVO")
         .first())
 cong.fecha_inicio = date.today() - timedelta(days=12)
 db.commit()

@@ -44,7 +44,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import (
-    Actividad, Deuda, Empleado, HorarioActividad, InscripcionActividad, Membresia, Pago, PlanActividad, Profesor, ProfesorActividad, Reserva, Sede, Socio, Turno,
+    Actividad, Empleado, HorarioActividad, InscripcionActividad, Membresia, Pago, PlanActividad, Profesor, ProfesorActividad, Reserva, Sede, Socio, Turno,
 )
 from permisos import Acceso, Accion, Seccion
 from schemas import (
@@ -115,13 +115,41 @@ def _a_turno_out(turno: Turno) -> TurnoOut:
     )
 
 
+# =============================================================================
+# CONSUMO DE UN ABONO — derivado, no materializado
+# =============================================================================
+# `clases_restantes` YA NO es una columna: se calcula contando Reserva. Contar
+# es la única fuente de verdad, así que no hay un contador que se pueda
+# desincronizar. Se cuentan las reservas que OCUPAN una clase (RESERVADA /
+# EN_ESPERA); cancelar una libera la clase automáticamente por dejar de contar.
+
+def _clases_usadas(db: Session, id_inscripcion: int) -> int:
+    return (db.query(func.count(Reserva.id_reserva))
+            .filter(Reserva.id_inscripcion == id_inscripcion,
+                    Reserva.estado.in_(("RESERVADA", "EN_ESPERA")))
+            .scalar()) or 0
+
+
+def clases_restantes_de(db: Session, inscripcion) -> int | None:
+    """
+    Clases que le quedan a una inscripción POR_MES. None para POR_SEMANA y
+    CLASE_SUELTA: su límite no es un saldo total (el semanal se recalcula, la
+    suelta es de a una). Derivado contando Reserva, sin contador guardado.
+    """
+    if inscripcion is None:
+        return None
+    plan = inscripcion.plan
+    if plan is None or plan.tipo_limite != "POR_MES":
+        return None
+    return max(plan.cantidad - _clases_usadas(db, inscripcion.id_inscripcion), 0)
+
+
 def _a_actividad_out(a: Actividad) -> ActividadOut:
     return ActividadOut(
         id_actividad=a.id_actividad,
         nombre=a.nombre,
         descripcion=a.descripcion,
         cupo_default=a.cupo_default,
-        precio_clase_suelta=float(a.precio_clase_suelta),
         horas_anticipacion_cancelacion=a.horas_anticipacion_cancelacion,
         minutos_tolerancia=a.minutos_tolerancia,
         activo=bool(a.activo),
@@ -195,7 +223,6 @@ def crear_actividad(
     actividad = Actividad(
         nombre=nombre, descripcion=datos.descripcion,
         cupo_default=datos.cupo_default,
-        precio_clase_suelta=datos.precio_clase_suelta,
         horas_anticipacion_cancelacion=datos.horas_anticipacion_cancelacion,
         minutos_tolerancia=datos.minutos_tolerancia,
         activo=True,
@@ -305,8 +332,9 @@ def cancelar_turno(
             continue
         reserva.estado = "CANCELADA_GIMNASIO"
         reserva.fecha_cancelacion = ahora
-        if reserva.inscripcion and reserva.inscripcion.clases_restantes is not None:
-            reserva.inscripcion.clases_restantes += 1
+        # No hace falta "devolver" la clase: al pasar a CANCELADA_GIMNASIO deja
+        # de contar como usada (ver clases_restantes_de), así que el saldo se
+        # recompone solo.
 
     db.commit()
     db.refresh(turno)
@@ -396,19 +424,22 @@ def reservar(
                         f"{turno.actividad.nombre}. Cobrale un plan o marcá la reserva "
                         "como clase suelta."),
             )
-        if inscripcion.clases_restantes is not None and inscripcion.clases_restantes <= 0:
+        # El saldo se cuenta, no se descuenta: si ya no le quedan clases (para
+        # los POR_MES), se corta acá. La reserva nueva todavía no existe, así
+        # que este conteo es el de ANTES de anotarla.
+        restantes = clases_restantes_de(db, inscripcion)
+        if restantes is not None and restantes <= 0:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(f"{socio.persona.nombre_completo} ya usó todas las clases de su "
                         f"abono ({inscripcion.plan.nombre}). Puede venir como clase suelta."),
             )
-        inscripcion.clases_restantes -= 1
 
     reserva = Reserva(
         id_turno=turno.id_turno,
         id_socio=socio.id_socio,
+        # id_inscripcion NULL = clase suelta; ya no hay booleano es_clase_suelta.
         id_inscripcion=inscripcion.id_inscripcion if inscripcion else None,
-        es_clase_suelta=datos.es_clase_suelta,
         fecha_reserva=datetime.now(),
         estado="EN_ESPERA" if en_espera else "RESERVADA",
     )
@@ -425,8 +456,8 @@ def reservar(
         fecha=turno.fecha,
         hora=turno.hora,
         estado=reserva.estado,
-        es_clase_suelta=bool(reserva.es_clase_suelta),
-        clases_restantes=inscripcion.clases_restantes if inscripcion else None,
+        es_clase_suelta=(reserva.id_inscripcion is None),
+        clases_restantes=clases_restantes_de(db, inscripcion),
     )
 
 
@@ -468,11 +499,10 @@ def cancelar_reserva(
     reserva.estado = "CANCELADA_SOCIO"
     reserva.fecha_cancelacion = datetime.now()
 
-    restantes = None
-    if reserva.inscripcion and reserva.inscripcion.clases_restantes is not None:
-        if a_tiempo:
-            reserva.inscripcion.clases_restantes += 1
-        restantes = reserva.inscripcion.clases_restantes
+    # Con el saldo derivado (contando Reserva), una cancelación libera la clase
+    # por dejar de contar. `a_tiempo` se conserva para la lista de espera y
+    # para el mensaje, aunque ya no ajusta un contador guardado.
+    inscripcion_cancelada = reserva.inscripcion
 
     # El lugar que se liberó va para el primero de la lista de espera.
     #
@@ -505,8 +535,8 @@ def cancelar_reserva(
         fecha=turno.fecha,
         hora=turno.hora,
         estado=reserva.estado,
-        es_clase_suelta=bool(reserva.es_clase_suelta),
-        clases_restantes=restantes,
+        es_clase_suelta=(reserva.id_inscripcion is None),
+        clases_restantes=clases_restantes_de(db, inscripcion_cancelada),
     )
 
 
@@ -526,7 +556,7 @@ def listar_reservas(
             id_reserva=r.id_reserva, id_turno=turno.id_turno, id_socio=r.id_socio,
             socio=r.socio.persona.nombre_completo if r.socio else "?",
             actividad=turno.actividad.nombre, fecha=turno.fecha, hora=turno.hora,
-            estado=r.estado, es_clase_suelta=bool(r.es_clase_suelta),
+            estado=r.estado, es_clase_suelta=(r.id_inscripcion is None),
             clases_restantes=None,
         )
         for r in turno.reservas if r.estado == "RESERVADA"
@@ -630,7 +660,6 @@ def actualizar_actividad(
     actividad.nombre = nombre
     actividad.descripcion = datos.descripcion
     actividad.cupo_default = datos.cupo_default
-    actividad.precio_clase_suelta = datos.precio_clase_suelta
     actividad.horas_anticipacion_cancelacion = datos.horas_anticipacion_cancelacion
     actividad.minutos_tolerancia = datos.minutos_tolerancia
     db.commit()
@@ -680,9 +709,8 @@ def alternar_estado_actividad(
                     continue
                 reserva.estado = "CANCELADA_GIMNASIO"
                 reserva.fecha_cancelacion = ahora
-                # Se devuelve la clase: la baja la decidió el gimnasio.
-                if reserva.inscripcion and reserva.inscripcion.clases_restantes is not None:
-                    reserva.inscripcion.clases_restantes += 1
+                # La clase se libera sola: al cancelarse deja de contar como
+                # usada (saldo derivado, ver clases_restantes_de).
 
     db.commit()
     db.refresh(actividad)
@@ -864,7 +892,7 @@ def desasignar_profesor(
 # INSCRIPCIONES — comprar un abono
 # =============================================================================
 
-def _a_inscripcion_out(i: InscripcionActividad) -> InscripcionOut:
+def _a_inscripcion_out(db: Session, i: InscripcionActividad) -> InscripcionOut:
     plan = i.plan
     actividad = plan.actividad if plan else None
     persona = i.socio.persona if i.socio else None
@@ -881,7 +909,7 @@ def _a_inscripcion_out(i: InscripcionActividad) -> InscripcionOut:
         precio_pactado=float(i.precio_pactado),
         fecha_inicio=i.fecha_inicio,
         fecha_vencimiento=i.fecha_vencimiento,
-        clases_restantes=i.clases_restantes,
+        clases_restantes=clases_restantes_de(db, i),
         estado=i.estado,
     )
 
@@ -897,7 +925,7 @@ def inscripciones_de_socio(
                      .filter(InscripcionActividad.id_socio == id_socio)
                      .order_by(InscripcionActividad.fecha_inicio.desc())
                      .all())
-    return [_a_inscripcion_out(i) for i in inscripciones]
+    return [_a_inscripcion_out(db, i) for i in inscripciones]
 
 
 @router.post("/planes/{id_plan}/comprar", response_model=ComprarPlanResponse,
@@ -911,17 +939,16 @@ def comprar_plan(
     """
     Un socio compra un abono de actividad. Crea la Inscripción y el Pago.
 
-    EXIGE MEMBRESÍA VIGENTE. `Inscripcion_Actividad.id_membresia` es NOT NULL
-    en el esquema, y eso codifica una regla de negocio: los abonos de
-    actividad son un adicional sobre la cuota, no un reemplazo. Sin cuota al
-    día no se puede comprar yoga.
+    EXIGE MEMBRESÍA VIGENTE. Los abonos de actividad son un adicional sobre la
+    cuota, no un reemplazo: sin cuota al día no se puede comprar yoga. Ya no es
+    una FK (Inscripcion_Actividad perdió id_membresia); ahora es una regla que
+    valida este endpoint mirando la membresía activa.
 
     El precio sale del plan, no del pedido — misma razón que en el cobro de
     membresía: si viniera del cliente, cualquiera compraría un abono por $1.
 
-    `clases_restantes` arranca en `cantidad` para los planes POR_MES. Para los
-    POR_SEMANA queda en None: el límite es semanal y se recalcula, no se
-    descuenta de un saldo total.
+    El saldo (`clases_restantes`) NO se guarda: se calcula contando Reserva.
+    Ver clases_restantes_de.
     """
     plan = _buscar_plan(db, id_plan)
     if not plan.activo:
@@ -987,31 +1014,18 @@ def comprar_plan(
                     f"{vencimiento}. Renovale la cuota primero."),
         )
 
-    # --- REGLA 8: deudas ----------------------------------------------------
-    # Corta cualquier COMPRA nueva. NO aplica al reservar con un abono ya
-    # pagado: usar algo que ya se pagó no es comprar. Y tampoco puede aplicar
-    # nunca a pagar una deuda — si pagar dependiera de no deber, nadie podría
-    # regularizar jamás.
-    deuda = (db.query(Deuda)
-             .filter(Deuda.id_socio == socio.id_socio, Deuda.estado == "PENDIENTE")
-             .first())
-    if deuda is not None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(f"{socio.persona.nombre_completo} tiene una deuda pendiente. "
-                    "Regularizala en recepción antes de comprar."),
-        )
+    # Ya no hay chequeo de tabla Deuda (se eliminó del esquema): el estado
+    # "debe" es derivable, y la exigencia de membresía al día de más arriba ya
+    # corta la compra a quien no está al día.
 
     precio = float(plan.precio)
 
     inscripcion = InscripcionActividad(
         id_socio=socio.id_socio,
         id_plan_actividad=plan.id_plan_actividad,
-        id_membresia=membresia.id_membresia,
         precio_pactado=precio,
         fecha_inicio=hoy,
         fecha_vencimiento=vencimiento,
-        clases_restantes=(plan.cantidad if plan.tipo_limite == "POR_MES" else None),
         estado="ACTIVA",
     )
     db.add(inscripcion)
@@ -1034,7 +1048,7 @@ def comprar_plan(
     db.refresh(pago)
 
     return ComprarPlanResponse(
-        inscripcion=_a_inscripcion_out(inscripcion),
+        inscripcion=_a_inscripcion_out(db, inscripcion),
         pago=PagoOut(
             id_pago=pago.id_pago, id_socio=pago.id_socio,
             socio=socio.persona.nombre_completo, monto=float(pago.monto),
@@ -1088,7 +1102,7 @@ def cancelar_inscripcion(
 
     db.commit()
     db.refresh(inscripcion)
-    return _a_inscripcion_out(inscripcion)
+    return _a_inscripcion_out(db, inscripcion)
 
 
 # =============================================================================
@@ -1128,9 +1142,11 @@ def puede_comprar(
                  .order_by(Membresia.fecha_vencimiento.desc())
                  .first())
 
-    tiene_deuda = (db.query(Deuda)
-                   .filter(Deuda.id_socio == id_socio, Deuda.estado == "PENDIENTE")
-                   .first()) is not None
+    # Ya no hay tabla Deuda: "debe" equivale a no tener la cuota al día, que es
+    # justo la condición que se evalúa abajo. Se mantiene el campo tiene_deuda
+    # en la respuesta (compatibilidad con las apps) derivándolo de eso.
+    tiene_deuda = membresia is None or bool(
+        membresia.fecha_vencimiento and membresia.fecha_vencimiento < hoy)
 
     if membresia is None or (membresia.fecha_vencimiento and membresia.fecha_vencimiento < hoy):
         return PuedeComprarOut(
@@ -1209,15 +1225,8 @@ def comprar_clase_suelta(
                     "Hay que ser socio activo para tomar una clase."),
         )
 
-    deuda = (db.query(Deuda)
-             .filter(Deuda.id_socio == socio.id_socio, Deuda.estado == "PENDIENTE")
-             .first())
-    if deuda is not None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(f"{socio.persona.nombre_completo} tiene una deuda pendiente. "
-                    "Regularizala en recepción antes de comprar."),
-        )
+    # Sin tabla Deuda: la exigencia de cuota al día de arriba ya cubre el caso
+    # que antes atajaba el chequeo de deuda pendiente.
 
     ya = next((r for r in turno.reservas
                if r.id_socio == socio.id_socio and r.estado == "RESERVADA"), None)
@@ -1234,7 +1243,21 @@ def comprar_clase_suelta(
                     f"ya está completa ({turno.cupo_maximo} lugares)."),
         )
 
-    precio = float(turno.actividad.precio_clase_suelta) if turno.actividad else 0.0
+    # El precio de la clase suelta ya no es una columna de Actividad: es el
+    # plan CLASE_SUELTA de esa actividad (cantidad = 1). Se busca su precio; si
+    # la actividad no tiene ese plan cargado, no se puede vender suelta.
+    plan_suelta = (db.query(PlanActividad)
+                   .filter(PlanActividad.id_actividad == turno.id_actividad,
+                           PlanActividad.tipo_limite == "CLASE_SUELTA",
+                           PlanActividad.activo.is_(True))
+                   .first())
+    if plan_suelta is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(f"{turno.actividad.nombre if turno.actividad else 'Esta actividad'} "
+                    "no tiene precio de clase suelta cargado."),
+        )
+    precio = float(plan_suelta.precio)
 
     pago = Pago(
         id_socio=socio.id_socio,
@@ -1252,7 +1275,7 @@ def comprar_clase_suelta(
     reserva = Reserva(
         id_turno=turno.id_turno,
         id_socio=socio.id_socio,
-        es_clase_suelta=True,
+        # sin inscripción = clase suelta; el pago va atado por id_pago
         id_pago=pago.id_pago,
         fecha_reserva=datetime.now(),
         estado="RESERVADA",

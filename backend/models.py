@@ -1,7 +1,7 @@
 """
 models.py
 ---------
-Modelos SQLAlchemy que MAPEAN el esquema de `Proyecto/db/schema.sql`.
+Modelos SQLAlchemy que MAPEAN el esquema de `db/schema.sql`.
 No lo definen: si acá y allá dicen cosas distintas, manda el .sql (ver el
 docstring largo de database.py).
 
@@ -12,12 +12,9 @@ documenta el DEFAULT que ya está escrito en el DDL. Si alguien inserta una
 fila por fuera de la app (el SQL Editor de Neon, un script), el resultado es
 el mismo — que es justamente lo que se quiere.
 
-ALCANCE: solo las tablas que necesita la rebanada de autenticación —
-Persona, Usuario, las de rol y sus dependencias. Las otras 24 se van
-agregando cuando les toque su router. Es la misma regla que sigue types.ts
-en la PWA ("no declarar las 33 tablas de una, solo las que la spec en curso
-necesita"): un modelo declarado y no usado no se prueba nunca, y cuando por
-fin se usa suele estar mal.
+ALCANCE: las 41 tablas del esquema definitivo están mapeadas. (Este archivo
+nació cubriendo sólo la rebanada de autenticación y se fue completando; hoy
+espeja el DDL entero de `db/schema.sql`.)
 """
 
 from sqlalchemy import (
@@ -37,7 +34,7 @@ from database import Base
 class Rol:
     """
     Roles de sesión. Los valores tienen que coincidir EXACTAMENTE con los de
-    `Roles` en `Proyecto/src/frontend/src/config.ts` (minúsculas, sin tildes),
+    `Roles` en `Proyecto - PWA/src/frontend/src/config.ts` (minúsculas, sin tildes),
     porque son los strings que viajan dentro del JWT y contra los que la PWA
     y Flet evalúan su matriz de permisos. Si divergen, el backend autoriza
     una cosa y el frontend muestra otra.
@@ -104,20 +101,23 @@ class Persona(Base):
     numero_calle = Column(String(10))
     localidad = Column(String(80))
     fecha_nacimiento = Column(Date)
-    emergencia_nombre = Column(String(150))
-    emergencia_telefono = Column(String(30))
-    emergencia_parentesco = Column(String(50))
+    # Los contactos de emergencia YA NO son columnas de Persona: son
+    # multivaluados (una persona puede declarar más de uno) y por eso viven en
+    # Contacto_Emergencia, igual que los teléfonos viven en Telefono. Ver la
+    # tabla Contacto_Emergencia del schema. Antes eran tres columnas inline
+    # (emergencia_nombre/telefono/parentesco); el schema definitivo las movió.
     fecha_alta = Column(DateTime, server_default=func.now())
     activo = Column(Boolean, server_default=text("true"))
 
     # uselist=False en las tres: una Persona tiene como mucho UNA cuenta, UNA
     # ficha de socio y UNA de empleado (las FK son UNIQUE en el esquema).
-    # Los teléfonos sí son varios: por eso Telefono es 1:N y no una columna.
+    # Los teléfonos y contactos de emergencia sí son varios: por eso son 1:N.
     usuario = relationship("Usuario", back_populates="persona", uselist=False)
     socio = relationship("Socio", back_populates="persona", uselist=False)
     empleado = relationship("Empleado", back_populates="persona", uselist=False)
     dueno = relationship("Dueno", back_populates="persona", uselist=False)
     telefonos = relationship("Telefono", back_populates="persona")
+    contactos_emergencia = relationship("ContactoEmergencia", back_populates="persona")
 
     @property
     def nombre_completo(self) -> str:
@@ -138,6 +138,27 @@ class Telefono(Base):
     principal = Column(Boolean, server_default=text("false"))
 
     persona = relationship("Persona", back_populates="telefonos")
+
+
+class ContactoEmergencia(Base):
+    """
+    A quién avisar si al socio le pasa algo. Es multivaluado (puede tener más
+    de uno), así que va en tabla propia y no como columnas de Persona.
+
+    Asimetría deliberada con Telefono: acá el teléfono va inline, porque el
+    contacto de emergencia NO es una Persona del sistema —es un dato de
+    contacto externo, no un actor con ficha propia—.
+    """
+    __tablename__ = "Contacto_Emergencia"
+
+    id_contacto_emergencia = Column(Integer, primary_key=True)
+    id_persona = Column(Integer, ForeignKey("Persona.id_persona"), nullable=False)
+    nombre = Column(String(150), nullable=False)
+    telefono = Column(String(30), nullable=False)
+    parentesco = Column(String(50))
+    principal = Column(Boolean, server_default=text("false"))
+
+    persona = relationship("Persona", back_populates="contactos_emergencia")
 
 
 # =============================================================================
@@ -238,15 +259,33 @@ class Nutricionista(Base):
     empleado = relationship("Empleado", back_populates="nutricionista")
 
 
+class FranjaLaboral(Base):
+    """
+    Catálogo de turnos de trabajo (Mañana / Tarde / Noche). Lo usa sólo
+    Recepcionista: los demás subtipos derivan su horario de Turno y
+    Horario_Actividad, así que no lo necesitan. Reemplaza al viejo varchar
+    `turno_laboral` que vivía inline en Recepcionista.
+    """
+    __tablename__ = "Franja_Laboral"
+
+    id_franja_laboral = Column(Integer, primary_key=True)
+    nombre = Column(String(40), unique=True, nullable=False)
+    hora_desde = Column(Time)
+    hora_hasta = Column(Time)
+    activo = Column(Boolean, server_default=text("true"))
+
+
 class Recepcionista(Base):
     __tablename__ = "Recepcionista"
 
     id_recepcionista = Column(Integer, primary_key=True)
     id_empleado = Column(Integer, ForeignKey("Empleado.id_empleado"), unique=True, nullable=False)
-    # varchar libre, no enum: solo los recepcionistas tienen turno asignado.
-    turno_laboral = Column(String(20))
+    # El turno de trabajo ahora es una FK al catálogo Franja_Laboral, no un
+    # varchar libre: así 'Tarde' es una sola cosa y no 'tarde'/'Tarde'/'T'.
+    id_franja_laboral = Column(Integer, ForeignKey("Franja_Laboral.id_franja_laboral"))
 
     empleado = relationship("Empleado", back_populates="recepcionista")
+    franja = relationship("FranjaLaboral")
 
 
 class Profesor(Base):
@@ -379,8 +418,11 @@ class TipoMembresia(Base):
 
 class Promocion(Base):
     """
-    Descuento por porcentaje O por monto fijo. Las dos columnas son nullables
-    porque una promoción usa una u otra, no las dos.
+    Descuento SIEMPRE porcentual. El monto fijo se eliminó por decisión
+    comercial (ver schema): antes había una segunda columna
+    `monto_fijo_descuento` y las dos eran nullables porque se usaba una u otra.
+    Los pesos efectivamente descontados en un cobro se guardan en
+    Pago.monto_descuento, no acá.
     """
     __tablename__ = "Promocion"
 
@@ -389,8 +431,7 @@ class Promocion(Base):
     id_sede = Column(Integer, ForeignKey("Sede.id_sede"))
     nombre = Column(String(100), nullable=False)
     descripcion = Column(Text)
-    porcentaje_descuento = Column(Numeric(5, 2))
-    monto_fijo_descuento = Column(Numeric(10, 2))
+    porcentaje_descuento = Column(Numeric(5, 2), nullable=False)
     fecha_inicio = Column(Date, nullable=False)
     fecha_fin = Column(Date, nullable=False)
     activo = Column(Boolean, server_default=text("true"))
@@ -410,17 +451,18 @@ class Membresia(Base):
     id_socio = Column(Integer, ForeignKey("Socio.id_socio"), nullable=False)
     id_tipo_membresia = Column(Integer, ForeignKey("Tipo_Membresia.id_tipo_membresia"),
                                 nullable=False)
-    id_promocion = Column(Integer, ForeignKey("Promocion.id_promocion"))
+    # NO hay `id_promocion` acá: la promoción aplicada y los pesos descontados
+    # viven en el Pago (Pago.id_promocion / Pago.monto_descuento), que es el
+    # hecho contable. La membresía sólo guarda el precio_pactado ya resultante.
     precio_pactado = Column(Numeric(10, 2), nullable=False)
     fecha_inicio = Column(Date, nullable=False)
     fecha_vencimiento = Column(Date)
     estado = Column(ENUM("ACTIVA", "VENCIDA", "SUSPENDIDA", "CANCELADA",
                           name="estado_membresia", create_type=False),
-                     server_default=text("'ACTIVA'"))
+                     nullable=False, server_default=text("'ACTIVA'"))
 
     socio = relationship("Socio")
     tipo = relationship("TipoMembresia")
-    promocion = relationship("Promocion")
 
 
 class Pago(Base):
@@ -439,7 +481,7 @@ class Pago(Base):
     id_pago = Column(Integer, primary_key=True)
     id_socio = Column(Integer, ForeignKey("Socio.id_socio"), nullable=False)
     id_membresia = Column(Integer, ForeignKey("Membresia.id_membresia"))
-    id_inscripcion = Column(Integer)          # FK a Inscripcion_Actividad (router pendiente)
+    id_inscripcion = Column(Integer, ForeignKey("Inscripcion_Actividad.id_inscripcion"))
     id_sede = Column(Integer, ForeignKey("Sede.id_sede"))
     metodo = Column(ENUM("EFECTIVO", "DEBITO", "CREDITO", "TRANSFERENCIA",
                           "BILLETERA_VIRTUAL", name="metodo_pago", create_type=False),
@@ -448,47 +490,27 @@ class Pago(Base):
     fecha_pago = Column(DateTime, nullable=False, server_default=func.now())
     periodo_desde = Column(Date)
     periodo_hasta = Column(Date)
-    es_adelanto = Column(Boolean, server_default=text("false"))
+    es_adelanto = Column(Boolean, nullable=False, server_default=text("false"))
     estado = Column(ENUM("CONFIRMADO", "PENDIENTE", "CANCELADO", "REEMBOLSADO",
                           name="estado_pago", create_type=False),
-                     server_default=text("'CONFIRMADO'"))
+                     nullable=False, server_default=text("'CONFIRMADO'"))
     fecha_cancelacion = Column(DateTime)
     numero_comprobante = Column(String(50), unique=True)
+    # La promoción aplicada a este cobro y los pesos que descontó. Se GUARDAN
+    # (no se recalculan): la promo puede vencer o cambiar después, y hay que
+    # poder reconstruir qué se cobró ese día. Movidos desde Membresia.
+    id_promocion = Column(Integer, ForeignKey("Promocion.id_promocion"))
+    monto_descuento = Column(Numeric(10, 2))
 
     socio = relationship("Socio")
     membresia = relationship("Membresia")
+    promocion = relationship("Promocion")
 
 
-class Deuda(Base):
-    """
-    Lo que un socio debe.
-
-    `generada_automaticamente` distingue las que nacen de una membresía
-    vencida de las que carga alguien a mano. Importa al auditar: una deuda
-    manual es una decisión de una persona y conviene poder filtrarlas.
-
-    Se salda con estado PAGADA y `id_pago_cancelatorio` apuntando al pago que
-    la canceló. Guardar ese vínculo es lo que permite responder "¿con qué pago
-    se saldó esta deuda?" sin cruzar fechas y montos a ojo.
-    """
-    __tablename__ = "Deuda"
-
-    id_deuda = Column(Integer, primary_key=True)
-    id_socio = Column(Integer, ForeignKey("Socio.id_socio"), nullable=False)
-    id_membresia = Column(Integer, ForeignKey("Membresia.id_membresia"))
-    monto = Column(Numeric(10, 2), nullable=False)
-    fecha_generacion = Column(Date, nullable=False)
-    fecha_vencimiento = Column(Date)
-    estado = Column(ENUM("PENDIENTE", "PAGADA", "CONDONADA",
-                          name="estado_deuda", create_type=False),
-                     server_default=text("'PENDIENTE'"))
-    generada_automaticamente = Column(Boolean, server_default=text("true"))
-    id_pago_cancelatorio = Column(Integer, ForeignKey("Pago.id_pago"))
-    observaciones = Column(String(250))
-
-    socio = relationship("Socio")
-    membresia = relationship("Membresia")
-    pago_cancelatorio = relationship("Pago")
+# NO existe un modelo Deuda: el esquema definitivo eliminó la tabla. La política
+# es prepago —sin membresía activa no hay acceso— y el estado "debe" es
+# DERIVABLE (una membresía vencida sin renovar), así que no necesita fila
+# propia. Todo el subsistema de deudas (router y generador) se retiró.
 
 
 # =============================================================================
@@ -569,16 +591,17 @@ class AsignacionRutina(Base):
     id_asignacion_rutina = Column(Integer, primary_key=True)
     id_socio = Column(Integer, ForeignKey("Socio.id_socio"), nullable=False)
     id_rutina = Column(Integer, ForeignKey("Rutina.id_rutina"), nullable=False)
-    id_entrenador = Column(Integer, ForeignKey("Entrenador.id_entrenador"))
+    # NO hay `id_entrenador` acá: el entrenador que la escribió sale de
+    # Rutina.id_entrenador. Guardarlo también en la asignación sería una
+    # segunda fuente de verdad. El schema definitivo lo quitó.
     fecha_inicio = Column(Date, nullable=False)
     fecha_fin = Column(Date)
     estado = Column(ENUM("ACTIVA", "FINALIZADA", "CANCELADA",
                           name="estado_asignacion", create_type=False),
-                     server_default=text("'ACTIVA'"))
+                     nullable=False, server_default=text("'ACTIVA'"))
 
     socio = relationship("Socio")
     rutina = relationship("Rutina", back_populates="asignaciones")
-    entrenador = relationship("Entrenador")
 
 
 class AsignacionEntrenador(Base):
@@ -611,6 +634,22 @@ class AsignacionEntrenador(Base):
 # NUTRICIÓN — espejo estructural de Rutinas
 # =============================================================================
 
+class CatalogoComida(Base):
+    """
+    Catálogo de platos. Las calorías, el nombre y la descripción viven ACÁ
+    porque dependen del PLATO, no de la dieta ni del día en que aparece. Es
+    exactamente la razón por la que Comida.calorias y Comida.descripcion se
+    eliminaron: eran redundancia una vez que el catálogo se volvió obligatorio.
+    """
+    __tablename__ = "Catalogo_Comida"
+
+    id_catalogo_comida = Column(Integer, primary_key=True)
+    nombre = Column(String(120), unique=True, nullable=False)
+    descripcion = Column(Text)
+    calorias = Column(Integer)
+    activo = Column(Boolean, server_default=text("true"))
+
+
 class Dieta(Base):
     """Plantilla que arma un nutricionista. Mismo patrón que Rutina."""
     __tablename__ = "Dieta"
@@ -631,17 +670,24 @@ class Dieta(Base):
 
 
 class Comida(Base):
-    """Una comida de la dieta. El equivalente de RutinaEjercicio."""
+    """
+    Una comida de la dieta. El equivalente de RutinaEjercicio.
+
+    El plato SIEMPRE sale de Catalogo_Comida (id_catalogo_comida OBLIGATORIO).
+    Por eso `descripcion` y `calorias` se eliminaron de acá: al volverse
+    obligatorio el catálogo, eran redundancia total contra Catalogo_Comida.
+    """
     __tablename__ = "Comida"
 
     id_comida = Column(Integer, primary_key=True)
     id_dieta = Column(Integer, ForeignKey("Dieta.id_dieta"), nullable=False)
     dia = Column(Integer)
     momento = Column(String(30))          # Desayuno, Almuerzo, Merienda, Cena
-    descripcion = Column(Text, nullable=False)
-    calorias = Column(Integer)
+    id_catalogo_comida = Column(Integer, ForeignKey("Catalogo_Comida.id_catalogo_comida"),
+                                 nullable=False)
 
     dieta = relationship("Dieta", back_populates="comidas")
+    catalogo = relationship("CatalogoComida")
 
 
 class AsignacionDieta(Base):
@@ -650,17 +696,17 @@ class AsignacionDieta(Base):
     id_asignacion_dieta = Column(Integer, primary_key=True)
     id_socio = Column(Integer, ForeignKey("Socio.id_socio"), nullable=False)
     id_dieta = Column(Integer, ForeignKey("Dieta.id_dieta"), nullable=False)
-    id_nutricionista = Column(Integer, ForeignKey("Nutricionista.id_nutricionista"))
+    # NO hay `id_nutricionista` acá: sale de Dieta.id_nutricionista. Mismo
+    # criterio que AsignacionRutina con el entrenador. El schema lo quitó.
     fecha_inicio = Column(Date, nullable=False)
     fecha_fin = Column(Date)
     estado = Column(ENUM("ACTIVA", "FINALIZADA", "CANCELADA",
                           name="estado_asignacion", create_type=False),
-                     server_default=text("'ACTIVA'"))
+                     nullable=False, server_default=text("'ACTIVA'"))
     observaciones = Column(Text)
 
     socio = relationship("Socio")
     dieta = relationship("Dieta", back_populates="asignaciones")
-    nutricionista = relationship("Nutricionista")
 
 
 # =============================================================================
@@ -682,7 +728,9 @@ class Actividad(Base):
     nombre = Column(String(80), unique=True, nullable=False)
     descripcion = Column(Text)
     cupo_default = Column(Integer, nullable=False)
-    precio_clase_suelta = Column(Numeric(10, 2), nullable=False)
+    # NO hay `precio_clase_suelta`: la clase suelta es ahora un Plan_Actividad
+    # más (tipo_limite = CLASE_SUELTA, cantidad = 1), no una columna aparte.
+    # Así el sistema de inscripciones la trata igual que a cualquier otro plan.
     horas_anticipacion_cancelacion = Column(Integer, nullable=False, server_default=text("0"))
     # Minutos después de la hora del turno en que todavía se acepta la llegada.
     # Pasado ese margen la reserva cuenta como ausente y la tarjeta no valida
@@ -708,8 +756,8 @@ class PlanActividad(Base):
     id_plan_actividad = Column(Integer, primary_key=True)
     id_actividad = Column(Integer, ForeignKey("Actividad.id_actividad"), nullable=False)
     nombre = Column(String(80), nullable=False)
-    tipo_limite = Column(ENUM("POR_SEMANA", "POR_MES", name="tipo_limite",
-                               create_type=False), nullable=False)
+    tipo_limite = Column(ENUM("POR_SEMANA", "POR_MES", "CLASE_SUELTA",
+                               name="tipo_limite", create_type=False), nullable=False)
     cantidad = Column(Integer, nullable=False)
     precio = Column(Numeric(10, 2), nullable=False)
     activo = Column(Boolean, server_default=text("true"))
@@ -719,16 +767,18 @@ class PlanActividad(Base):
 
 class InscripcionActividad(Base):
     """
-    Un socio anotado a un plan, con su período y su saldo de clases.
+    Un socio anotado a un plan, con su período.
 
-    `clases_restantes` es un contador que se decrementa al reservar. Podría
-    calcularse contando reservas, pero tenerlo materializado hace que el
-    chequeo de "¿le quedan clases?" sea leer un número en vez de una consulta
-    agregada en cada reserva.
+    `clases_restantes` fue ELIMINADA: el consumo se calcula al vuelo contando
+    Reserva (reservas activas de esta inscripción). Guardarlo materializado
+    creaba una segunda fuente de verdad, y dejaba dos criterios opuestos en la
+    misma columna (POR_MES lo guardaba, POR_SEMANA lo calculaba).
+
+    Tampoco cuelga ya de una Membresia (`id_membresia` se eliminó): la
+    inscripción es del socio, y el pago que la respalda se ata por Pago.
 
     `precio_pactado` congela el precio del plan al momento de contratarlo, por
-    la misma razón que `Membresia.precio_pactado`: un aumento no puede
-    reescribir lo que alguien ya pagó.
+    la misma razón que `Membresia.precio_pactado`.
     """
     __tablename__ = "Inscripcion_Actividad"
 
@@ -736,18 +786,15 @@ class InscripcionActividad(Base):
     id_socio = Column(Integer, ForeignKey("Socio.id_socio"), nullable=False)
     id_plan_actividad = Column(Integer, ForeignKey("Plan_Actividad.id_plan_actividad"),
                                 nullable=False)
-    id_membresia = Column(Integer, ForeignKey("Membresia.id_membresia"), nullable=False)
     precio_pactado = Column(Numeric(10, 2), nullable=False)
     fecha_inicio = Column(Date, nullable=False)
     fecha_vencimiento = Column(Date, nullable=False)
-    clases_restantes = Column(Integer)
     estado = Column(ENUM("ACTIVA", "VENCIDA", "CANCELADA",
                           name="estado_inscripcion", create_type=False),
-                     server_default=text("'ACTIVA'"))
+                     nullable=False, server_default=text("'ACTIVA'"))
 
     socio = relationship("Socio")
     plan = relationship("PlanActividad")
-    membresia = relationship("Membresia")
 
 
 class ProfesorActividad(Base):
@@ -853,16 +900,19 @@ class Reserva(Base):
     el gimnasio, la clase se le devuelve al socio; si la canceló él fuera de
     término, no.
 
-    `es_clase_suelta` distingue a quien pagó una clase individual de quien usa
-    su abono: los primeros no descuentan de ningún saldo.
+    Quien pagó una clase individual se distingue de quien usa su abono por
+    `id_inscripcion`: NULL = clase suelta (no descuenta de ningún abono),
+    no-NULL = usa esa inscripción.
     """
     __tablename__ = "Reserva"
 
     id_reserva = Column(Integer, primary_key=True)
     id_turno = Column(Integer, ForeignKey("Turno.id_turno"), nullable=False)
     id_socio = Column(Integer, ForeignKey("Socio.id_socio"), nullable=False)
+    # id_inscripcion NULL = clase suelta. Reemplaza al viejo booleano
+    # `es_clase_suelta`, que repetía este mismo dato: si hay inscripción, usa
+    # el abono; si no la hay, es una clase suelta pagada aparte.
     id_inscripcion = Column(Integer, ForeignKey("Inscripcion_Actividad.id_inscripcion"))
-    es_clase_suelta = Column(Boolean, server_default=text("false"))
     id_pago = Column(Integer, ForeignKey("Pago.id_pago"))
     fecha_reserva = Column(DateTime, server_default=func.now())
     # EN_ESPERA va en la lista aunque el resto del código lo trate aparte: si
@@ -976,19 +1026,25 @@ class Congelamiento(Base):
     __tablename__ = "Congelamiento"
 
     id_congelamiento = Column(Integer, primary_key=True)
-    id_socio = Column(Integer, ForeignKey("Socio.id_socio"), nullable=False)
+    # NO hay `id_socio`: el socio sale de Membresia.id_socio. El congelamiento
+    # cuelga de la MEMBRESIA, que es lo que se extiende al reanudar.
     id_membresia = Column(Integer, ForeignKey("Membresia.id_membresia"), nullable=False)
     fecha_inicio = Column(Date, nullable=False)
     fecha_fin = Column(Date, nullable=False)
     fecha_reanudacion = Column(Date)
-    dias_aplicados = Column(Integer)
     motivo = Column(String(200))
     estado = Column(ENUM("ACTIVO", "FINALIZADO", "CANCELADO",
                           name="estado_congelamiento", create_type=False),
                      nullable=False, server_default=text("'ACTIVO'"))
     fecha_solicitud = Column(DateTime, nullable=False, server_default=func.now())
+    # SOCIO (viaje, lesión) vs GIMNASIO (cierre, refacción). Los días impuestos
+    # por el gimnasio NO cuentan contra el tope anual de congelamiento
+    # voluntario. `dias_aplicados` se eliminó: los días reales se derivan de
+    # (fecha_reanudacion - fecha_inicio).
+    origen = Column(ENUM("SOCIO", "GIMNASIO", name="origen_congelamiento",
+                          create_type=False),
+                    nullable=False, server_default=text("'SOCIO'"))
 
-    socio = relationship("Socio")
     membresia = relationship("Membresia")
 
 
@@ -1030,3 +1086,46 @@ class SocioPatologia(Base):
 
     socio = relationship("Socio")
     patologia = relationship("Patologia")
+
+
+class RegistroEjercicio(Base):
+    """
+    El peso que el socio EFECTIVAMENTE levantó, cargado por él. Es la mitad
+    REAL del par plantilla/realidad: Rutina_Ejercicio dice qué debería hacer,
+    esto dice qué hizo. Record = MAX(peso_hecho). Grano (socio, ejercicio, fecha).
+    """
+    __tablename__ = "Registro_Ejercicio"
+
+    id_registro_ejercicio = Column(Integer, primary_key=True)
+    id_socio = Column(Integer, ForeignKey("Socio.id_socio"), nullable=False)
+    id_ejercicio = Column(Integer, ForeignKey("Ejercicio.id_ejercicio"), nullable=False)
+    fecha = Column(Date, nullable=False, server_default=func.now())
+    peso_hecho = Column(Numeric(6, 2), nullable=False)
+    series_hechas = Column(Integer)
+    repeticiones_hechas = Column(String(20))
+    observaciones = Column(String(200))
+
+    socio = relationship("Socio")
+    ejercicio = relationship("Ejercicio")
+
+
+class RegistroComida(Base):
+    """
+    Lo que el socio REALMENTE comió un día, cargado por él. Es a Comida lo que
+    Registro_Ejercicio es a Rutina_Ejercicio: plantilla contra realidad.
+
+    `id_comida` = qué comida de la dieta CORRESPONDÍA (opcional).
+    `comida_ingerida` = qué comió DE VERDAD (texto libre, NOT NULL): a
+    propósito no apunta al catálogo, para que anote cualquier cosa.
+    """
+    __tablename__ = "Registro_Comida"
+
+    id_registro_comida = Column(Integer, primary_key=True)
+    id_socio = Column(Integer, ForeignKey("Socio.id_socio"), nullable=False)
+    id_comida = Column(Integer, ForeignKey("Comida.id_comida"))
+    fecha = Column(Date, nullable=False, server_default=func.now())
+    comida_ingerida = Column(Text, nullable=False)
+    calorias_estimadas = Column(Integer)
+
+    socio = relationship("Socio")
+    comida = relationship("Comida")

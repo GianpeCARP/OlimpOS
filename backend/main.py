@@ -25,7 +25,6 @@ from csrf import middleware_csrf
 from sqlalchemy import text
 from database import Base, SessionLocal, calentar_pool, engine
 from seeder import ejecutar_seeder
-from deudas import generar_deudas
 from turnos import generar_turnos
 
 # El import de models tiene que estar aunque no se use ninguno de sus nombres
@@ -109,7 +108,7 @@ async def lifespan(app: FastAPI):
     print("=" * 68)
 
     # Red de seguridad, NO el mecanismo de creación del esquema. La fuente de
-    # verdad es Proyecto/db/schema.sql (35 tablas normalizadas, parte de la
+    # verdad es db/schema.sql (41 tablas normalizadas, parte de la
     # entrega). create_all solo crea tablas que faltan y nunca modifica una
     # existente, así que sobre una base ya cargada esto es un no-op. Está para
     # que un arranque contra una base vacía no explote — y para cumplir la
@@ -143,18 +142,9 @@ async def lifespan(app: FastAPI):
             print(f"Turnos generados: {resultado['creados']} "
                   f"(hasta el {resultado['hasta'].strftime('%d/%m/%Y')})")
 
-        # Las deudas de las cuotas vencidas que nadie renovó.
-        #
-        # Va acá por lo mismo que la generación de turnos: es idempotente, no
-        # hay dónde correr un cron, y un gimnasio reinicia su servidor bastante
-        # más seguido de lo que hace falta. Sin esto, la tabla Deuda quedaba
-        # vacía para siempre y el gimnasio no tenía forma de saber quién le
-        # debía — el contador del panel daba cero aunque hubiera diez socios
-        # con la cuota vencida hace meses.
-        deuda = generar_deudas(db)
-        if deuda["creadas"]:
-            print(f"Deudas generadas: {deuda['creadas']} "
-                  f"por ${deuda['monto_total']:,.2f} en total")
+        # NO se generan deudas: el esquema definitivo eliminó la tabla Deuda.
+        # La política es prepago y el estado "debe" es derivable (una membresía
+        # vencida sin renovar), así que no hay nada que materializar acá.
     finally:
         db.close()
 

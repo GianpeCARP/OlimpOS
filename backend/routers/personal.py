@@ -61,7 +61,7 @@ router = APIRouter(prefix="/personal", tags=["Personal"])
 ESPECIALIDADES = {
     RolEmpleado.ENTRENADOR:    (Entrenador,    ("titulo", "especialidad", "matricula")),
     RolEmpleado.NUTRICIONISTA: (Nutricionista, ("titulo", "matricula")),
-    RolEmpleado.RECEPCIONISTA: (Recepcionista, ("turno_laboral",)),
+    RolEmpleado.RECEPCIONISTA: (Recepcionista, ("id_franja_laboral",)),
     RolEmpleado.PROFESOR:      (Profesor,      ("titulo", "especialidad")),
 }
 
@@ -105,11 +105,16 @@ def _a_empleado_out(empleado: Empleado) -> EmpleadoOut:
         activo=bool(empleado.activo),
         rol=rol,
         # getattr con default: cada hija tiene solo algunos de estos campos, y
-        # pedirle `turno_laboral` a un Entrenador tiene que dar None, no romper.
+        # pedirle `titulo` a un Recepcionista tiene que dar None, no romper.
         titulo=getattr(fila, "titulo", None),
         especialidad=getattr(fila, "especialidad", None),
         matricula=getattr(fila, "matricula", None),
-        turno_laboral=getattr(fila, "turno_laboral", None),
+        # El turno laboral del recepcionista ahora es una FK a Franja_Laboral;
+        # se expone su NOMBRE (la franja), no el id.
+        turno_laboral=(fila.franja.nombre
+                       if rol == RolEmpleado.RECEPCIONISTA and getattr(fila, "franja", None)
+                       else None),
+        id_franja_laboral=getattr(fila, "id_franja_laboral", None),
         dni=persona.dni,
         nombre=persona.nombre,
         apellido=persona.apellido,

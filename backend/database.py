@@ -10,7 +10,7 @@ toca ni una línea de este archivo: lo único que cambia es DATABASE_URL en el
 
 IMPORTANTE — quién manda sobre el esquema:
 El esquema de OlimpOS ya existe escrito a mano y normalizado hasta 3FN en
-`Proyecto/db/schema.sql` (35 tablas). Ese archivo es la ÚNICA fuente de
+`db/schema.sql` (41 tablas). Ese archivo es la ÚNICA fuente de
 verdad de la estructura de la base, y es además parte de la entrega académica
 (ver Normalización.pdf y olimpos_schema_v5.dbml).
 

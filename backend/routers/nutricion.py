@@ -34,12 +34,12 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import (
-    AsignacionDieta, Comida, Dieta, Empleado, Nutricionista, Socio,
+    AsignacionDieta, CatalogoComida, Comida, Dieta, Empleado, Nutricionista, Socio,
 )
 from permisos import Acceso, Accion, Seccion
 from schemas import (
-    AsignacionDietaOut, AsignarDietaRequest, ComidaOut, DietaCrear,
-    DietaEditarRequest, DietaOut,
+    AsignacionDietaOut, AsignarDietaRequest, CatalogoComidaOut, ComidaOut,
+    DietaCrear, DietaEditarRequest, DietaOut,
 )
 from security import Sesion, requiere_accion, requiere_seccion
 
@@ -110,10 +110,24 @@ def _resolver_nutricionista(db: Session, sesion: Sesion, id_pedido: int | None) 
     return nutri
 
 
+def _a_comida_out(c) -> ComidaOut:
+    """El nombre, la descripción y las calorías salen del catálogo (el plato)."""
+    cat = c.catalogo
+    return ComidaOut(
+        id_comida=c.id_comida,
+        dia=c.dia,
+        momento=c.momento,
+        id_catalogo_comida=c.id_catalogo_comida,
+        nombre=cat.nombre if cat else "?",
+        descripcion=cat.descripcion if cat else None,
+        calorias=cat.calorias if cat else None,
+    )
+
+
 def _a_dieta_out(dieta: Dieta, con_comidas: bool = True) -> DietaOut:
     comidas = []
     if con_comidas:
-        comidas = [ComidaOut.model_validate(c)
+        comidas = [_a_comida_out(c)
                    for c in sorted(dieta.comidas, key=_clave_orden_comida)]
 
     return DietaOut(
@@ -134,6 +148,26 @@ def _a_dieta_out(dieta: Dieta, con_comidas: bool = True) -> DietaOut:
 # =============================================================================
 # DIETAS
 # =============================================================================
+
+@router.get("/catalogo-comidas", response_model=list[CatalogoComidaOut])
+def listar_catalogo_comidas(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.NUTRICION)),
+):
+    """
+    El catálogo de platos con el que el nutricionista arma las dietas. Cada
+    Comida de una dieta apunta a uno de estos; el nombre y las calorías salen
+    de acá y no se repiten en la Comida.
+
+    Va ANTES de la ruta /{id_dieta} a propósito: FastAPI resuelve por orden de
+    declaración, y si estuviera después leería "catalogo-comidas" como un id.
+    """
+    platos = (db.query(CatalogoComida)
+              .filter(CatalogoComida.activo.is_(True))
+              .order_by(CatalogoComida.nombre)
+              .all())
+    return [CatalogoComidaOut.model_validate(p) for p in platos]
+
 
 @router.get("", response_model=list[DietaOut])
 def listar_dietas(
@@ -189,8 +223,7 @@ def crear_dieta(
             id_dieta=dieta.id_dieta,
             dia=c.dia,
             momento=c.momento,
-            descripcion=c.descripcion,
-            calorias=c.calorias,
+            id_catalogo_comida=c.id_catalogo_comida,
         ))
 
     db.commit()
@@ -259,7 +292,7 @@ def asignar_dieta(
     asignacion = AsignacionDieta(
         id_socio=socio.id_socio,
         id_dieta=id_dieta,
-        id_nutricionista=dieta.id_nutricionista,
+        # id_nutricionista ya no vive en la asignación: sale de Dieta.
         fecha_inicio=datos.fecha_inicio or hoy,
         fecha_fin=datos.fecha_fin,
         estado="ACTIVA",

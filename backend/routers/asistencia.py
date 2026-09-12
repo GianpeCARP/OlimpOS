@@ -32,7 +32,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Asistencia, Deuda, Membresia, Socio
+from models import Asistencia, Membresia, Socio
 from permisos import Acceso, Seccion
 from schemas import (
     AsistenciaOut, FicharRequest, FicharResponse, MetodoRegistro,
@@ -86,15 +86,9 @@ def _revisar_situacion(db: Session, socio: Socio) -> str | None:
         dias = (hoy - vigente.fecha_vencimiento).days
         return f"La cuota venció hace {dias} día(s) ({vigente.fecha_vencimiento})."
 
-    deuda = (
-        db.query(Deuda)
-        .filter(Deuda.id_socio == socio.id_socio, Deuda.estado == "PENDIENTE")
-        .all()
-    )
-    if deuda:
-        total = sum(float(d.monto) for d in deuda)
-        return f"Tiene {len(deuda)} deuda(s) pendiente(s) por ${total:,.2f}."
-
+    # Ya no hay chequeo de tabla Deuda: se eliminó del esquema. El estado
+    # "debe" es derivable, y las dos condiciones de arriba (sin membresía
+    # activa / cuota vencida) ya lo cubren enteramente.
     return None
 
 

@@ -1,14 +1,55 @@
 # OlimpOS — contexto del proyecto
 
+> ## ⚠️ ACTUALIZACIÓN 2026-09-12 — LEER ESTO PRIMERO (supersede lo de abajo)
+>
+> Hubo dos cambios grandes que dejan desactualizadas varias partes de este
+> archivo. Lo que sigue manda sobre cualquier cosa que lo contradiga más abajo:
+>
+> **1. Reorganización de carpetas.** La raíz ahora es:
+> ```
+> D:\OlimpOs\
+> ├── backend/            API FastAPI (una sola, para las dos apps)
+> ├── db/                 schema.sql + seed.sql DEFINITIVOS (compartidos)
+> ├── docs/               guías, RESUMEN, dbml, PDF, vulnerabilidades; docs/specs/
+> ├── Flet/Proyecto/      app de escritorio (Flet) — antes Proyeto-Python/Proyecto
+> ├── Proyecto - PWA/     la PWA React — antes Proyecto/  (adentro: src/, docs/, openspec/)
+> └── CLAUDE.md
+> ```
+> Sustituciones a aplicar mentalmente en TODO este archivo:
+> `Proyeto-Python/Proyecto` → `Flet/Proyecto`; la PWA `Proyecto/` → `Proyecto - PWA/`;
+> el DDL `Proyecto/db/schema.sql` → `db/schema.sql`. Se eliminó `Proyecto - PWA/db/`
+> (schema/seed viejos + migrations): la fuente de verdad es `db/`.
+>
+> **2. Esquema de base NUEVO (41 tablas, no 37).** Neon se reconstruyó desde cero
+> con `db/schema.sql` + `db/seed.sql` y el backend se sincronizó. Cambios de fondo:
+> - **NO existe la tabla `Deuda`** (ni router, ni `deudas.py`, ni `generar_deudas`).
+>   El estado "debe" se DERIVA de no tener membresía vigente. Prepago puro.
+> - **`clases_restantes` no se guarda**: se cuenta `Reserva` (ver `clases_restantes_de`
+>   en `routers/actividades.py`). Cancelar libera la clase por dejar de contar.
+> - **Promoción sólo porcentual** (se eliminó el monto fijo) y se movió de `Membresia`
+>   a **`Pago`** (`id_promocion` + `monto_descuento`).
+> - **Clase suelta = un `Plan_Actividad` con `tipo_limite=CLASE_SUELTA`**, no una
+>   columna `precio_clase_suelta` de Actividad.
+> - Contacto de emergencia → tabla `Contacto_Emergencia`; franja del recepcionista →
+>   FK `Franja_Laboral`; `Comida` obligatoriamente del `Catalogo_Comida`.
+> - `Congelamiento` cuelga de la membresía (sin `id_socio`), con `origen`; los días se
+>   derivan de las fechas. Nuevas tablas: `Contacto_Emergencia`, `Franja_Laboral`,
+>   `Registro_Ejercicio`, `Catalogo_Comida`, `Registro_Comida`.
+>
+> **Estado**: backend sincronizado, booteando, con las **8 suites en verde**
+> (`test_deudas` se retiró: probaba una feature eliminada). **Flet y PWA todavía NO
+> están adaptados** a estos cambios de contrato — es lo que queda pendiente.
+> El detalle del recorrido está en `docs/RESUMEN-PARA-CLAUDE-CODE.md`.
+
+---
+
 Sistema de gestión para un gimnasio. **Son dos aplicaciones del mismo producto**, no
 dos productos distintos:
 
 | App | Carpeta | Quién la usa | Stack |
 |---|---|---|---|
-| **PWA web** | `Proyecto/` | Los **socios**, desde el navegador | React + TypeScript + Vite + Tailwind |
-| **App de escritorio** | `Proyeto-Python/Proyecto/` | El **personal** del gimnasio | Python + **Flet 0.84.0** |
-
-> Ojo: la carpeta se llama `Proyeto-Python` (sin la "c"). No es un error de tipeo tuyo.
+| **PWA web** | `Proyecto - PWA/` | Los **socios**, desde el navegador | React + TypeScript + Vite + Tailwind |
+| **App de escritorio** | `Flet/Proyecto/` | El **personal** del gimnasio | Python + **Flet 0.84.0** |
 
 **Las dos tienen que verse casi idénticas.** Es una decisión del dueño del proyecto,
 no una sugerencia. Ambas usan la paleta **"Kinetic Carbon"**.
@@ -20,8 +61,8 @@ no una sugerencia. Ambas usan la paleta **"Kinetic Carbon"**.
 El mismo set de colores vive en **dos archivos**. Si cambiás uno solo, las apps dejan
 de ser la misma marca:
 
-- PWA → `Proyecto/src/frontend/src/index.css` (bloque `@theme`) y `config.ts`
-- Flet → `Proyeto-Python/Proyecto/app/config.py` (clase `Colors`)
+- PWA → `Proyecto - PWA/src/frontend/src/index.css` (bloque `@theme`) y `config.ts`
+- Flet → `Flet/Proyecto/app/config.py` (clase `Colors`)
 
 Colores clave: fondo `#15171C`, tarjetas `#1C1F26`, acento **volt** `#C6F135`.
 El volt es casi amarillo: **encima siempre va texto oscuro**, nunca blanco.
@@ -36,8 +77,7 @@ componente `.tsx` de la PWA es gemelo. Si tocás uno, mirá el otro.
 **Las dos apps están terminadas y funcionando contra la API real.**
 
 - La PWA tiene implementada la extensión completa de Actividades (planes por mes o
-  por semana, clases sueltas, asistencia, cobros), según
-  `Proyecto/especificacion_definitiva_actividades.md`.
+  por semana, clases sueltas —ahora como plan `CLASE_SUELTA`—, asistencia, cobros).
 - **Historial médico** (patologías) en las dos apps: catálogo compartido y
   condiciones por socio. Del lado del personal cuelga de Socios; del lado del
   socio, de "Mi perfil" (`MisCondicionesCard`), donde él mismo puede
@@ -66,9 +106,9 @@ componente `.tsx` de la PWA es gemelo. Si tocás uno, mirá el otro.
 
 **El backend ya existe** y las dos apps están cableadas contra él. Es **Python +
 FastAPI** sobre Neon (decisión ya tomada, no revisitar; no va a ser Node), en
-`backend/`, con **138 endpoints en 15 routers** y **37 tablas** modeladas. El
-DDL (`Proyecto/db/schema.sql`) y Neon coinciden nombre por nombre: si agregás
-una tabla en uno, va en el otro.
+`backend/`, con **~135 endpoints** y **41 tablas** modeladas (ver el bloque de
+actualización del 2026-09-12 arriba). El DDL (`db/schema.sql`) y Neon coinciden
+nombre por nombre: si agregás una tabla en uno, va en el otro.
 
 Las tres cosas que este archivo daba por pendientes YA NO LO ESTÁN, y conviene
 saberlo porque las notas viejas pedían explícitamente no tocarlas:
@@ -149,7 +189,7 @@ Todas se encontraron **corriendo la app**, no leyendo el código:
    asimetrías entre gemelas, no decisiones. Antes de dar por buena una vista:
 
    ```bash
-   python pruebas_vistas.py     # desde Proyeto-Python/Proyecto
+   python pruebas_vistas.py     # desde Flet/Proyecto
    ```
 
    Entra con cada rol y llama a `build()` de cada sección que ese rol ve (25
@@ -194,8 +234,8 @@ recorta el sistema a un círculo del 80%, así que su contenido debe caber en el
 56% del lado — y un archivo que cumple eso se ve diminuto usado como icono
 normal. Los `any` van transparentes; el de iOS va **con** fondo porque iOS
 compone la transparencia sobre negro. Se regeneran con
-`Proyecto/src/frontend/scripts/generar_iconos.ps1` desde el logo de
-`Proyeto-Python/Proyecto/assets/`.
+`Proyecto - PWA/src/frontend/scripts/generar_iconos.ps1` desde el logo de
+`Flet/Proyecto/assets/`.
 
 **`devOptions` del plugin PWA queda APAGADO.** Sobre HTTP no habilita instalar
 nada igual (hace falta contexto seguro) y el service worker cachea código viejo
@@ -332,14 +372,14 @@ nueva**: el alta devuelve la contraseña temporal UNA sola vez.
 > ejecución con un `ReferenceError` por TDZ (el array se evalúa DURANTE el
 > render).
 
-**PWA** (desde `Proyecto/src/frontend`):
+**PWA** (desde `Proyecto - PWA/src/frontend`):
 ```bash
 npx tsc --noEmit -p tsconfig.app.json   # ojo: SIN -p no compila nada y siempre da OK
 npx oxlint src/
 npx tsc --build --force
 ```
 
-**Flet** (desde `Proyeto-Python/Proyecto`):
+**Flet** (desde `Flet/Proyecto`):
 ```bash
 python -m compileall -q app main.py   # NO alcanza: ver la trampa 7
 python pruebas_vistas.py              # build() de cada vista con cada rol
@@ -408,14 +448,16 @@ de entrega; `pruebas/escenario_demo.py` la vuelve a llenar.
 está.** Un "no muestra nada" puede ser un bug de la pantalla o simplemente la
 base de entrega, y son dos investigaciones muy distintas.
 
-### 2. Hay borrados sin commitear que NO son de la sesión
+### 2. `git status` trae muchos cambios sin commitear que NO son de tu sesión
 
-`git status` muestra 17 archivos como borrados desde hace varias sesiones:
-`VIEJO/`, `Proyeto-Python/ProyectoDB/` y las fuentes `Syne/`. Son del dueño del
-proyecto y **están sin decidir**: o se commitea la limpieza, o se restauran.
+Tras la reorganización de carpetas del 2026-09-12 y la sincronización del
+backend hay **muchísimos** cambios sin commitear (movimientos de `db/`, `docs/`,
+`Flet/`, `Proyecto - PWA/`, borrado del `db/` viejo de la PWA, y todo el backend
+tocado). Están **sin decidir**: es el dueño del proyecto quien commitea.
 
-No los toques por tu cuenta. Y ojo con `git add -A` o `git commit -a`: se los
-lleva puestos sin preguntar. Agregá siempre los archivos explícitos que tocaste.
+No commitees por tu cuenta salvo que te lo pidan. Y ojo con `git add -A` o
+`git commit -a`: se llevan puesto el `.git.repo-viejo-backup` del sub-repo Flet
+y cualquier cosa a medio decidir. Agregá siempre los archivos explícitos que tocaste.
 
 ---
 
@@ -424,12 +466,12 @@ lleva puestos sin preguntar. Agregá siempre los archivos explícitos que tocast
 - Monorepo (las dos apps) → `github.com/GianpeCARP/OlimpOS`
 - Sólo el Flet → `github.com/GianpeCARP/Proyecto`
 
-`Proyeto-Python/Proyecto` era un repo propio y **su `.git` está renombrado a
+`Flet/Proyecto` era un repo propio y **su `.git` está renombrado a
 `.git.repo-viejo-backup`**. Si lo restaurás, el monorepo vuelve a verlo como submódulo
 vacío y se rompe la subida. Para commitear y pushear ahí **sin restaurarlo**:
 
 ```bash
-cd "D:/OlimpOs/Proyeto-Python/Proyecto"
+cd "D:/OlimpOs/Flet/Proyecto"
 export GIT_DIR="$PWD/.git.repo-viejo-backup" GIT_WORK_TREE="$PWD"
 git add <archivos-explicitos>    # NUNCA "git add -A": mete el .git.repo-viejo-backup entero
 git commit -m "..."
@@ -450,21 +492,21 @@ git push origin main
 - **Soft-delete siempre con los dos caminos**: baja *y* reactivación desde el principio.
 - **Al cambiar el estado de una entidad, decidir qué pasa con todo lo que la referencia**
   (cascadas). Varios bugs reales salieron de ahí.
-- La documentación en `Proyecto/docs/*.md` está **citada más de 100 veces desde los
+- La documentación en `Proyecto - PWA/docs/*.md` está **citada más de 100 veces desde los
   comentarios del código** como justificación de decisiones. No borrarla.
 
 ---
 
 ## Dónde está el historial detallado
 
-Este archivo es el resumen. El detalle fino (bugs cerrados, auditorías, decisiones
-puntuales) vive en la memoria de Claude Code:
+Este archivo es el resumen. El detalle fino vive en varios lugares:
 
-```
-C:\Users\Pardini\.claude\projects\D--OlimpOs-Proyecto\memory\
-```
+- **`docs/RESUMEN-PARA-CLAUDE-CODE.md`** — qué cambió en el esquema nuevo y por qué.
+- **`backend/BITACORA.md`** — el recorrido completo del backend (secciones §1–§15).
+- La **memoria de Claude Code**, en `C:\Users\Pardini\.claude\projects\<carpeta>\memory\`,
+  donde `<carpeta>` deriva del directorio donde abrís la sesión (p. ej.
+  `D--OlimpOs` si abrís en `D:\OlimpOs`). OJO: la memoria vieja bajo
+  `D--OlimpOs-Proyecto` era de cuando la PWA estaba en `D:\OlimpOs\Proyecto`, carpeta
+  que ya no existe (hoy es `Proyecto - PWA`).
 
-Esa memoria **sólo se carga si abrís la sesión parada en `D:\OlimpOs\Proyecto`**. Este
-`CLAUDE.md`, en cambio, se levanta desde cualquier carpeta del repo. Si necesitás el
-detalle de algo puntual, leé el archivo correspondiente de esa carpeta; no hace falta
-leerla entera.
+Este `CLAUDE.md` se levanta desde cualquier carpeta del repo.

@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import (
-    Actividad, Asistencia, Deuda, Membresia, Persona, Reserva, Socio, Turno,
+    Actividad, Asistencia, Membresia, Persona, Reserva, Socio, Turno,
 )
 from permisos import Acceso, Seccion
 from schemas import (
@@ -79,19 +79,9 @@ def _alerta_de_socio(db: Session, socio: Socio) -> str | None:
     if not socio.activo:
         return "Socio dado de baja."
 
-    # La DEUDA se consulta primero y gana sobre todo lo demás.
-    #
-    # Antes se miraba al final, así que a un socio con la cuota vencida Y una
-    # deuda generada el mostrador le decía "Sin membresía activa" — cierto,
-    # pero inútil: eso ya se deduce. Lo accionable es cuánto debe, que es lo
-    # que hay que cobrarle cuando lo tiene enfrente.
-    deuda = (db.query(func.coalesce(func.sum(Deuda.monto), 0))
-             .filter(Deuda.id_socio == socio.id_socio,
-                     Deuda.estado == "PENDIENTE")
-             .scalar()) or 0
-    if deuda > 0:
-        return f"Debe ${deuda:,.0f}."
-
+    # Ya no hay tabla Deuda: el estado "debe" es derivable de la membresía. La
+    # alerta accionable para el mostrador es, entonces, si la cuota está
+    # vencida o por vencer (más abajo) o si no tiene ninguna activa.
     membresia = (db.query(Membresia)
                  .filter(Membresia.id_socio == socio.id_socio,
                          Membresia.estado == "ACTIVA")
@@ -148,7 +138,7 @@ def _a_turno_de_panel(db: Session, turno: Turno, actividad: Actividad,
                 dni=socio.persona.dni,
                 estado=estado_de_reserva(
                     r, turno, actividad, r.id_reserva in acreditadas, ahora),
-                es_clase_suelta=bool(r.es_clase_suelta),
+                es_clase_suelta=(r.id_inscripcion is None),
                 alerta=_alerta_de_socio(db, socio),
             ))
         # Los que faltan llegar primero: son sobre los que el mostrador puede
@@ -301,7 +291,7 @@ def _inscriptos_de(db: Session, turno: Turno, actividad: Actividad,
             dni=r.socio.persona.dni,
             estado=estado_de_reserva(
                 r, turno, actividad, r.id_reserva in acreditadas, ahora),
-            es_clase_suelta=bool(r.es_clase_suelta),
+            es_clase_suelta=(r.id_inscripcion is None),
             alerta=_alerta_de_socio(db, r.socio),
         ))
     return salida
@@ -357,11 +347,6 @@ def buscar(
         else:
             estado = "Activa"
 
-        deuda = (db.query(func.coalesce(func.sum(Deuda.monto), 0))
-                 .filter(Deuda.id_socio == socio.id_socio,
-                         Deuda.estado == "PENDIENTE")
-                 .scalar()) or 0
-
         # Su próximo turno, para poder decirle "tenés Yoga a las 19" sin que
         # el recepcionista abra la agenda.
         proximo = None
@@ -386,7 +371,7 @@ def buscar(
             activo=bool(socio.activo),
             estado_membresia=estado,
             vencimiento=membresia.fecha_vencimiento if membresia else None,
-            deuda_total=float(deuda),
+            deuda_total=0.0,   # sin tabla Deuda: el estado "debe" es derivable
             proximo_turno=proximo,
             alerta=_alerta_de_socio(db, socio),
         ))

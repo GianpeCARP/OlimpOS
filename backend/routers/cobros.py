@@ -32,14 +32,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from database import get_db
-from deudas import generar_deudas
 from models import (
-    Deuda, InscripcionActividad, Membresia, Pago, PlanActividad, Promocion,
+    InscripcionActividad, Membresia, Pago, PlanActividad, Promocion,
     Socio, TipoMembresia,
 )
 from permisos import Acceso, Accion, Seccion
 from schemas import (
-    CobrarRequest, CobroResponse, DeudaOut, EstadoCuentaOut, GeneracionDeudasOut, InscripcionOut, MembresiaOut, PagarDeudaRequest, PagoOut, TipoMembresiaCrear, TipoMembresiaOut,
+    CobrarRequest, CobroResponse, EstadoCuentaOut, InscripcionOut, MembresiaOut,
+    PagoOut, TipoMembresiaCrear, TipoMembresiaOut,
 )
 from security import Sesion, requiere_accion, requiere_seccion
 
@@ -99,20 +99,6 @@ def _a_membresia_out(m: Membresia) -> MembresiaOut:
         fecha_vencimiento=m.fecha_vencimiento,
         estado=m.estado,
         dias_restantes=dias,
-    )
-
-
-def _a_deuda_out(d: Deuda) -> DeudaOut:
-    return DeudaOut(
-        id_deuda=d.id_deuda,
-        id_socio=d.id_socio,
-        socio=_nombre_socio(d.socio),
-        monto=float(d.monto),
-        fecha_generacion=d.fecha_generacion,
-        fecha_vencimiento=d.fecha_vencimiento,
-        estado=d.estado,
-        generada_automaticamente=bool(d.generada_automaticamente),
-        observaciones=d.observaciones,
     )
 
 
@@ -211,13 +197,6 @@ def estado_cuenta(
 
     vigente = _membresia_vigente(db, id_socio)
 
-    deudas = (
-        db.query(Deuda)
-        .filter(Deuda.id_socio == id_socio, Deuda.estado == "PENDIENTE")
-        .order_by(Deuda.fecha_generacion)
-        .all()
-    )
-
     pagos = (
         db.query(Pago)
         .filter(Pago.id_socio == id_socio)
@@ -228,34 +207,21 @@ def estado_cuenta(
 
     db.commit()   # persiste los VENCIDA que marcó _membresia_vigente
 
+    # "Al día" es, sencillamente, tener una membresía vigente. NO existe una
+    # tabla de deudas: la política es prepago y el estado "debe" es derivable
+    # —no hay una membresía activa sin vencer—, así que no hay monto que sumar
+    # ni lista de deudas que devolver. Los campos deudas/deuda_total se
+    # mantienen en la respuesta (por compatibilidad con las apps) pero vacíos.
     return EstadoCuentaOut(
         id_socio=socio.id_socio,
         socio=_nombre_socio(socio),
         numero_socio=socio.numero_socio,
         membresia_actual=_a_membresia_out(vigente) if vigente else None,
-        # "Al día" es tener membresía vigente Y no deber nada. Las dos
-        # condiciones: alguien puede tener la cuota paga del mes y arrastrar
-        # una deuda vieja.
-        al_dia=bool(vigente) and not deudas,
-        deuda_total=float(sum(d.monto for d in deudas)),
-        deudas=[_a_deuda_out(d) for d in deudas],
+        al_dia=bool(vigente),
+        deuda_total=0.0,
+        deudas=[],
         ultimos_pagos=[_a_pago_out(p) for p in pagos],
     )
-
-
-@router.get("/deudas", response_model=list[DeudaOut])
-def listar_deudas(
-    db: Session = Depends(get_db),
-    sesion: Sesion = Depends(requiere_seccion(Seccion.COBROS)),
-):
-    """Todas las deudas pendientes del gimnasio, la más vieja primero."""
-    deudas = (
-        db.query(Deuda)
-        .filter(Deuda.estado == "PENDIENTE")
-        .order_by(Deuda.fecha_generacion)
-        .all()
-    )
-    return [_a_deuda_out(d) for d in deudas]
 
 
 # =============================================================================
@@ -271,14 +237,17 @@ def cobrar(
     """
     Registra un cobro de membresía. Es la operación central del mostrador.
 
-    Hace tres cosas en UNA transacción:
+    Hace dos cosas en UNA transacción:
       1. Crea la Membresía nueva (o la renovación).
-      2. Registra el Pago.
-      3. Si el socio debía, salda las deudas con ese pago.
+      2. Registra el Pago (con la promoción aplicada, si hubo).
 
     Que sea atómico importa más acá que en ningún otro lado: un cobro
     registrado sin membresía deja al socio pagando sin acceso, y una membresía
     sin pago le regala el mes.
+
+    Ya no hay paso de "saldar deudas": el esquema eliminó la tabla Deuda. El
+    estado "debe" es derivable de no tener membresía vigente, y renovar acá lo
+    resuelve por definición.
     """
     socio = db.get(Socio, datos.id_socio)
     if socio is None:
@@ -400,11 +369,6 @@ def cobrar(
     membresia = Membresia(
         id_socio=socio.id_socio,
         id_tipo_membresia=tipo.id_tipo_membresia,
-        # Se guarda CUAL promo se aplico, ademas del precio ya descontado. El
-        # precio solo no alcanza: dentro de seis meses, "$24.000 en vez de
-        # $30.000" no dice si fue un descuento, un error de tipeo o un precio
-        # pactado a mano. Con la FK, la respuesta esta en la fila.
-        id_promocion=promocion.id_promocion if promocion else None,
         precio_pactado=precio,
         fecha_inicio=inicio,
         fecha_vencimiento=inicio + timedelta(days=tipo.duracion_dias),
@@ -414,6 +378,11 @@ def cobrar(
     db.flush()
 
     # --- 2. Pago ------------------------------------------------------------
+    # La promoción aplicada y los pesos descontados se guardan en el PAGO (no
+    # en la membresía). El precio solo no alcanza: dentro de seis meses,
+    # "$24.000 en vez de $30.000" no dice si fue un descuento, un error de
+    # tipeo o un precio pactado a mano. Con la FK y monto_descuento, la
+    # respuesta está en la fila.
     pago = Pago(
         id_socio=socio.id_socio,
         id_membresia=membresia.id_membresia,
@@ -426,15 +395,17 @@ def cobrar(
         es_adelanto=es_adelanto,
         estado="CONFIRMADO",
         numero_comprobante=datos.numero_comprobante,
+        id_promocion=promocion.id_promocion if promocion else None,
+        monto_descuento=descuento_aplicado if promocion else None,
     )
     db.add(pago)
     db.flush()
 
     # --- 3. Abono de actividad (opcional) -----------------------------------
-    # Va en la misma transacción porque Inscripcion_Actividad.id_membresia es
-    # NOT NULL: el abono se cuelga de la membresía que se acaba de crear. Si
-    # fueran dos pedidos, entre uno y otro habría una ventana donde el plan
-    # quedó pago sin membresía a la que atarse.
+    # La inscripción ya NO cuelga de la membresía (Inscripcion_Actividad perdió
+    # id_membresia): es del socio. Igual se sigue creando en la misma
+    # transacción y con la misma vigencia que la membresía, para que un abono
+    # nunca sobreviva a la cuota que da acceso al gimnasio.
     inscripcion = None
     inscripcion_out = None
     if datos.id_plan_actividad is not None:
@@ -448,18 +419,12 @@ def cobrar(
                 detail=f"El plan '{plan.nombre}' está dado de baja y no se puede vender.",
             )
 
-        # El abono vence junto con la membresía, no a los 30 días de hoy: si
-        # la membresía cubre más, los días de diferencia van sin cargo. Un
-        # abono que sobreviva a la membresía dejaría al socio con clases
-        # disponibles y sin derecho a entrar al gimnasio.
         inscripcion = InscripcionActividad(
             id_socio=socio.id_socio,
             id_plan_actividad=plan.id_plan_actividad,
-            id_membresia=membresia.id_membresia,
             precio_pactado=float(plan.precio),
             fecha_inicio=membresia.fecha_inicio,
             fecha_vencimiento=membresia.fecha_vencimiento,
-            clases_restantes=plan.cantidad,
             estado="ACTIVA",
         )
         db.add(inscripcion)
@@ -469,29 +434,20 @@ def cobrar(
         pago.monto = precio
         pago.id_inscripcion = inscripcion.id_inscripcion
 
+        # Recién comprada, no consumió nada: las clases que le quedan son el
+        # total del plan (para POR_MES). El consumo se cuenta contando Reserva,
+        # no un contador materializado — ver clases_restantes_de en actividades.
+        restantes = plan.cantidad if plan.tipo_limite == "POR_MES" else None
         inscripcion_out = InscripcionOut(
             id_inscripcion=inscripcion.id_inscripcion,
             actividad=plan.actividad.nombre if plan.actividad else "?",
             plan=plan.nombre,
             tipo_limite=plan.tipo_limite,
-            clases_restantes=inscripcion.clases_restantes,
+            clases_restantes=restantes,
             fecha_inicio=inscripcion.fecha_inicio,
             fecha_vencimiento=inscripcion.fecha_vencimiento,
             precio_pactado=float(inscripcion.precio_pactado),
         )
-
-    # --- 4. Deudas ----------------------------------------------------------
-    saldadas = []
-    if datos.saldar_deudas:
-        pendientes = (
-            db.query(Deuda)
-            .filter(Deuda.id_socio == socio.id_socio, Deuda.estado == "PENDIENTE")
-            .all()
-        )
-        for d in pendientes:
-            d.estado = "PAGADA"
-            d.id_pago_cancelatorio = pago.id_pago
-            saldadas.append(d)
 
     db.commit()
     db.refresh(pago)
@@ -500,21 +456,17 @@ def cobrar(
     partes = [f"Cobro registrado: ${precio:,.2f} a {_nombre_socio(socio)}."]
     if inscripcion_out:
         partes.append(
-            f"Incluye el abono {inscripcion_out.plan} de {inscripcion_out.actividad} "
-            f"({inscripcion_out.clases_restantes} clases), vigente hasta el "
-            f"{inscripcion_out.fecha_vencimiento}."
+            f"Incluye el abono {inscripcion_out.plan} de {inscripcion_out.actividad}, "
+            f"vigente hasta el {inscripcion_out.fecha_vencimiento}."
         )
     if es_adelanto:
         partes.append(f"Como tenía cuota vigente, el período nuevo arranca el {inicio}.")
-    if saldadas:
-        total_deudas = sum(float(d.monto) for d in saldadas)
-        partes.append(f"Se saldaron {len(saldadas)} deuda(s) por ${total_deudas:,.2f}.")
 
     return CobroResponse(
         pago=_a_pago_out(pago),
         membresia=_a_membresia_out(membresia),
         inscripcion=inscripcion_out,
-        deudas_saldadas=[_a_deuda_out(d) for d in saldadas],
+        deudas_saldadas=[],
         total=precio,
         mensaje=" ".join(partes),
         promocion=promocion.nombre if promocion else None,
@@ -532,9 +484,8 @@ def anular_pago(
     """
     Anula un pago mal registrado. NO lo borra.
 
-    Al anularlo se cancela también la membresía que ese pago habilitó y
-    vuelven a quedar pendientes las deudas que había saldado: si no, anular un
-    cobro le dejaría al socio el mes pago y las deudas perdonadas de arriba.
+    Al anularlo se cancela también la membresía que ese pago habilitó: si no,
+    anular un cobro le dejaría al socio el mes pago de arriba.
     """
     pago = db.get(Pago, id_pago)
     if pago is None:
@@ -552,100 +503,6 @@ def anular_pago(
     if pago.membresia is not None:
         pago.membresia.estado = "CANCELADA"
 
-    revividas = db.query(Deuda).filter(Deuda.id_pago_cancelatorio == pago.id_pago).all()
-    for d in revividas:
-        d.estado = "PENDIENTE"
-        d.id_pago_cancelatorio = None
-
     db.commit()
     db.refresh(pago)
     return _a_pago_out(pago)
-
-
-@router.post("/deudas/{id_deuda}/pagar", response_model=PagoOut,
-             status_code=status.HTTP_201_CREATED)
-def pagar_deuda(
-    id_deuda: int,
-    datos: PagarDeudaRequest,
-    db: Session = Depends(get_db),
-    sesion: Sesion = Depends(requiere_accion(Accion.COBRAR_PAGOS)),
-):
-    """
-    Cobra UNA deuda puntual, sin renovar la membresía.
-
-    Es distinto del cobro normal —que salda todas las deudas de arrastre— y
-    hace falta porque el mostrador a veces cobra solo lo adeudado: alguien que
-    viene a ponerse al día pero todavía no renueva.
-
-    El monto lo pone la deuda, no el cliente: cobrar $1 una deuda de $30.000
-    sería tan grave acá como en el cobro de membresía.
-
-    `id_pago_cancelatorio` deja la relación 1 a 1 entre la deuda y el pago que
-    la canceló. Es lo que permite responder después "¿con qué pago se saldó
-    esto?" sin cruzar montos y fechas a ojo.
-    """
-    deuda = db.get(Deuda, id_deuda)
-    if deuda is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La deuda no existe.")
-    if deuda.estado != "PENDIENTE":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Esa deuda ya está {deuda.estado.lower()}.",
-        )
-
-    if datos.numero_comprobante:
-        ya = (db.query(Pago)
-              .filter(Pago.numero_comprobante == datos.numero_comprobante)
-              .first())
-        if ya:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Ya se registró un pago con el comprobante {datos.numero_comprobante}.",
-            )
-
-    socio = deuda.socio
-
-    pago = Pago(
-        id_socio=deuda.id_socio,
-        id_membresia=deuda.id_membresia,
-        id_sede=socio.id_sede if socio else None,
-        metodo=datos.metodo.value,
-        monto=deuda.monto,
-        fecha_pago=datetime.now(),
-        estado="CONFIRMADO",
-        numero_comprobante=datos.numero_comprobante,
-    )
-    db.add(pago)
-    db.flush()
-
-    deuda.estado = "PAGADA"
-    deuda.id_pago_cancelatorio = pago.id_pago
-
-    db.commit()
-    db.refresh(pago)
-    return _a_pago_out(pago)
-
-
-@router.post("/deudas/generar", response_model=GeneracionDeudasOut)
-def generar_deudas_pendientes(
-    db: Session = Depends(get_db),
-    sesion: Sesion = Depends(requiere_accion(Accion.GESTION_DEUDAS)),
-):
-    """
-    Genera las deudas de las cuotas vencidas que nadie renovó.
-
-    El backend ya la corre al arrancar y es idempotente, así que este endpoint
-    no puede duplicar nada. Existe para el caso de un servidor que lleva
-    semanas sin reiniciarse: sin él, habría que reiniciarlo para que el
-    gimnasio se entere de quién le debe.
-    """
-    r = generar_deudas(db)
-    if r["creadas"]:
-        mensaje = (f"Se generaron {r['creadas']} deuda(s) por "
-                   f"${r['monto_total']:,.2f} en total.")
-    elif r["revisadas"] == 0:
-        mensaje = "No hay cuotas vencidas. Nadie debe nada."
-    else:
-        mensaje = (f"Se revisaron {r['revisadas']} cuota(s) vencida(s) y todas "
-                   f"ya estaban al día o con su deuda generada.")
-    return GeneracionDeudasOut(**r, mensaje=mensaje)

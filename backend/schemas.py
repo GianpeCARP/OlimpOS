@@ -410,28 +410,14 @@ class TipoMembresiaOut(BaseModel):
 class PromocionBase(BaseModel):
     nombre: str = Field(min_length=2, max_length=100)
     descripcion: str | None = None
-    porcentaje_descuento: float | None = Field(default=None, gt=0, le=100)
-    monto_fijo_descuento: float | None = Field(default=None, gt=0)
+    # El descuento es SIEMPRE porcentual (obligatorio). El monto fijo se
+    # eliminó por decisión comercial — ver el schema de la base.
+    porcentaje_descuento: float = Field(gt=0, le=100)
     fecha_inicio: date
     fecha_fin: date
     # None = vale en todas las sedes. Con una sede sola hoy da igual, pero la
     # columna existe y llenarla mal ahora obligaría a migrar después.
     id_sede: int | None = None
-
-    @model_validator(mode="after")
-    def _una_sola_forma_de_descuento(self):
-        tiene_porcentaje = self.porcentaje_descuento is not None
-        tiene_monto = self.monto_fijo_descuento is not None
-        if tiene_porcentaje and tiene_monto:
-            raise ValueError(
-                "Elegí una sola forma de descuento: porcentaje O monto fijo, "
-                "no las dos."
-            )
-        if not tiene_porcentaje and not tiene_monto:
-            raise ValueError(
-                "La promoción necesita un descuento: un porcentaje o un monto fijo."
-            )
-        return self
 
     @model_validator(mode="after")
     def _la_ventana_tiene_sentido(self):
@@ -455,7 +441,6 @@ class PromocionOut(BaseModel):
     nombre: str
     descripcion: str | None = None
     porcentaje_descuento: float | None = None
-    monto_fijo_descuento: float | None = None
     fecha_inicio: date
     fecha_fin: date
     id_sede: int | None = None
@@ -604,6 +589,7 @@ class EstadoCuentaOut(BaseModel):
 class TipoLimite(str, Enum):
     POR_SEMANA = "POR_SEMANA"
     POR_MES = "POR_MES"
+    CLASE_SUELTA = "CLASE_SUELTA"
 
 
 class EstadoTurno(str, Enum):
@@ -639,7 +625,8 @@ class ActividadOut(BaseModel):
     nombre: str
     descripcion: str | None = None
     cupo_default: int
-    precio_clase_suelta: float
+    # precio_clase_suelta ya no es de Actividad: la clase suelta es un
+    # Plan_Actividad (tipo_limite CLASE_SUELTA). Su precio sale de ahí.
     horas_anticipacion_cancelacion: int
     # Minutos de gracia para llegar. Sale en la respuesta porque el panel del
     # mostrador lo muestra ("vence a las 19:15") y la pantalla de Actividades
@@ -657,8 +644,7 @@ class ActividadCrear(BaseModel):
     minutos_tolerancia: int = Field(default=15, ge=0, le=180)
     # gt=0 y no ge=0: una clase con cupo cero no la puede tomar nadie.
     cupo_default: int = Field(ge=1)
-    # El precio SÍ puede ser 0 — una actividad incluida en la cuota.
-    precio_clase_suelta: float = Field(ge=0)
+    # La clase suelta se carga como un Plan_Actividad, no acá.
     horas_anticipacion_cancelacion: int = Field(default=0, ge=0)
 
 
@@ -1070,20 +1056,34 @@ class AsignacionRutinaOut(BaseModel):
 # =============================================================================
 
 class ComidaCrear(BaseModel):
+    # El plato SIEMPRE sale del catálogo (Comida.id_catalogo_comida es
+    # obligatorio): ya no se manda descripción/calorías sueltas, se elige un
+    # Catalogo_Comida y de ahí salen nombre y calorías.
     dia: int | None = Field(default=None, ge=1, le=7)
     momento: str | None = Field(default=None, max_length=30)
-    descripcion: str = Field(min_length=1)
-    calorias: int | None = None
+    id_catalogo_comida: int
 
 
 class ComidaOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id_comida: int
     dia: int | None = None
     momento: str | None = None
-    descripcion: str
+    id_catalogo_comida: int
+    # nombre / descripcion / calorias salen del catálogo (el plato), no de la
+    # fila Comida. Se conservan los nombres de campo por compatibilidad.
+    nombre: str
+    descripcion: str | None = None
     calorias: int | None = None
+
+
+class CatalogoComidaOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id_catalogo_comida: int
+    nombre: str
+    descripcion: str | None = None
+    calorias: int | None = None
+    activo: bool
 
 
 class DietaCrear(BaseModel):
@@ -1197,7 +1197,7 @@ class EmpleadoAltaRequest(BaseModel):
     titulo: str | None = None              # Entrenador, Nutricionista, Profesor
     especialidad: str | None = None        # Entrenador, Profesor
     matricula: str | None = None           # Entrenador, Nutricionista
-    turno_laboral: str | None = None       # solo Recepcionista
+    id_franja_laboral: int | None = None    # solo Recepcionista (FK Franja_Laboral)
 
     # --- Cuenta ---
     # Un Profesor no puede tener sesión, así que el router fuerza esto a False
@@ -1217,7 +1217,8 @@ class EmpleadoOut(BaseModel):
     titulo: str | None = None
     especialidad: str | None = None
     matricula: str | None = None
-    turno_laboral: str | None = None
+    turno_laboral: str | None = None       # nombre de la franja
+    id_franja_laboral: int | None = None
     # Aplanados desde Persona, para que la grilla no navegue objetos anidados.
     dni: str
     nombre: str
@@ -1240,7 +1241,7 @@ class EmpleadoEditarRequest(BaseModel):
     titulo: str | None = None
     especialidad: str | None = None
     matricula: str | None = None
-    turno_laboral: str | None = None
+    id_franja_laboral: int | None = None   # solo Recepcionista (FK Franja_Laboral)
 
 
 class BajaEmpleadoRequest(BaseModel):
