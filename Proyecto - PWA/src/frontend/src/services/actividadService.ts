@@ -35,7 +35,7 @@ interface PlanActividadApi {
   id_plan_actividad: number;
   id_actividad: number;
   nombre: string;
-  tipo_limite: 'POR_SEMANA' | 'POR_MES';
+  tipo_limite: 'POR_SEMANA' | 'POR_MES' | 'CLASE_SUELTA';
   cantidad: number;
   precio: number;
   activo: boolean;
@@ -46,7 +46,6 @@ interface ActividadApi {
   nombre: string;
   descripcion?: string | null;
   cupo_default: number;
-  precio_clase_suelta: number;
   horas_anticipacion_cancelacion: number;
   activo: boolean;
   planes: PlanActividadApi[];
@@ -67,7 +66,7 @@ interface InscripcionApi {
   plan: string;
   actividad: string;
   id_actividad: number;
-  tipo_limite: 'POR_SEMANA' | 'POR_MES';
+  tipo_limite: 'POR_SEMANA' | 'POR_MES' | 'CLASE_SUELTA';
   cantidad: number;
   precio_pactado: number;
   fecha_inicio: string;
@@ -148,7 +147,9 @@ function aActividadListada(a: ActividadApi): ActividadListada {
     nombre: a.nombre,
     descripcion: opcional(a.descripcion),
     cupoDefault: a.cupo_default,
-    precioClaseSuelta: a.precio_clase_suelta,
+    // La clase suelta es un plan (tipo_limite CLASE_SUELTA): su precio sale de ahí.
+    precioClaseSuelta:
+      a.planes.find((p) => p.tipo_limite === 'CLASE_SUELTA')?.precio ?? 0,
     horasAnticipacionCancelacion: a.horas_anticipacion_cancelacion,
   };
 }
@@ -162,7 +163,7 @@ export interface PlanActividadListado {
   idPlanActividad: number;
   idActividad: number;
   nombre: string;
-  tipoLimite: 'POR_SEMANA' | 'POR_MES';
+  tipoLimite: 'POR_SEMANA' | 'POR_MES' | 'CLASE_SUELTA';
   cantidad: number;
   precio: number;
 }
@@ -223,7 +224,6 @@ function cuerpoActividad(input: ActividadInput) {
     nombre: input.nombre,
     descripcion: input.descripcion || null,
     cupo_default: input.cupoDefault,
-    precio_clase_suelta: input.precioClaseSuelta,
     horas_anticipacion_cancelacion: input.horasAnticipacionCancelacion,
   };
 }
@@ -236,7 +236,15 @@ export async function crearActividad(
     metodo: 'POST',
     cuerpo: cuerpoActividad(input),
   });
-  return aActividadAdmin(datos);
+  // La clase suelta ya no es una columna: se materializa como un plan
+  // CLASE_SUELTA (cantidad 1) con el precio que puso el formulario.
+  if (input.precioClaseSuelta > 0) {
+    await pedir(`/actividades/${datos.id_actividad}/planes`, {
+      metodo: 'POST',
+      cuerpo: { nombre: 'Clase suelta', tipo_limite: 'CLASE_SUELTA', cantidad: 1, precio: input.precioClaseSuelta },
+    });
+  }
+  return { ...aActividadAdmin(datos), precioClaseSuelta: input.precioClaseSuelta };
 }
 
 export async function actualizarActividad(
@@ -248,7 +256,20 @@ export async function actualizarActividad(
     metodo: 'PUT',
     cuerpo: cuerpoActividad(input),
   });
-  return aActividadAdmin(datos);
+  // Upsert del plan de clase suelta con el precio del form.
+  const suelta = datos.planes.find((pl) => pl.tipo_limite === 'CLASE_SUELTA');
+  if (suelta) {
+    await pedir(`/actividades/planes/${suelta.id_plan_actividad}`, {
+      metodo: 'PUT',
+      cuerpo: { nombre: suelta.nombre, tipo_limite: 'CLASE_SUELTA', cantidad: 1, precio: input.precioClaseSuelta },
+    });
+  } else if (input.precioClaseSuelta > 0) {
+    await pedir(`/actividades/${idActividad}/planes`, {
+      metodo: 'POST',
+      cuerpo: { nombre: 'Clase suelta', tipo_limite: 'CLASE_SUELTA', cantidad: 1, precio: input.precioClaseSuelta },
+    });
+  }
+  return { ...aActividadAdmin(datos), precioClaseSuelta: input.precioClaseSuelta };
 }
 
 /**
@@ -284,7 +305,7 @@ export interface PlanActividadAdmin {
   idPlanActividad: number;
   idActividad: number;
   nombre: string;
-  tipoLimite: 'POR_SEMANA' | 'POR_MES';
+  tipoLimite: 'POR_SEMANA' | 'POR_MES' | 'CLASE_SUELTA';
   cantidad: number;
   precio: number;
   activo: boolean;
@@ -303,7 +324,7 @@ export async function getPlanesDeActividadAdmin(
 
 export interface PlanActividadInput {
   nombre: string;
-  tipoLimite: 'POR_SEMANA' | 'POR_MES';
+  tipoLimite: 'POR_SEMANA' | 'POR_MES' | 'CLASE_SUELTA';
   cantidad: number;
   precio: number;
 }
@@ -428,7 +449,7 @@ export interface InscripcionListada {
   idActividad: number;
   nombreActividad: string;
   nombrePlan: string;
-  tipoLimite: 'POR_SEMANA' | 'POR_MES';
+  tipoLimite: 'POR_SEMANA' | 'POR_MES' | 'CLASE_SUELTA';
   cantidad: number;
   /** Sólo tiene valor con tipoLimite POR_MES. */
   clasesRestantes?: number;

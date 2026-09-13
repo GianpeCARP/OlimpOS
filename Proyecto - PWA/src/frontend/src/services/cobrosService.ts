@@ -139,11 +139,8 @@ export async function obtenerEstadoCuenta(idSocio: number): Promise<EstadoCuenta
   };
 }
 
-/** Todas las deudas pendientes del gimnasio, la más vieja primero. */
-export async function listarDeudasPendientes(): Promise<(DeudaListada & { socio: string })[]> {
-  const datos = await pedir<(DeudaApi & { socio: string })[]>('/cobros/deudas');
-  return datos.map((d) => ({ ...aDeuda(d), socio: d.socio }));
-}
+// listarDeudasPendientes se eliminó: el esquema nuevo no tiene tabla Deuda.
+// El estado "debe" se deriva de no tener membresía vigente (prepago puro).
 
 // --- Cobro ---
 
@@ -273,28 +270,9 @@ export async function cobrar(
   };
 }
 
-/**
- * Cobra UNA deuda puntual, sin renovar la membresía.
- *
- * Es el caso de quien viene a ponerse al día pero todavía no renueva. El
- * monto lo pone la deuda: cobrar $1 una deuda de $30.000 sería tan grave como
- * en el cobro de membresía.
- *
- * Deja registrada la relación 1 a 1 entre la deuda y el pago que la canceló,
- * así después se puede responder "¿con qué pago se saldó esto?" sin cruzar
- * montos y fechas a ojo.
- */
-export async function pagarDeuda(
-  idDeuda: number,
-  metodo: MetodoPago,
-  numeroComprobante?: string,
-): Promise<PagoListado> {
-  const p = await pedir<PagoApi>(`/cobros/deudas/${idDeuda}/pagar`, {
-    metodo: 'POST',
-    cuerpo: { metodo, numero_comprobante: numeroComprobante ?? null },
-  });
-  return aPago(p);
-}
+// pagarDeuda se eliminó junto con el endpoint /cobros/deudas/{id}/pagar: ya no
+// hay deudas que saldar aparte. Renovar la membresía (cobrar) es lo que pone
+// al socio al día.
 
 /**
  * Anula un pago mal registrado. NO lo borra: le pone estado CANCELADO.

@@ -451,6 +451,11 @@ def obtener_nutricionistas() -> dict:
     return _get("/personal/nutricionistas")
 
 
+def obtener_franjas() -> dict:
+    # Catálogo de franjas laborales para el selector de turno del recepcionista.
+    return _get("/personal/franjas")
+
+
 def editar_empleado(id_empleado: int, datos: dict) -> dict:
     return _put(f"/personal/{id_empleado}", datos)
 
@@ -513,10 +518,6 @@ def obtener_tipos_membresia() -> dict:
 
 def obtener_estado_cuenta(id_socio: int) -> dict:
     return _get(f"/cobros/socio/{id_socio}")
-
-
-def obtener_deudas() -> dict:
-    return _get("/cobros/deudas")
 
 
 def cobrar(datos: dict) -> dict:

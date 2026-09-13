@@ -40,15 +40,15 @@ from sqlalchemy.orm import Session, selectinload
 from auth import generar_password_temporal, generar_username, hashear_password
 from database import get_db
 from models import (
-    Dieta, Empleado, Entrenador, Nutricionista, Persona, Profesor,
+    Dieta, Empleado, Entrenador, FranjaLaboral, Nutricionista, Persona, Profesor,
     Recepcionista, Rutina, Sede, Telefono, Usuario,
 )
 from notificaciones import enviar_credenciales
 from permisos import Accion, Seccion
 from schemas import (
     BajaEmpleadoRequest, EmpleadoAltaRequest, EmpleadoAltaResponse,
-    EmpleadoEditarRequest, EmpleadoOut, PersonaOut, ProfesionalOpcion,
-    RolEmpleado,
+    EmpleadoEditarRequest, EmpleadoOut, FranjaLaboralOut, PersonaOut,
+    ProfesionalOpcion, RolEmpleado,
 )
 from security import Sesion, requiere_accion, requiere_seccion
 
@@ -391,6 +391,25 @@ def listar_nutricionistas(
 ):
     """Espejo del anterior, para el formulario de dietas."""
     return _opciones(db, Nutricionista, "id_nutricionista")
+
+
+@router.get("/franjas", response_model=list[FranjaLaboralOut])
+def listar_franjas(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.PERSONAL)),
+):
+    """
+    Catálogo de franjas laborales, para el selector de turno del recepcionista
+    en el alta/edición de personal. Reemplaza al viejo varchar `turno_laboral`.
+
+    Va ANTES de la ruta /{id_empleado} a propósito: FastAPI resuelve por orden
+    de declaración, y si estuviera después leería "franjas" como un id.
+    """
+    franjas = (db.query(FranjaLaboral)
+               .filter(FranjaLaboral.activo.is_(True))
+               .order_by(FranjaLaboral.id_franja_laboral)
+               .all())
+    return [FranjaLaboralOut.model_validate(f) for f in franjas]
 
 
 @router.get("/{id_empleado}", response_model=EmpleadoOut)

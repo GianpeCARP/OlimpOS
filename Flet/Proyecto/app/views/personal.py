@@ -190,9 +190,10 @@ class PersonalView:
         if rol_actual not in ROLES_EMPLEADO:
             rol_actual = "Entrenador"
 
-        turno_actual = (empleado.get("turno_laboral") or "Mañana") if is_edit else "Mañana"
-        if turno_actual not in TURNO_COLORS:
-            turno_actual = "Mañana"
+        # El turno del recepcionista ahora es una FK a Franja_Laboral: se
+        # ofrecen las franjas reales (catálogo), no un enum hardcodeado.
+        franjas = app_state.get_franjas()
+        franja_sel = str(empleado.get("id_franja_laboral")) if is_edit and empleado.get("id_franja_laboral") else None
 
         def _dropdown(label, opciones, valor, ref):
             return ft.Dropdown(
@@ -233,8 +234,16 @@ class PersonalView:
                     ft.Container(height=12),
                     _dropdown("Rol", ROLES_EMPLEADO, rol_actual, rol_ref),
                     ft.Container(height=12),
-                    _dropdown("Turno (solo Recepcionista)",
-                              list(TURNO_COLORS.keys()), turno_actual, turno_ref),
+                    ft.Dropdown(
+                        ref=turno_ref,
+                        label="Turno / franja (solo Recepcionista)",
+                        options=[ft.dropdown.Option(key=str(f["id"]), text=f["nombre"])
+                                 for f in franjas],
+                        value=franja_sel,
+                        color=Colors.TEXT_PRIMARY, bgcolor=Colors.BG_INPUT,
+                        border_color=Colors.BORDER, focused_border_color=Colors.ACCENT,
+                        border_radius=10,
+                    ),
                     ft.Container(height=12),
                     input_field("Email", "empleado@gimnasio.com", ref=email_ref,
                                 icon=ft.Icons.EMAIL_OUTLINED,
@@ -309,7 +318,10 @@ class PersonalView:
             "rol": rol,
             "titulo": datos["titulo"] or None,
             "matricula": datos["matricula"] or None,
-            "turno_laboral": (turno_ref.current.value if turno_ref.current else None),
+            # El turno es ahora una FK: se manda el id de la franja elegida.
+            "id_franja_laboral": (
+                int(turno_ref.current.value)
+                if turno_ref.current and turno_ref.current.value else None),
         }
 
         if id_empleado is None:

@@ -615,7 +615,8 @@ class CobrosView:
         close_dialog(self.page, padre)
 
         es_edicion = promo is not None
-        es_porcentaje = (promo["porcentaje"] is not None) if es_edicion else True
+        # El descuento es SIEMPRE porcentual (el monto fijo se eliminó).
+        es_porcentaje = True
 
         nombre_ref = ft.Ref[ft.TextField]()
         desc_ref   = ft.Ref[ft.TextField]()
@@ -626,7 +627,7 @@ class CobrosView:
 
         valor_inicial = ""
         if es_edicion:
-            crudo = promo["porcentaje"] if es_porcentaje else promo["monto_fijo"]
+            crudo = promo["porcentaje"]
             if crudo is not None:
                 numero = float(crudo)
                 # Sin el .0 cuando es redondo: el campo dice "20", no "20.0".
@@ -650,9 +651,8 @@ class CobrosView:
                            Colors.STATUS_DANGER)
                 return
 
-            porcentaje = (tipo_ref.current.value == "porcentaje"
-                          if tipo_ref.current else True)
-            if porcentaje and valor > 100:
+            porcentaje = True
+            if valor > 100:
                 show_snack(self.page, "Un porcentaje no puede pasar de 100.",
                            Colors.STATUS_DANGER)
                 return
@@ -699,13 +699,7 @@ class CobrosView:
                                 ref=desc_ref, multiline=True,
                                 value=promo["descripcion"] if es_edicion else ""),
                     ft.Container(height=12),
-                    select_field("Tipo de descuento",
-                                 [("porcentaje", "Porcentaje (%)"),
-                                  ("fijo", "Monto fijo ($)")],
-                                 ref=tipo_ref,
-                                 value="porcentaje" if es_porcentaje else "fijo"),
-                    ft.Container(height=12),
-                    input_field("Descuento", "Ej: 20", ref=valor_ref,
+                    input_field("Porcentaje de descuento (%)", "Ej: 20", ref=valor_ref,
                                 icon=ft.Icons.PERCENT_ROUNDED, value=valor_inicial),
                     ft.Container(height=12),
                     input_field("Desde", "dd/mm/aaaa", ref=desde_ref,

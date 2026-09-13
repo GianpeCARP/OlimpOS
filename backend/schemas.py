@@ -1205,6 +1205,16 @@ class EmpleadoAltaRequest(BaseModel):
     crear_cuenta: bool = True
 
 
+class FranjaLaboralOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id_franja_laboral: int
+    nombre: str
+    hora_desde: time | None = None
+    hora_hasta: time | None = None
+    activo: bool
+
+
 class EmpleadoOut(BaseModel):
     id_empleado: int
     id_persona: int

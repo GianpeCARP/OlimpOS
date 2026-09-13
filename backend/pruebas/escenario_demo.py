@@ -89,16 +89,43 @@ if socios:
 
 anotar = []
 
+# --- Franjas laborales (catálogo) -------------------------------------------
+# No hay endpoint de alta de franjas (son catálogo, vienen del seed) y la base
+# vacía no las trae, así que se siembran por SQL para que el selector de turno
+# del recepcionista tenga opciones en la demo. Se captura la de "Tarde" para
+# asignársela a Rita.
+print("\n0. Franjas laborales")
+id_franja_tarde = None
+try:
+    from database import SessionLocal  # type: ignore
+    from sqlalchemy import text
+    _db = SessionLocal()
+    for _n, _d, _h in [("Mañana", "06:00", "14:00"),
+                       ("Tarde", "14:00", "22:00"),
+                       ("Noche", "22:00", "06:00")]:
+        _db.execute(text(
+            'INSERT INTO "Franja_Laboral" (nombre, hora_desde, hora_hasta, activo) '
+            "VALUES (:n, :d, :h, true) ON CONFLICT (nombre) DO NOTHING"),
+            {"n": _n, "d": _d, "h": _h})
+    _db.commit()
+    id_franja_tarde = _db.execute(
+        text('SELECT id_franja_laboral FROM "Franja_Laboral" WHERE nombre = :n'),
+        {"n": "Tarde"}).scalar()
+    _db.close()
+    print(f"   3 franjas cargadas (Tarde = id {id_franja_tarde})")
+except Exception as e:  # noqa: BLE001
+    print(f"   (no se pudieron cargar franjas: {e}) — la recepcionista queda sin turno")
+
 # --- Personal ---------------------------------------------------------------
 print("\n1. Personal")
 personal = [
     ("Ana", "Gomez", "30111222", "Entrenador", {"especialidad": "Musculación"}),
     ("Beto", "Ruiz", "30111333", "Entrenador", {"especialidad": "Funcional"}),
     ("Caro", "Diaz", "30111444", "Nutricionista", {"titulo": "Lic. en Nutrición"}),
-    # La franja laboral es una FK a Franja_Laboral (catálogo); la base vacía no
-    # trae franjas, así que la recepcionista queda sin franja asignada (es
-    # nullable). Si se quiere, se le asigna id_franja_laboral después.
-    ("Rita", "Lopez", "30111555", "Recepcionista", {}),
+    # La franja laboral es una FK a Franja_Laboral: se le asigna "Tarde" si se
+    # pudieron sembrar las franjas (id_franja_laboral es nullable si no).
+    ("Rita", "Lopez", "30111555", "Recepcionista",
+     {"id_franja_laboral": id_franja_tarde} if id_franja_tarde else {}),
 ]
 for nombre, apellido, dni, rol, extra in personal:
     cuerpo = {"nombre": nombre, "apellido": apellido, "dni": dni, "rol": rol,

@@ -417,9 +417,18 @@ class AppState:
                 "especialidad": e.get("especialidad") or "",
                 "matricula": e.get("matricula") or "",
                 "turno_laboral": e.get("turno_laboral") or "",
+                "id_franja_laboral": e.get("id_franja_laboral"),
             }
             for e in datos
         ]
+
+    def get_franjas(self) -> list[dict]:
+        """
+        Catálogo de franjas laborales, para el selector de turno del
+        recepcionista. Reemplaza al viejo enum de turnos hardcodeado.
+        """
+        datos = self._datos(api_client.obtener_franjas(), [])
+        return [{"id": f["id_franja_laboral"], "nombre": f["nombre"]} for f in datos]
 
     # ── Rutinas ───────────────────────────────────────────────────────────────
 
@@ -654,7 +663,11 @@ class AppState:
                 "activa": a.get("activo", True),
                 "descripcion": a.get("descripcion") or "",
                 "cupo": a.get("cupo_default", 0),
-                "precio_suelta": a.get("precio_clase_suelta", 0),
+                # La clase suelta es un plan (tipo_limite CLASE_SUELTA): su
+                # precio sale de ahí, ya no es una columna de Actividad.
+                "precio_suelta": next(
+                    (pl["precio"] for pl in a.get("planes", [])
+                     if pl.get("tipo_limite") == "CLASE_SUELTA"), 0),
                 "horas_cancelacion": a.get("horas_anticipacion_cancelacion", 0),
                 "profesores": [p.get("nombre", "?") for p in profesores],
                 "planes": [
@@ -828,11 +841,33 @@ class AppState:
     # ── Actividades (ABM) ─────────────────────────────────────────────────────
 
     def crear_actividad(self, datos: dict) -> dict:
-        return self._resultado(api_client.crear_actividad(datos), "Actividad creada.")
+        # precio_clase_suelta ya no es columna: se materializa como un plan
+        # CLASE_SUELTA (cantidad 1) con ese precio.
+        precio_suelta = datos.pop("precio_clase_suelta", 0) or 0
+        resp = api_client.crear_actividad(datos)
+        id_act = (resp.get("data") or {}).get("id_actividad") if resp.get("ok") else None
+        if id_act and float(precio_suelta) > 0:
+            api_client.crear_plan_actividad(id_act, {
+                "nombre": "Clase suelta", "tipo_limite": "CLASE_SUELTA",
+                "cantidad": 1, "precio": float(precio_suelta)})
+        return self._resultado(resp, "Actividad creada.")
 
     def editar_actividad(self, id_actividad: int, datos: dict) -> dict:
-        return self._resultado(api_client.editar_actividad(id_actividad, datos),
-                                "Actividad actualizada.")
+        # Upsert del plan de clase suelta con el precio del formulario.
+        precio_suelta = datos.pop("precio_clase_suelta", None)
+        resp = api_client.editar_actividad(id_actividad, datos)
+        if resp.get("ok") and precio_suelta is not None:
+            planes = (resp.get("data") or {}).get("planes", [])
+            suelta = next((pl for pl in planes
+                           if pl.get("tipo_limite") == "CLASE_SUELTA"), None)
+            cuerpo = {"nombre": "Clase suelta", "tipo_limite": "CLASE_SUELTA",
+                      "cantidad": 1, "precio": float(precio_suelta)}
+            if suelta:
+                cuerpo["nombre"] = suelta.get("nombre", "Clase suelta")
+                api_client.editar_plan_actividad(suelta["id_plan_actividad"], cuerpo)
+            elif float(precio_suelta) > 0:
+                api_client.crear_plan_actividad(id_actividad, cuerpo)
+        return self._resultado(resp, "Actividad actualizada.")
 
     def cambiar_estado_actividad(self, id_actividad: int, activa: bool) -> dict:
         """
@@ -1321,7 +1356,9 @@ class AppState:
                 "nombre": p["nombre"],
                 "descripcion": p.get("descripcion") or "",
                 "porcentaje": p.get("porcentaje_descuento"),
-                "monto_fijo": p.get("monto_fijo_descuento"),
+                # El monto fijo se eliminó; se deja la clave en None por
+                # compatibilidad con la vista, que ya no la usa.
+                "monto_fijo": None,
                 "desde": self._fecha(p.get("fecha_inicio")),
                 "hasta": self._fecha(p.get("fecha_fin")),
                 # Crudas además de formateadas: el formulario de edición las
@@ -1347,16 +1384,14 @@ class AppState:
         """
         Arma el cuerpo mandando UNO solo de los dos descuentos.
 
-        El otro va en None EXPLÍCITO y no omitido: al editar, cambiar una promo
-        de porcentaje a monto fijo tiene que LIMPIAR el campo viejo. Si se
-        omitiera, los dos quedarían cargados y el cálculo tomaría el porcentaje
-        viejo para siempre.
+        El descuento es SIEMPRE porcentual: el monto fijo se eliminó por
+        decisión comercial, así que `es_porcentaje` queda por compatibilidad de
+        firma pero el cuerpo manda siempre el porcentaje.
         """
         return {
             "nombre": nombre.strip(),
             "descripcion": (descripcion or "").strip() or None,
-            "porcentaje_descuento": valor if es_porcentaje else None,
-            "monto_fijo_descuento": None if es_porcentaje else valor,
+            "porcentaje_descuento": valor,
             "fecha_inicio": desde_iso,
             "fecha_fin": hasta_iso,
         }

@@ -592,7 +592,7 @@ interface PlanApi {
   id_plan_actividad: number;
   id_actividad: number;
   nombre: string;
-  tipo_limite: 'POR_SEMANA' | 'POR_MES';
+  tipo_limite: 'POR_SEMANA' | 'POR_MES' | 'CLASE_SUELTA';
   cantidad: number;
   precio: number;
   activo: boolean;
@@ -603,7 +603,6 @@ interface ActividadCatalogoApi {
   nombre: string;
   descripcion?: string | null;
   cupo_default: number;
-  precio_clase_suelta: number;
   horas_anticipacion_cancelacion: number;
   minutos_tolerancia: number;
   planes: PlanApi[];
@@ -626,7 +625,9 @@ export async function getCatalogoDelSocio(): Promise<
     nombre: a.nombre,
     descripcion: a.descripcion ?? undefined,
     cupoDefault: a.cupo_default,
-    precioClaseSuelta: Number(a.precio_clase_suelta),
+    // La clase suelta es un plan (CLASE_SUELTA): su precio sale de ahí.
+    precioClaseSuelta:
+      Number(a.planes.find((p) => p.tipo_limite === 'CLASE_SUELTA')?.precio ?? 0),
     horasAnticipacionCancelacion: a.horas_anticipacion_cancelacion,
     planes: a.planes.map((p) => ({
       idPlanActividad: p.id_plan_actividad,
@@ -842,7 +843,7 @@ interface InscripcionApiSocio {
   id_actividad: number;
   actividad: string;
   plan: string;
-  tipo_limite: 'POR_SEMANA' | 'POR_MES';
+  tipo_limite: 'POR_SEMANA' | 'POR_MES' | 'CLASE_SUELTA';
   cantidad: number;
   clases_restantes?: number | null;
   precio_pactado: number;

@@ -117,7 +117,15 @@ export interface Nutricionista {
 export interface Recepcionista {
   id_recepcionista: number;
   id_empleado: number; // FK -> Empleado, not null
-  turno_laboral?: string; // varchar(20)
+  id_franja_laboral?: number; // FK -> Franja_Laboral (antes: turno_laboral varchar)
+}
+
+export interface FranjaLaboral {
+  id_franja_laboral: number;
+  nombre: string;
+  hora_desde?: string;
+  hora_hasta?: string;
+  activo: boolean;
 }
 
 // --- rutinas (Rutina + Asignacion_Rutina) ---
@@ -169,12 +177,25 @@ export interface Dieta {
   activo: boolean; // default true
 }
 
+/** Catálogo de platos: el nombre y las calorías dependen del PLATO, no de la dieta. */
+export interface CatalogoComida {
+  id_catalogo_comida: number;
+  nombre: string;
+  descripcion?: string;
+  calorias?: number;
+  activo: boolean;
+}
+
 export interface Comida {
   id_comida: number;
   id_dieta: number; // FK -> Dieta, not null
   dia?: number;
   momento?: string; // varchar(30), p. ej. "Desayuno"
-  descripcion: string; // text, not null
+  // El plato SIEMPRE sale de Catalogo_Comida (id_catalogo_comida obligatorio).
+  // nombre/descripcion/calorias vienen del catálogo, no de la fila Comida.
+  id_catalogo_comida: number;
+  nombre?: string;
+  descripcion?: string;
   calorias?: number;
 }
 
@@ -398,7 +419,8 @@ export interface Actividad {
   nombre: string; // varchar(80), unique, not null
   descripcion?: string;
   cupo_default: number; // not null — valor de referencia; el Turno puede sobrescribirlo en su propio cupo_maximo
-  precio_clase_suelta: number; // numeric(10,2), not null
+  // La clase suelta ya NO es una columna de Actividad: es un Plan_Actividad con
+  // tipo_limite = CLASE_SUELTA. Su precio sale de ese plan.
   /** Con cuánta anticipación se puede cancelar sin perder la clase. 0 = nunca. */
   horas_anticipacion_cancelacion: number; // not null, default 0
   activo: boolean; // default true
@@ -413,7 +435,7 @@ export interface PlanActividad {
   id_plan_actividad: number;
   id_actividad: number; // FK -> Actividad, not null
   nombre: string; // varchar(80), not null
-  tipo_limite: 'POR_SEMANA' | 'POR_MES';
+  tipo_limite: 'POR_SEMANA' | 'POR_MES' | 'CLASE_SUELTA';
   cantidad: number; // not null
   precio: number; // numeric(10,2), not null
   activo: boolean; // default true
@@ -430,7 +452,6 @@ export interface InscripcionActividad {
   id_inscripcion: number;
   id_socio: number; // FK -> Socio, not null
   id_plan_actividad: number; // FK -> Plan_Actividad, not null
-  id_membresia: number; // FK -> Membresia, not null
   precio_pactado: number; // numeric(10,2), not null — congelado al comprar, igual que en Membresia
   fecha_inicio: string; // date, not null
   fecha_vencimiento: string; // date, not null

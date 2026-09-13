@@ -1,16 +1,16 @@
-import { useState, type SubmitEvent } from 'react';
+import { useEffect, useState, type SubmitEvent } from 'react';
 import { Award, IdCard, Mail, Phone, User } from 'lucide-react';
 import { InputField, PrimaryButton, SelectField, type SelectOption } from '../../components/ui';
 import {
   colors,
   RolEmpleado,
-  TurnoLaboral,
   type RolEmpleadoValue,
 } from '../../config';
 import { mensajeDeError } from '../../services/api';
 import {
   crearEmpleado,
   actualizarEmpleado,
+  listarFranjas,
   type EmpleadoListado,
 } from '../../services/personalService';
 import { useUiStore, SNACK_PERSISTENTE } from '../../store/uiStore';
@@ -26,16 +26,11 @@ const OPCIONES_ROL: SelectOption[] = Object.values(RolEmpleado).map((rol) => ({
   label: rol,
 }));
 
-const OPCIONES_TURNO: SelectOption[] = Object.values(TurnoLaboral).map((turno) => ({
-  value: turno,
-  label: turno,
-}));
-
 /** Etiqueta y tipo de control del campo específico de cada rol. */
 const CAMPO_POR_ROL: Record<RolEmpleadoValue, { label: string; select: boolean }> = {
   [RolEmpleado.ENTRENADOR]: { label: 'Especialidad', select: false },
   [RolEmpleado.NUTRICIONISTA]: { label: 'Título', select: false },
-  [RolEmpleado.RECEPCIONISTA]: { label: 'Turno', select: true },
+  [RolEmpleado.RECEPCIONISTA]: { label: 'Turno / franja', select: true },
   [RolEmpleado.PROFESOR]: { label: 'Especialidad', select: false },
 };
 
@@ -53,9 +48,23 @@ export function EmpleadoFormModal({ empleado, onClose, onGuardado }: EmpleadoFor
   const [email, setEmail] = useState(empleado?.email ?? '');
   const [telefono, setTelefono] = useState(empleado?.telefono ?? '');
   const [rol, setRol] = useState<RolEmpleadoValue>(empleado?.rol ?? RolEmpleado.ENTRENADOR);
-  // En recepcionistas `detalle` viene como "Turno Mañana" (listo para
-  // mostrar) pero el valor que se edita es el turno pelado.
-  const [detalle, setDetalle] = useState(empleado?.turno ?? empleado?.detalle ?? '');
+  // Para recepcionista `detalle` es el ID de la franja (FK Franja_Laboral);
+  // para los demás roles es texto libre (especialidad/título).
+  const [detalle, setDetalle] = useState(
+    empleado
+      ? empleado.rol === RolEmpleado.RECEPCIONISTA
+        ? (empleado.idFranjaLaboral ? String(empleado.idFranjaLaboral) : '')
+        : (empleado.detalle ?? '')
+      : '',
+  );
+
+  // Catálogo de franjas para el selector de turno del recepcionista.
+  const [franjasOpc, setFranjasOpc] = useState<SelectOption[]>([]);
+  useEffect(() => {
+    listarFranjas()
+      .then((fs) => setFranjasOpc(fs.map((f) => ({ value: String(f.idFranjaLaboral), label: f.nombre }))))
+      .catch(() => setFranjasOpc([]));
+  }, []);
 
   const [guardando, setGuardando] = useState(false);
 
@@ -154,7 +163,7 @@ export function EmpleadoFormModal({ empleado, onClose, onGuardado }: EmpleadoFor
               label={campo.label}
               value={detalle}
               onChange={setDetalle}
-              options={OPCIONES_TURNO}
+              options={franjasOpc}
               placeholder="Sin turno asignado"
               name="detalle"
             />

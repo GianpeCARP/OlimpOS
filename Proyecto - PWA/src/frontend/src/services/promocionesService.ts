@@ -30,7 +30,6 @@ export interface Promocion {
   nombre: string;
   descripcion?: string;
   porcentajeDescuento?: number;
-  montoFijoDescuento?: number;
   /** ISO (yyyy-mm-dd). */
   fechaInicio: string;
   fechaFin: string;
@@ -43,7 +42,7 @@ export interface Promocion {
    * cobrarla entonces sería regalar plata.
    */
   vigente: boolean;
-  /** "20% OFF" / "$5.000 OFF", ya armado por el backend. */
+  /** "20% OFF", ya armado por el backend. */
   etiqueta: string;
 }
 
@@ -51,8 +50,7 @@ interface PromocionApi {
   id_promocion: number;
   nombre: string;
   descripcion: string | null;
-  porcentaje_descuento: number | null;
-  monto_fijo_descuento: number | null;
+  porcentaje_descuento: number;
   fecha_inicio: string;
   fecha_fin: string;
   id_sede: number | null;
@@ -66,8 +64,7 @@ function aPromocion(p: PromocionApi): Promocion {
     idPromocion: p.id_promocion,
     nombre: p.nombre,
     descripcion: p.descripcion ?? undefined,
-    porcentajeDescuento: p.porcentaje_descuento ?? undefined,
-    montoFijoDescuento: p.monto_fijo_descuento ?? undefined,
+    porcentajeDescuento: p.porcentaje_descuento,
     fechaInicio: p.fecha_inicio,
     fechaFin: p.fecha_fin,
     idSede: p.id_sede ?? undefined,
@@ -94,9 +91,8 @@ export async function listarPromociones(soloVigentes = false): Promise<Promocion
 export interface PromocionInput {
   nombre: string;
   descripcion?: string;
-  /** Uno de los dos, nunca los dos. El backend rechaza la combinación. */
-  porcentajeDescuento?: number;
-  montoFijoDescuento?: number;
+  /** El descuento es SIEMPRE porcentual (el monto fijo se eliminó). */
+  porcentajeDescuento: number;
   fechaInicio: string;
   fechaFin: string;
   idSede?: number;
@@ -106,11 +102,7 @@ function cuerpoDe(input: PromocionInput) {
   return {
     nombre: input.nombre.trim(),
     descripcion: input.descripcion?.trim() || null,
-    // Se manda `null` explícito para el que no se usa, no `undefined`: al
-    // editar, cambiar una promo de porcentaje a monto fijo tiene que LIMPIAR
-    // el campo viejo. Si se omitiera, quedarían los dos cargados.
-    porcentaje_descuento: input.porcentajeDescuento ?? null,
-    monto_fijo_descuento: input.montoFijoDescuento ?? null,
+    porcentaje_descuento: input.porcentajeDescuento,
     fecha_inicio: input.fechaInicio,
     fecha_fin: input.fechaFin,
     id_sede: input.idSede ?? null,

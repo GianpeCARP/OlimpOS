@@ -39,6 +39,8 @@ export interface EmpleadoListado {
   detalle?: string;
   /** Solo los recepcionistas tienen turno — ver comentario de arriba. */
   turno?: TurnoLaboralValue;
+  /** FK a la franja del recepcionista, para preseleccionar en el form. */
+  idFranjaLaboral?: number;
   estado: EstadoEmpleadoValue;
   activo: boolean;
   fechaIngreso: string;
@@ -57,7 +59,8 @@ interface EmpleadoApi {
   titulo: string | null;
   especialidad: string | null;
   matricula: string | null;
-  turno_laboral: string | null;
+  turno_laboral: string | null;      // nombre de la franja (para mostrar)
+  id_franja_laboral: number | null;  // FK, para preseleccionar en el form
   dni: string;
   nombre: string;
   apellido: string;
@@ -106,6 +109,7 @@ function aEmpleadoListado(e: EmpleadoApi): EmpleadoListado {
     rol: (e.rol ?? RolEmpleado.RECEPCIONISTA) as RolEmpleadoValue,
     detalle: detalleDeRol(e),
     turno: (e.turno_laboral ?? undefined) as TurnoLaboralValue | undefined,
+    idFranjaLaboral: e.id_franja_laboral ?? undefined,
     estado: e.activo ? EstadoEmpleado.ACTIVO : EstadoEmpleado.INACTIVO,
     activo: e.activo,
     fechaIngreso: e.fecha_ingreso,
@@ -149,12 +153,36 @@ function repartirDetalle(rol: RolEmpleadoValue, detalle?: string) {
   const valor = detalle?.trim() || null;
   switch (rol) {
     case RolEmpleado.RECEPCIONISTA:
-      return { turno_laboral: valor, titulo: null, especialidad: null, matricula: null };
+      // El turno del recepcionista ahora es una FK a Franja_Laboral: `detalle`
+      // trae el id de la franja elegida (ver listarFranjas y el formulario).
+      return {
+        id_franja_laboral: valor ? Number(valor) : null,
+        titulo: null, especialidad: null, matricula: null,
+      };
     case RolEmpleado.NUTRICIONISTA:
-      return { titulo: valor, matricula: null, especialidad: null, turno_laboral: null };
+      return { titulo: valor, matricula: null, especialidad: null, id_franja_laboral: null };
     default: // Entrenador y Profesor
-      return { especialidad: valor, titulo: null, matricula: null, turno_laboral: null };
+      return { especialidad: valor, titulo: null, matricula: null, id_franja_laboral: null };
   }
+}
+
+/**
+ * Catálogo de franjas laborales, para el selector de turno del recepcionista.
+ * Reemplaza al viejo enum de turnos hardcodeado: ahora son filas reales.
+ */
+export interface FranjaOpcion {
+  idFranjaLaboral: number;
+  nombre: string;
+}
+
+interface FranjaApi {
+  id_franja_laboral: number;
+  nombre: string;
+}
+
+export async function listarFranjas(): Promise<FranjaOpcion[]> {
+  const datos = await pedir<FranjaApi[]>('/personal/franjas');
+  return datos.map((f) => ({ idFranjaLaboral: f.id_franja_laboral, nombre: f.nombre }));
 }
 
 export interface AltaEmpleadoResultado {

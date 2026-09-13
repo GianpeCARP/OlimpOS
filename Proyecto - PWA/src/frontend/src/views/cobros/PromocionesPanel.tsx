@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight, Pencil, Plus, Power, Tag } from 'lucide-react';
-import { InputField, PrimaryButton, SectionCard, SelectField } from '../../components/ui';
+import { InputField, PrimaryButton, SectionCard } from '../../components/ui';
 import { colors } from '../../config';
 import { mensajeDeError } from '../../services/api';
 import {
@@ -41,7 +41,7 @@ interface Borrador {
   idPromocion?: number;
   nombre: string;
   descripcion: string;
-  tipo: 'porcentaje' | 'fijo';
+  /** El descuento es SIEMPRE porcentual (0-100). */
   valor: string;
   fechaInicio: string;
   fechaFin: string;
@@ -52,7 +52,6 @@ function borradorVacio(): Borrador {
   return {
     nombre: '',
     descripcion: '',
-    tipo: 'porcentaje',
     valor: '',
     fechaInicio: hoy,
     fechaFin: hoy,
@@ -60,13 +59,11 @@ function borradorVacio(): Borrador {
 }
 
 function aBorrador(p: Promocion): Borrador {
-  const esPorcentaje = p.porcentajeDescuento !== undefined;
   return {
     idPromocion: p.idPromocion,
     nombre: p.nombre,
     descripcion: p.descripcion ?? '',
-    tipo: esPorcentaje ? 'porcentaje' : 'fijo',
-    valor: String(esPorcentaje ? p.porcentajeDescuento : (p.montoFijoDescuento ?? '')),
+    valor: String(p.porcentajeDescuento ?? ''),
     fechaInicio: p.fechaInicio,
     fechaFin: p.fechaFin,
   };
@@ -107,7 +104,7 @@ export function PromocionesPanel() {
       showSnack('El descuento tiene que ser mayor que cero.', colors.statusDanger);
       return;
     }
-    if (borrador.tipo === 'porcentaje' && valor > 100) {
+    if (valor > 100) {
       showSnack('Un porcentaje no puede pasar de 100.', colors.statusDanger);
       return;
     }
@@ -116,13 +113,10 @@ export function PromocionesPanel() {
       return;
     }
 
-    // Se manda UNO solo de los dos. El service completa el otro con null
-    // explícito, que es lo que limpia el campo viejo al cambiar de tipo.
     const input: PromocionInput = {
       nombre: borrador.nombre,
       descripcion: borrador.descripcion,
-      porcentajeDescuento: borrador.tipo === 'porcentaje' ? valor : undefined,
-      montoFijoDescuento: borrador.tipo === 'fijo' ? valor : undefined,
+      porcentajeDescuento: valor,
       fechaInicio: borrador.fechaInicio,
       fechaFin: borrador.fechaFin,
     };
@@ -310,29 +304,15 @@ export function PromocionesPanel() {
                   </div>
 
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    {/* Un selector de tipo y UN campo de valor, en vez de dos
-                        campos sueltos: el backend rechaza que vengan los dos
-                        cargados, y con dos inputs la única forma de respetarlo
-                        sería confiar en que el usuario deje uno vacío. */}
-                    <SelectField
-                      label="Tipo de descuento"
-                      value={borrador.tipo}
-                      onChange={(v) =>
-                        setBorrador({ ...borrador, tipo: v as Borrador['tipo'] })
-                      }
-                      options={[
-                        { value: 'porcentaje', label: 'Porcentaje (%)' },
-                        { value: 'fijo', label: 'Monto fijo ($)' },
-                      ]}
-                      name="tipoPromo"
-                    />
+                    {/* El descuento es siempre porcentual (el monto fijo se
+                        eliminó por decisión comercial). */}
                     <InputField
-                      label={borrador.tipo === 'porcentaje' ? 'Porcentaje' : 'Monto'}
+                      label="Porcentaje de descuento (%)"
                       value={borrador.valor}
                       onChange={(v) => setBorrador({ ...borrador, valor: v })}
                       type="number"
                       min={0}
-                      max={borrador.tipo === 'porcentaje' ? 100 : undefined}
+                      max={100}
                       name="valorPromo"
                       required
                     />

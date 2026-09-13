@@ -43,7 +43,7 @@ from app.state import app_state
 
 # Las cuentas del escenario de demo (pruebas/escenario_demo.py del backend).
 CUENTAS = [
-    ("dueno", "dueno 1234"),
+    ("dueno", "Demo2026!"),   # escenario_demo deja al dueno con esta clave
     ("rita.lopez", "Demo2026!"),
     ("ana.gomez", "Demo2026!"),
     ("caro.diaz", "Demo2026!"),

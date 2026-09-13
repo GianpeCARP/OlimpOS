@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Search, Tag, Wallet } from 'lucide-react';
+import { Search, Tag, Wallet } from 'lucide-react';
 import { PrimaryButton, SectionCard, SelectField, StatusBadge, Topbar, type SelectOption } from '../../components/ui';
 import { colors, EstadoPago } from '../../config';
 import { mensajeDeError } from '../../services/api';
@@ -13,7 +13,7 @@ import {
   type InscripcionListada,
   type PlanActividadListado,
 } from '../../services/actividadService';
-import { cobrar, pagarDeuda } from '../../services/cobrosService';
+import { cobrar } from '../../services/cobrosService';
 import {
   listarPromociones,
   vistaPreviaDescuento,
@@ -245,24 +245,6 @@ export function CobrosView() {
     );
   };
 
-  const cobrarDeudaClick = (deuda: NonNullable<MiCuota['deudas']>[number]) => {
-    if (!socioSeleccionado) return;
-    confirmDialog(
-      `¿Cobrar deuda de ${formatearMoneda(deuda.monto)}?`,
-      `Se registra como pagada en ${OPCIONES_METODO.find((o) => o.value === metodo)?.label}.`,
-      () => {
-        setOcupado(true);
-        pagarDeuda(deuda.idDeuda, metodo)
-          .then(() => {
-            showSnack(`Deuda de ${formatearMoneda(deuda.monto)} cobrada`, colors.statusOk);
-            cargarCuenta(socioSeleccionado.idSocio);
-          })
-          .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger))
-          .finally(() => setOcupado(false));
-      },
-    );
-  };
-
   const metodoLabel = () => OPCIONES_METODO.find((o) => o.value === metodo)?.label;
 
   const cobrarSoloPlan = (plan: PlanActividadListado, planViejo?: InscripcionListada) => {
@@ -447,36 +429,6 @@ export function CobrosView() {
 
             {cuenta && (
               <>
-                {cuenta.totalAdeudado > 0 && (
-                  <SectionCard title="Deudas pendientes">
-                    <div className="mb-3 flex items-start gap-2 rounded-md bg-status-danger/10 px-3 py-2">
-                      <AlertTriangle size={16} className="mt-0.5 shrink-0 text-status-danger" />
-                      <p className="font-body text-sm text-status-danger">
-                        Debe regularizar la deuda antes de poder comprar planes o clases sueltas.
-                      </p>
-                    </div>
-                    <div className="flex flex-col divide-y divide-border-idle">
-                      {cuenta.deudas.map((deuda) => (
-                        <div key={deuda.idDeuda} className="flex items-center justify-between gap-3 py-2.5">
-                          <div className="min-w-0">
-                            <p className="font-body text-sm text-text-main">{formatearMoneda(deuda.monto)}</p>
-                            <p className="font-body text-xs text-text-muted">
-                              Generada el {formatearFechaConAnio(parsearFecha(deuda.fechaGeneracion))}
-                              {deuda.diasDeAtraso > 0 && ` · ${deuda.diasDeAtraso} días de atraso`}
-                              {deuda.observaciones && ` · ${deuda.observaciones}`}
-                            </p>
-                          </div>
-                          <PrimaryButton
-                            label="Cobrar"
-                            onClick={() => cobrarDeudaClick(deuda)}
-                            disabled={ocupado}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </SectionCard>
-                )}
-
                 <SectionCard title="Membresía">
                   <p className="font-body text-sm text-text-secondary">
                     {cuenta.tieneMembresia

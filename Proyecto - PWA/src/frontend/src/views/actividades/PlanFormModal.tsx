@@ -26,7 +26,10 @@ interface PlanFormModalProps {
 
 export function PlanFormModal({ idActividad, plan, onClose, onGuardado }: PlanFormModalProps) {
   const [nombre, setNombre] = useState(plan?.nombre ?? '');
-  const [tipoLimite, setTipoLimite] = useState<'POR_SEMANA' | 'POR_MES'>(
+  // CLASE_SUELTA se incluye por si se edita un plan de ese tipo (lo crea la
+  // pantalla de actividad automáticamente); el selector de alta ofrece los
+  // otros dos.
+  const [tipoLimite, setTipoLimite] = useState<'POR_SEMANA' | 'POR_MES' | 'CLASE_SUELTA'>(
     plan?.tipoLimite ?? 'POR_MES',
   );
   const [cantidad, setCantidad] = useState(plan ? String(plan.cantidad) : '');

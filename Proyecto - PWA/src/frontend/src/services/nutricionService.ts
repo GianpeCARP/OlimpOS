@@ -31,7 +31,9 @@ export interface ComidaListada {
   idComida: number;
   dia?: number;
   momento?: string;
-  descripcion: string;
+  /** Nombre del plato (viene del Catalogo_Comida). */
+  nombre: string;
+  descripcion?: string;
   calorias?: number;
 }
 
@@ -50,7 +52,9 @@ interface DietaApi {
     id_comida: number;
     dia: number | null;
     momento: string | null;
-    descripcion: string;
+    id_catalogo_comida: number;
+    nombre: string;
+    descripcion: string | null;
     calorias: number | null;
   }[];
 }
@@ -102,7 +106,8 @@ export async function listarComidasDelPlan(idDieta: number): Promise<ComidaLista
     idComida: c.id_comida,
     dia: c.dia ?? undefined,
     momento: c.momento ?? undefined,
-    descripcion: c.descripcion,
+    nombre: c.nombre,
+    descripcion: c.descripcion ?? undefined,
     calorias: c.calorias ?? undefined,
   }));
 }
