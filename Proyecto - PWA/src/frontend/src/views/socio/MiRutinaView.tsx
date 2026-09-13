@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, Calendar, Dumbbell, Play, Target, Timer, User } from 'lucide-react';
+import { AlertTriangle, Calendar, Camera, Dumbbell, Pencil, Play, Sparkles, Target, Timer, Trash2, User } from 'lucide-react';
 import { LevelBadge, PrimaryButton, SectionCard, Topbar } from '../../components/ui';
 import { colors } from '../../config';
 import { mensajeDeError } from '../../services/api';
-import { getMiRutina, type DiaDeRutina, type EjercicioDelDia, type MiRutina } from '../../services/socioService';
+import { eliminarMiRutinaPropia, getMiRutina, type DiaDeRutina, type EjercicioDelDia, type MiRutina } from '../../services/socioService';
 import { useAuthStore } from '../../store/authStore';
 import { formatearFecha } from '../../utils/format';
 import { parsearFecha } from '../../utils/fechas';
+import { esCelular } from '../../utils/dispositivo';
 import { InfoPill } from '../rutinas/InfoPill';
+import { ArmarMiRutina } from './ArmarMiRutina';
 import { CircuitoView } from './CircuitoView';
+import { ContadorReps } from './ContadorReps';
 import { MiEntrenadorCard } from './MiEntrenadorCard';
 import { SinSocioEnSesion } from './SinSocioEnSesion';
 
@@ -97,6 +100,13 @@ export function MiRutinaView() {
   // una serie, y volver a entrar por la URL sin rutina cargada seria una
   // pantalla vacia que hay que contemplar. Como estado, no existe sin datos.
   const [entrenando, setEntrenando] = useState<DiaDeRutina | null>(null);
+  // Contador de reps con cámara: otro MODO de esta pantalla (no una ruta),
+  // igual que el circuito. Sólo se ofrece en el celular — ver `esCelular`.
+  const [contando, setContando] = useState(false);
+  const [puedeContar] = useState(() => esCelular());
+  // Armar/rehacer la rutina propia: otro MODO de esta pantalla (no una ruta).
+  const [armando, setArmando] = useState(false);
+  const [eliminando, setEliminando] = useState(false);
 
   const idSocio = useAuthStore((s) => s.idSocio);
 
@@ -130,6 +140,20 @@ export function MiRutinaView() {
 
   const recargar = useCallback(() => setIntento((n) => n + 1), []);
 
+  const eliminarPropia = useCallback(async () => {
+    if (eliminando) return;
+    setEliminando(true);
+    setError(null);
+    try {
+      await eliminarMiRutinaPropia();
+      setRutina(null);
+    } catch (err: unknown) {
+      setError(mensajeDeError(err));
+    } finally {
+      setEliminando(false);
+    }
+  }, [eliminando]);
+
   if (idSocio === null) {
     return <SinSocioEnSesion titulo="Mi rutina" />;
   }
@@ -150,9 +174,27 @@ export function MiRutinaView() {
         />
       )}
 
+      {contando && <ContadorReps onSalir={() => setContando(false)} />}
+
+      {armando && (
+        <ArmarMiRutina
+          onCerrar={() => setArmando(false)}
+          onGuardada={(r) => {
+            setRutina(r);
+            setArmando(false);
+          }}
+        />
+      )}
+
       <Topbar
         title="Mi rutina"
-        subtitle={cargado && rutina ? `Te la armó ${rutina.entrenador}` : undefined}
+        subtitle={
+          cargado && rutina
+            ? rutina.esPropia
+              ? 'Te la armaste vos'
+              : `Te la armó ${rutina.entrenador}`
+            : undefined
+        }
       />
 
       <div className="space-y-4 p-4 md:p-8">
@@ -179,6 +221,32 @@ export function MiRutinaView() {
             quien preguntarle. */}
         {!error && cargado && <MiEntrenadorCard />}
 
+        {/* Contador de reps con cámara — sólo en el celular (parás el teléfono
+            y apuntás). En una compu ni aparece. Prototipo: por ahora abre la
+            cámara y te dibuja el cuerpo; el conteo llega en el próximo paso. */}
+        {!error && cargado && puedeContar && (
+          <SectionCard>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-heading text-base font-semibold text-text-main">
+                  Contar repeticiones{' '}
+                  <span className="align-middle text-xs font-normal text-primary-volt">
+                    beta
+                  </span>
+                </p>
+                <p className="font-body text-xs text-text-secondary">
+                  Apoyá el teléfono y la cámara sigue tu movimiento. No sale del dispositivo.
+                </p>
+              </div>
+              <PrimaryButton
+                label="Probar"
+                icon={Camera}
+                onClick={() => setContando(true)}
+              />
+            </div>
+          </SectionCard>
+        )}
+
         {!error && cargado && !rutina && (
           <SectionCard>
             <div className="flex flex-col items-center gap-3 py-8 text-center">
@@ -187,9 +255,16 @@ export function MiRutinaView() {
                 Todavía no tenés una rutina asignada
               </p>
               <p className="max-w-md font-body text-sm text-text-secondary">
-                Tu entrenador te va a asignar una pronto. Si ya arrancaste a entrenar y no la ves
-                acá, comentáselo la próxima vez que lo cruces.
+                Tu entrenador te va a asignar una pronto. Si querés, mientras tanto podés
+                armarte una vos mismo.
               </p>
+              <button
+                type="button"
+                onClick={() => setArmando(true)}
+                className="mt-2 flex items-center gap-2 rounded-lg bg-primary-volt px-5 py-3 font-body text-base font-semibold whitespace-nowrap text-surface-base active:opacity-90"
+              >
+                <Sparkles size={18} /> Armar mi rutina
+              </button>
             </div>
           </SectionCard>
         )}
@@ -220,9 +295,31 @@ export function MiRutinaView() {
               </div>
 
               <p className="mt-4 border-t border-border-idle pt-4 font-body text-xs text-text-muted">
-                La tenés asignada desde el{' '}
+                {rutina.esPropia ? 'La armaste el ' : 'La tenés asignada desde el '}
                 {formatearFecha(parsearFecha(rutina.fechaInicio))}.
               </p>
+
+              {/* Editar/eliminar SÓLO en la rutina propia: la del entrenador no
+                  la toca el socio. */}
+              {rutina.esPropia && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setArmando(true)}
+                    className="flex items-center gap-2 rounded-lg border border-border-idle px-4 py-2 font-body text-sm whitespace-nowrap text-text-secondary"
+                  >
+                    <Pencil size={15} /> Rehacer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void eliminarPropia()}
+                    disabled={eliminando}
+                    className="flex items-center gap-2 rounded-lg border border-border-idle px-4 py-2 font-body text-sm whitespace-nowrap text-status-danger disabled:opacity-40"
+                  >
+                    <Trash2 size={15} /> {eliminando ? 'Eliminando…' : 'Eliminar'}
+                  </button>
+                </div>
+              )}
 
               {/* La rutina se dio de baja pero la asignación sigue viva: el
                   socio tiene que saberlo, no descubrirlo entrenando. */}

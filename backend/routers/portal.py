@@ -47,11 +47,11 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import (
-    Actividad, AsignacionDieta, AsignacionEntrenador, AsignacionRutina, Asistencia, Baja, Congelamiento, ContactoEmergencia, InscripcionActividad, Membresia, Pago, Patologia, Persona, RegistroSalud, Reserva, Socio, SocioPatologia, Telefono, Turno,
+    Actividad, AsignacionDieta, AsignacionEntrenador, AsignacionRutina, Asistencia, Baja, Congelamiento, ContactoEmergencia, Ejercicio, InscripcionActividad, Membresia, Pago, Patologia, Persona, RegistroEjercicio, RegistroSalud, Reserva, Rutina, RutinaEjercicio, Socio, SocioPatologia, Telefono, Turno,
 )
 from permisos import Seccion
 from schemas import (
-    ActividadOut, AsignacionDietaOut, AsignacionEntrenadorOut, AsignacionRutinaOut, AsignarPatologiaRequest, AsistenciaOut, BajaPropiaRequest, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, CongelamientoOut, CongelarRequest, DietaOut, InscripcionOut, MedicionCrear, MedicionOut, MensajeResponse, MiComidaOut, MiCuotaOut, MiDiaDeDietaOut, MiDietaOut, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRutinaOut, PagoOut, PatologiaDeSocioOut, PatologiaOut, ReservaOut, RutinaOut, TurnoDisponibleOut,
+    ActividadOut, AsignacionDietaOut, AsignacionEntrenadorOut, AsignacionRutinaOut, AsignarPatologiaRequest, AsistenciaOut, BajaPropiaRequest, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, CongelamientoOut, CongelarRequest, DietaOut, EjercicioOut, InscripcionOut, MedicionCrear, MedicionOut, MensajeResponse, MiComidaOut, MiCuotaOut, MiDiaDeDietaOut, MiDietaOut, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRutinaOut, MiRutinaPropiaCrear, PagoOut, PatologiaDeSocioOut, PatologiaOut, RegistroEjercicioCrear, RegistroEjercicioOut, ReservaOut, RutinaOut, TurnoDisponibleOut,
 )
 from notificaciones import notificar_promocion_lista_espera
 from turnos import ocupacion, promover_de_lista_de_espera
@@ -235,8 +235,18 @@ def mi_rutina(
     if asignacion is None or asignacion.rutina is None:
         return None
 
-    # Se reusa el armador del router de gestión para los ejercicios —la rutina
-    # es la misma— y se le suma lo que solo existe en la asignación.
+    return _armar_mi_rutina(asignacion)
+
+
+def _armar_mi_rutina(asignacion) -> MiRutinaOut:
+    """
+    Arma la respuesta de 'mi rutina' a partir de la asignación activa.
+
+    Se reusa el armador del router de gestión para los ejercicios —la rutina es
+    la misma— y se le suma lo que sólo existe en la asignación. Sirve tanto para
+    una rutina de entrenador como para una propia (id_entrenador NULL): en ese
+    caso `entrenador` viene como "Rutina propia" desde _a_rutina_out.
+    """
     from routers.rutinas import _a_rutina_out
     base = _a_rutina_out(asignacion.rutina)
 
@@ -247,6 +257,8 @@ def mi_rutina(
         objetivo=base.objetivo,
         dias_por_semana=base.dias_por_semana,
         entrenador=base.entrenador,
+        # Propia ⟺ sin entrenador. La UI habilita editar/eliminar sólo en ese caso.
+        es_propia=base.id_entrenador is None,
         # La rutina se dio de baja del catálogo pero la asignación sigue
         # activa: el socio la termina. La vista lo avisa.
         rutina_de_baja=not base.activo,
@@ -281,6 +293,155 @@ def mi_historial_rutinas(
         )
         for a in asignaciones
     ]
+
+
+@router.get("/mi-rutina/ejercicios", response_model=list[EjercicioOut])
+def catalogo_ejercicios(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_RUTINA)),
+):
+    """
+    El catálogo de ejercicios, para que el socio arme su rutina propia.
+
+    Es el MISMO catálogo que ve el personal en /rutinas/ejercicios, pero ese
+    pide la sección RUTINAS (de gestión) y el socio no la tiene. Acá se expone
+    bajo MI_RUTINA —que sí tiene— porque es sólo lectura del catálogo, no de
+    ninguna rutina: elegir de qué ejercicios se arma la propia.
+    """
+    return db.query(Ejercicio).order_by(Ejercicio.grupo_muscular, Ejercicio.nombre).all()
+
+
+def _asignacion_activa(db: Session, id_socio: int) -> AsignacionRutina | None:
+    """La asignación de rutina ACTIVA del socio, o None."""
+    return (
+        db.query(AsignacionRutina)
+        .filter(AsignacionRutina.id_socio == id_socio,
+                AsignacionRutina.estado == "ACTIVA")
+        .first()
+    )
+
+
+@router.post("/mi-rutina/propia", response_model=MiRutinaOut,
+             status_code=status.HTTP_201_CREATED)
+def crear_mi_rutina_propia(
+    datos: MiRutinaPropiaCrear,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_RUTINA)),
+):
+    """
+    El socio se arma su PROPIA rutina y queda asignada a él, activa.
+
+    Es exactamente el mismo mecanismo que una rutina de entrenador (Rutina +
+    Rutina_Ejercicio + Asignacion_Rutina), con dos diferencias que la hacen
+    suya y de nadie más:
+
+      1. `id_entrenador` queda en NULL. Eso la marca como propia y, del lado del
+         personal, la vuelve invisible: no aparece en el catálogo ni se puede
+         asignar a otro (ver _rutina_del_staff en routers/rutinas.py).
+      2. El socio destino NO se elige: sale del token. Ni el nombre del
+         entrenador ni un id_socio ajeno se pueden expresar desde el schema. No
+         hay forma de que termine asignada a otra persona.
+
+    Sobre la rutina que ya tenía (una sola activa por socio, índice parcial):
+      - Si es una del ENTRENADOR, se rechaza (409). La del profe manda: el socio
+        no la pisa solo. Que la cambie el entrenador.
+      - Si es una PROPIA anterior, se reemplaza: la vieja queda FINALIZADA y
+        desactivada (es suya, nadie más la sigue), y esta pasa a ser la activa.
+    """
+    socio = _mi_socio(db, sesion)
+    hoy = date.today()
+
+    activa = _asignacion_activa(db, socio.id_socio)
+    if activa is not None and activa.rutina is not None:
+        if activa.rutina.id_entrenador is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Ya tenés una rutina asignada por tu entrenador. "
+                       "Para cambiarla, hablá con él.",
+            )
+        # Era una rutina propia anterior: se retira para dar lugar a la nueva.
+        activa.estado = "FINALIZADA"
+        activa.fecha_fin = hoy
+        activa.rutina.activo = False
+
+    # Todos los ejercicios se validan ANTES de insertar ninguno: si el tercero
+    # no existe, no tiene que quedar media rutina cargada.
+    for item in datos.ejercicios:
+        if db.get(Ejercicio, item.id_ejercicio) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"El ejercicio con id {item.id_ejercicio} no existe.",
+            )
+
+    rutina = Rutina(
+        id_entrenador=None,          # ← propia: sin entrenador
+        nombre=datos.nombre.strip(),
+        objetivo=datos.objetivo,
+        nivel=datos.nivel,
+        dias_por_semana=datos.dias_por_semana,
+        activo=True,
+    )
+    db.add(rutina)
+    db.flush()
+
+    for item in datos.ejercicios:
+        db.add(RutinaEjercicio(
+            id_rutina=rutina.id_rutina,
+            id_ejercicio=item.id_ejercicio,
+            dia=item.dia,
+            orden=item.orden,
+            series=item.series,
+            repeticiones=item.repeticiones,
+            peso_sugerido=item.peso_sugerido,
+            descanso_segundos=item.descanso_segundos,
+            observaciones=item.observaciones,
+        ))
+
+    # El flush ordena el INSERT nuevo DESPUÉS del UPDATE que finalizó la
+    # anterior: el índice parcial "una sola activa" es NOT DEFERRABLE y se
+    # evalúa por sentencia. Es el mismo detalle que en asignar_rutina.
+    db.flush()
+
+    asignacion = AsignacionRutina(
+        id_socio=socio.id_socio,
+        id_rutina=rutina.id_rutina,
+        fecha_inicio=hoy,
+        estado="ACTIVA",
+    )
+    db.add(asignacion)
+    db.commit()
+    db.refresh(asignacion)
+
+    return _armar_mi_rutina(asignacion)
+
+
+@router.delete("/mi-rutina/propia", response_model=MensajeResponse)
+def eliminar_mi_rutina_propia(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_RUTINA)),
+):
+    """
+    Retira la rutina propia activa del socio.
+
+    Sólo toca una rutina PROPIA (id_entrenador NULL) asignada a sí mismo: si la
+    activa es la del entrenador, se rechaza (esa no la maneja el socio). La
+    asignación queda FINALIZADA y la rutina desactivada — no se borra, para no
+    romper el historial ni los Registro_Ejercicio que apuntan a sus ejercicios.
+    """
+    socio = _mi_socio(db, sesion)
+
+    activa = _asignacion_activa(db, socio.id_socio)
+    if activa is None or activa.rutina is None or activa.rutina.id_entrenador is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No tenés una rutina propia activa para eliminar.",
+        )
+
+    activa.estado = "FINALIZADA"
+    activa.fecha_fin = date.today()
+    activa.rutina.activo = False
+    db.commit()
+    return MensajeResponse(mensaje="Tu rutina se eliminó.")
 
 
 # =============================================================================
@@ -735,6 +896,88 @@ def cargar_medicion(
     db.commit()
     db.refresh(medicion)
     return MedicionOut.model_validate(medicion)
+
+
+def _sumar_reps(previas: str | None, reps: int) -> str:
+    """
+    Agrega las reps de la serie nueva a la lista "12,10,8" respetando el
+    varchar(20) de la columna. Si no entran todas, se van cayendo las MÁS
+    VIEJAS: en una rutina lo que importa es cómo terminó la sesión, no la
+    primera serie de un día que tuvo diez.
+    """
+    partes = [p for p in (previas or "").split(",") if p] + [str(reps)]
+    while len(",".join(partes)) > 20 and len(partes) > 1:
+        partes.pop(0)
+    return ",".join(partes)
+
+
+@router.post("/mi-rutina/registro-ejercicio", response_model=RegistroEjercicioOut,
+             status_code=status.HTTP_201_CREATED)
+def cargar_registro_ejercicio(
+    datos: RegistroEjercicioCrear,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_RUTINA)),
+):
+    """
+    Registra una serie que el socio hizo, contada por la cámara del circuito.
+
+    El grano de Registro_Ejercicio es (socio, ejercicio, fecha) —hay un índice
+    único encima—, así que NO se da de alta una fila por serie: la primera
+    serie del ejercicio en el día crea la fila y cada serie siguiente la
+    ACUMULA (una más en series_hechas, sus reps agregadas a la lista, y el peso
+    se queda con el MÁXIMO del día, que es lo que cuenta para el récord). Es un
+    upsert, no un insert, y por eso es idempotente-por-serie sólo del lado del
+    cliente: cada llamada suma una serie real.
+
+    El id_ejercicio se valida acá aunque la FK exista, porque la FK es DIFERIDA
+    y sin este chequeo un id inventado explotaría recién en el commit con un
+    error feo en vez de un 404 claro.
+    """
+    socio = _mi_socio(db, sesion)
+    hoy = date.today()
+
+    if db.get(Ejercicio, datos.id_ejercicio) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No existe ese ejercicio.",
+        )
+
+    registro = (
+        db.query(RegistroEjercicio)
+        .filter(
+            RegistroEjercicio.id_socio == socio.id_socio,
+            RegistroEjercicio.id_ejercicio == datos.id_ejercicio,
+            RegistroEjercicio.fecha == hoy,
+        )
+        .first()
+    )
+
+    if registro is None:
+        registro = RegistroEjercicio(
+            id_socio=socio.id_socio,
+            id_ejercicio=datos.id_ejercicio,
+            fecha=hoy,
+            peso_hecho=datos.peso,
+            series_hechas=1,
+            repeticiones_hechas=str(datos.repeticiones),
+            observaciones=datos.observaciones,
+        )
+        db.add(registro)
+    else:
+        registro.series_hechas = (registro.series_hechas or 0) + 1
+        registro.repeticiones_hechas = _sumar_reps(
+            registro.repeticiones_hechas, datos.repeticiones
+        )
+        # El peso del día es el mayor que levantó: el récord = MAX(peso_hecho).
+        if datos.peso > float(registro.peso_hecho):
+            registro.peso_hecho = datos.peso
+        # Sólo pisa la observación si vino una nueva; no borra la anterior.
+        if datos.observaciones:
+            registro.observaciones = datos.observaciones
+
+    db.commit()
+    db.refresh(registro)
+    return RegistroEjercicioOut.model_validate(registro)
 
 
 def _a_reserva_out(db, reserva, turno) -> ReservaOut:

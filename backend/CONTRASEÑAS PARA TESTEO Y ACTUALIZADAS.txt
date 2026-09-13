@@ -3,29 +3,31 @@ CONTRASEÑAS DE TESTEO — OlimpOS
 Anotar acá TODA cuenta que se cree, del backend o de cualquiera de las dos apps.
 
 ╔════════════════════════════════════════════════════════════════════════════╗
-║ ACTUALIZACIÓN 2026-09-12 — BASE RECONSTRUIDA CON EL SCHEMA NUEVO (41 tablas) ║
+║ ESTADO 2026-09-12 (tarde) — BASE EN MODO DEMO, para probar el contador de   ║
+║ reps en el celular. Esto pisa la nota anterior del reset.                   ║
 ╠════════════════════════════════════════════════════════════════════════════╣
-║ Neon se reseteó desde CERO con D:\OlimpOs\schema.sql + D:\OlimpOs\seed.sql.  ║
-║ Estado actual de la base:                                                    ║
-║   · 41 tablas, sin tabla Deuda, con Contacto_Emergencia / Franja_Laboral /   ║
-║     Catalogo_Comida / Registro_Ejercicio / Registro_Comida.                  ║
-║   · Datos de seed: dueño (Persona/Dueno/Sede), 3 actividades + 9 planes      ║
-║     (incluye "Clase suelta"), 3 tipos de membresía, 3 franjas, 6 patologías, ║
-║     12 ejercicios, 11 platos de catálogo, 4 empleados de ejemplo (SIN cuenta)║
-║     y 1 socio completo: Camila Ríos, DNI 42556677, S-0001 (SIN cuenta).      ║
-║   · 0 filas en Usuario: la cuenta `dueno` la CREA el seeder al primer        ║
-║     arranque del backend, con DUENO_INICIAL_PASSWORD del .env                ║
-║     (hoy: "cambiar-esto-en-el-primer-ingreso") y debe_cambiar_password=true. ║
+║ La base está reconstruida con el schema nuevo (41 tablas) Y con el escenario ║
+║ demo cargado (pruebas/escenario_demo.py). Por lo tanto, AHORA MISMO:         ║
 ║                                                                              ║
-║ LAS CUENTAS DEMO DE ABAJO (ana.gomez, beto.ruiz, caro.diaz, rita.lopez,     ║
-║ juan.perez, lucia.marino, nico.sosa) YA NO EXISTEN: eran del escenario viejo.║
-║ Los 4 empleados del seed nuevo NO tienen cuenta hasta que se les cree una.   ║
+║   · TODAS las cuentas de la tabla de abajo EXISTEN y andan con  Demo2026!    ║
+║     — INCLUÍDO `dueno`, que en modo demo también queda con Demo2026!         ║
+║     (escenario_demo entra con la inicial del .env y la cambia).             ║
+║   · Además se sembraron 3 franjas laborales (Mañana/Tarde/Noche) y a Rita    ║
+║     se le asignó "Tarde", para que el selector de turno tenga opciones.      ║
+║                                                                              ║
+║ Para volver al estado de ENTREGA (6 filas, sólo `dueno` con la clave inicial ║
+║ del .env pidiendo cambio): pruebas/vaciar_base.py --si                       ║
+║ Para volver a llenar el demo: pruebas/escenario_demo.py                      ║
+║                                                                              ║
+║ NO se crearon cuentas nuevas fuera de las de escenario_demo.                 ║
 ╚════════════════════════════════════════════════════════════════════════════╝
 
 
 USERNAME              PASSWORD              ROL            NOTAS
 --------------------  --------------------  -------------  ---------------------------
-dueno                 dueno 1234            Dueño          Entra directo.
+dueno                 Demo2026!             Dueño          En modo demo. (Tras
+                                                           vaciar_base vuelve a la
+                                                           inicial del .env; ver OJO 1.)
 ana.gomez             Demo2026!             Entrenador     Musculación. A cargo de Juan
                                                            y de Lucía.
 beto.ruiz             Demo2026!             Entrenador     Funcional. A cargo de Juan;

@@ -139,6 +139,10 @@ export async function actualizarMisDatosDeContacto(
 
 export interface EjercicioDelDia {
   idRutinaEjercicio: number;
+  /** Id del ejercicio en el CATÁLOGO (Ejercicio), no el de la fila de la
+   *  plantilla. Es el que necesita Registro_Ejercicio al anotar una serie
+   *  hecha: el contador con cámara lo manda al backend. */
+  idEjercicio: number;
   nombre: string;
   grupoMuscular: string;
   series?: number;
@@ -161,6 +165,8 @@ export interface MiRutina {
   objetivo?: string;
   diasPorSemana?: number;
   entrenador: string;
+  /** True si es la rutina PROPIA del socio (la puede editar/eliminar él). */
+  esPropia: boolean;
   /** La rutina fue dada de baja pero la asignación sigue activa. */
   rutinaDeBaja: boolean;
   /** Desde cuándo la tiene asignada. Viene de la asignación, no de la plantilla. */
@@ -175,10 +181,12 @@ interface RutinaApi {
   objetivo: string | null;
   dias_por_semana: number | null;
   entrenador: string;
+  es_propia?: boolean;
   rutina_de_baja: boolean;
   fecha_inicio: string;
   ejercicios: {
     id_rutina_ejercicio: number;
+    id_ejercicio: number;
     nombre_ejercicio: string;
     grupo_muscular: string;
     dia: number;
@@ -208,6 +216,7 @@ function agruparPorDia(ejercicios: RutinaApi['ejercicios']): DiaDeRutina[] {
     }
     grupo.ejercicios.push({
       idRutinaEjercicio: e.id_rutina_ejercicio,
+      idEjercicio: e.id_ejercicio,
       nombre: e.nombre_ejercicio,
       grupoMuscular: e.grupo_muscular,
       series: e.series ?? undefined,
@@ -227,9 +236,7 @@ function agruparPorDia(ejercicios: RutinaApi['ejercicios']): DiaDeRutina[] {
  * La vista muestra "todavía no tenés rutina asignada" en vez de una pantalla
  * de error.
  */
-export async function getMiRutina(): Promise<MiRutina | null> {
-  const r = await pedir<RutinaApi | null>('/portal/mi-rutina');
-  if (!r) return null;
+function mapearMiRutina(r: RutinaApi): MiRutina {
   return {
     idRutina: r.id_rutina,
     nombre: r.nombre,
@@ -237,13 +244,112 @@ export async function getMiRutina(): Promise<MiRutina | null> {
     objetivo: r.objetivo ?? undefined,
     diasPorSemana: r.dias_por_semana ?? undefined,
     entrenador: r.entrenador,
+    esPropia: r.es_propia ?? false,
     // La rutina se dio de baja del catálogo pero la asignación sigue activa:
     // el socio la termina. La vista lo avisa para que sepa que no se la van a
-    // renovar.
+    // renovar. (En una rutina propia esto no pasa: la maneja el mismo socio.)
     rutinaDeBaja: r.rutina_de_baja,
     fechaInicio: r.fecha_inicio,
     dias: agruparPorDia(r.ejercicios),
   };
+}
+
+export async function getMiRutina(): Promise<MiRutina | null> {
+  const r = await pedir<RutinaApi | null>('/portal/mi-rutina');
+  if (!r) return null;
+  return mapearMiRutina(r);
+}
+
+// =========================================================================
+// MI RUTINA PROPIA — el socio se la arma solo (id_entrenador NULL)
+// =========================================================================
+// Es el mismo mecanismo que una rutina de entrenador, pero suya y de nadie más:
+// invisible para el personal, no asignable a otro. El backend la crea a NULL y
+// se la autoasigna al id del token. Ver routers/portal.py.
+
+/** Un ejercicio del catálogo, para elegir al armar la rutina propia. */
+export interface EjercicioCatalogo {
+  idEjercicio: number;
+  nombre: string;
+  grupoMuscular: string;
+  descripcion?: string;
+  requiereMaquina: boolean;
+}
+
+interface EjercicioCatalogoApi {
+  id_ejercicio: number;
+  nombre: string;
+  grupo_muscular: string;
+  descripcion: string | null;
+  url_video: string | null;
+  requiere_maquina: boolean;
+}
+
+/** El catálogo de ejercicios del que el socio elige (agrupado por músculo en la UI). */
+export async function listarEjerciciosCatalogo(): Promise<EjercicioCatalogo[]> {
+  const r = await pedir<EjercicioCatalogoApi[]>('/portal/mi-rutina/ejercicios');
+  return r.map((e) => ({
+    idEjercicio: e.id_ejercicio,
+    nombre: e.nombre,
+    grupoMuscular: e.grupo_muscular,
+    descripcion: e.descripcion ?? undefined,
+    requiereMaquina: e.requiere_maquina,
+  }));
+}
+
+/** Un ejercicio tal como el socio lo agrega a SU rutina (con sus series/reps). */
+export interface EjercicioParaRutina {
+  idEjercicio: number;
+  dia: number;
+  orden: number;
+  series?: number;
+  repeticiones?: string;
+  pesoSugerido?: number;
+  descansoSegundos?: number;
+  observaciones?: string;
+}
+
+export interface MiRutinaPropiaNueva {
+  nombre: string;
+  objetivo?: string;
+  nivel?: string;
+  diasPorSemana?: number;
+  ejercicios: EjercicioParaRutina[];
+}
+
+/**
+ * Crea (o rehace) la rutina propia del socio y la deja activa.
+ *
+ * Si ya tenía una del ENTRENADOR activa, el backend rechaza con 409 (la del
+ * profe manda). Si tenía una propia anterior, la reemplaza. El socio destino
+ * NO se manda: sale del token.
+ */
+export async function crearMiRutinaPropia(datos: MiRutinaPropiaNueva): Promise<MiRutina> {
+  const r = await pedir<RutinaApi>('/portal/mi-rutina/propia', {
+    metodo: 'POST',
+    cuerpo: {
+      nombre: datos.nombre.trim(),
+      objetivo: datos.objetivo?.trim() || null,
+      nivel: datos.nivel?.trim() || null,
+      dias_por_semana: datos.diasPorSemana ?? null,
+      ejercicios: datos.ejercicios.map((e) => ({
+        id_ejercicio: e.idEjercicio,
+        dia: e.dia,
+        orden: e.orden,
+        series: e.series ?? null,
+        repeticiones: e.repeticiones?.trim() || null,
+        peso_sugerido: e.pesoSugerido ?? null,
+        descanso_segundos: e.descansoSegundos ?? null,
+        observaciones: e.observaciones?.trim() || null,
+      })),
+    },
+  });
+  return mapearMiRutina(r);
+}
+
+/** Retira la rutina propia activa (queda como historial; no se borra). */
+export async function eliminarMiRutinaPropia(): Promise<void> {
+  await pedir('/portal/mi-rutina/propia', { metodo: 'DELETE' });
 }
 
 // =========================================================================
@@ -418,6 +524,39 @@ export async function guardarMedicion(datos: NuevaMedicion): Promise<void> {
       altura: datos.altura ?? null,
       grasa_corporal: datos.grasaCorporal ?? null,
       masa_muscular: datos.masaMuscular ?? null,
+      observaciones: datos.observaciones?.trim() || null,
+    },
+  });
+}
+
+/** Una serie que el socio hizo, contada por la cámara del circuito. */
+export interface RegistroEjercicioNuevo {
+  idEjercicio: number;
+  /** Reps contadas en ESTA serie. */
+  repeticiones: number;
+  /** kg. La cámara no lo sabe: lo carga el socio al terminar. 0 si no lo cargó. */
+  peso: number;
+  observaciones?: string;
+}
+
+/**
+ * Anota una serie hecha en Registro_Ejercicio.
+ *
+ * El grano de esa tabla es (socio, ejercicio, fecha): el backend hace UPSERT,
+ * así que varias series del mismo ejercicio en el día se acumulan en una fila.
+ * Por eso NO hay que preocuparse acá por deduplicar: cada llamada suma una
+ * serie real.
+ *
+ * La reintenta la cola offline (utils/colaRegistros): esta función sólo hace
+ * el pedido y deja que el error (de red o del server) suba.
+ */
+export async function guardarRegistroEjercicio(datos: RegistroEjercicioNuevo): Promise<void> {
+  await pedir('/portal/mi-rutina/registro-ejercicio', {
+    metodo: 'POST',
+    cuerpo: {
+      id_ejercicio: datos.idEjercicio,
+      repeticiones: datos.repeticiones,
+      peso: datos.peso,
       observaciones: datos.observaciones?.trim() || null,
     },
   });

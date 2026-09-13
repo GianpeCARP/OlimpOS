@@ -880,6 +880,37 @@ class MedicionCrear(BaseModel):
     observaciones: str | None = None
 
 
+class RegistroEjercicioOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id_registro_ejercicio: int
+    id_ejercicio: int
+    fecha: date
+    peso_hecho: float
+    series_hechas: int | None = None
+    # varchar(20) en la base: una lista corta de reps por serie, "12,10,8".
+    repeticiones_hechas: str | None = None
+    observaciones: str | None = None
+
+
+class RegistroEjercicioCrear(BaseModel):
+    """
+    Una serie que el socio EFECTIVAMENTE hizo, cargada desde el contador con
+    cámara del circuito. El grano de la tabla es (socio, ejercicio, fecha), así
+    que varias series del mismo ejercicio en el día se ACUMULAN en una fila: no
+    es un alta por serie sino un upsert que suma.
+    """
+    id_ejercicio: int
+    # Reps contadas por la cámara en ESTA serie. >0 porque una serie de cero
+    # reps no es una serie; el tope ataja un contador desbocado.
+    repeticiones: int = Field(ge=1, le=999)
+    # La cámara no sabe el peso: lo pone el socio al terminar. Opcional —si no
+    # lo carga, queda 0 y la fila sirve igual para el conteo de reps— con topes
+    # que atajan el dedazo evidente sin ser una regla del negocio.
+    peso: float = Field(default=0, ge=0, le=500)
+    observaciones: str | None = Field(default=None, max_length=200)
+
+
 class MiProgresoOut(BaseModel):
     """Serie de mediciones más los números que el encabezado ya muestra."""
     # De la más vieja a la más nueva: así se lee el gráfico de izquierda a
@@ -1017,9 +1048,29 @@ class RutinaEditarRequest(BaseModel):
     id_entrenador: int | None = None
 
 
+class MiRutinaPropiaCrear(BaseModel):
+    """
+    La rutina que el socio se arma para sí mismo.
+
+    A propósito NO tiene `id_entrenador`: una rutina propia no tiene entrenador
+    (queda en NULL) y no se le asigna a nadie más que a su autor. El socio ni
+    siquiera puede EXPRESAR un entrenador o un socio destino desde acá — el
+    backend la crea a NULL y se la autoasigna al id del token.
+    """
+    nombre: str = Field(min_length=1, max_length=100)
+    objetivo: str | None = Field(default=None, max_length=100)
+    nivel: str | None = Field(default=None, max_length=20)
+    dias_por_semana: int | None = Field(default=None, ge=1, le=7)
+    # Al menos uno: una rutina sin ejercicios no sirve para entrenar ni para el
+    # circuito. El orden/día los arma el cliente.
+    ejercicios: list[RutinaEjercicioCrear] = Field(min_length=1)
+
+
 class RutinaOut(BaseModel):
     id_rutina: int
-    id_entrenador: int
+    # None = rutina propia del socio (sin entrenador). El texto de `entrenador`
+    # en ese caso es "Rutina propia".
+    id_entrenador: int | None = None
     entrenador: str
     nombre: str
     objetivo: str | None = None
@@ -1362,6 +1413,9 @@ class MiRutinaOut(BaseModel):
     objetivo: str | None = None
     dias_por_semana: int | None = None
     entrenador: str
+    # True si es la rutina PROPIA del socio (sin entrenador): la puede editar y
+    # eliminar él. Una del entrenador, no.
+    es_propia: bool = False
     rutina_de_baja: bool = False
     fecha_inicio: date
     ejercicios: list[RutinaEjercicioOut] = []

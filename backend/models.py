@@ -542,11 +542,17 @@ class Rutina(Base):
     Esa separación es la que permite que una misma rutina se le asigne a
     quince personas sin duplicarla, y que cada una tenga sus propias fechas de
     inicio y fin.
+
+    EXCEPCIÓN — id_entrenador NULL = RUTINA PROPIA de un socio: se la arma él
+    mismo, sin entrenador. El dueño se DERIVA de la Asignacion_Rutina (una
+    rutina propia se asigna sólo a su autor). Es invisible para el personal: los
+    endpoints del staff tratan id_entrenador NULL como inexistente, así que
+    nunca aparece en el catálogo de rutinas a asignar.
     """
     __tablename__ = "Rutina"
 
     id_rutina = Column(Integer, primary_key=True)
-    id_entrenador = Column(Integer, ForeignKey("Entrenador.id_entrenador"), nullable=False)
+    id_entrenador = Column(Integer, ForeignKey("Entrenador.id_entrenador"), nullable=True)
     nombre = Column(String(100), nullable=False)
     objetivo = Column(String(100))
     nivel = Column(String(20))

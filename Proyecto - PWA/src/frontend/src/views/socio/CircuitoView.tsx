@@ -1,6 +1,9 @@
-import { useEffect, useRef } from 'react';
-import { Check, ChevronsRight, Pause, Play, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Camera, Check, ChevronsRight, Pause, Play, X } from 'lucide-react';
 import type { DiaDeRutina } from '../../services/socioService';
+import { esCelular } from '../../utils/dispositivo';
+import { movimientoDeEjercicio } from './logicaReps';
+import { ContadorReps } from './ContadorReps';
 import { useCircuito } from './useCircuito';
 
 // El circuito: un ejercicio a la vez, a pantalla completa.
@@ -51,6 +54,13 @@ export function CircuitoView({
 }: CircuitoViewProps) {
   const c = useCircuito({ dia, idRutina, onSalir });
   const contenedor = useRef<HTMLDivElement>(null);
+
+  // Contar reps con la cámara para el ejercicio ACTUAL (sólo en celular, y sólo
+  // si ese ejercicio está soportado por el contador). El movimiento sale
+  // mapeado del catálogo: acá el socio no elige nada, ya está en su serie.
+  const [contando, setContando] = useState(false);
+  const [puedeContar] = useState(() => esCelular());
+  const movCamara = c.ejercicio ? movimientoDeEjercicio(c.ejercicio.nombre) : null;
 
   // --- Pantalla completa ---------------------------------------------------
   // La API de fullscreen SI funciona sobre HTTP (sólo pide un gesto del
@@ -156,6 +166,18 @@ export function CircuitoView({
   }
 
   const enDescanso = c.fase === 'descanso';
+
+  // El contador se monta ENCIMA del circuito; al cerrarlo (X) se vuelve acá,
+  // a la misma serie. El circuito no se desmonta por debajo.
+  if (contando && movCamara && c.ejercicio) {
+    return (
+      <ContadorReps
+        movimientoFijo={movCamara}
+        idEjercicio={c.ejercicio.idEjercicio}
+        onSalir={() => setContando(false)}
+      />
+    );
+  }
 
   return (
     <div
@@ -289,6 +311,18 @@ export function CircuitoView({
             className="w-full rounded-xl bg-primary-volt py-5 font-heading text-xl font-bold whitespace-nowrap text-surface-base active:opacity-90 md:py-6"
           >
             {c.serie >= c.totalSeries ? 'Terminar ejercicio' : 'Serie completada'}
+          </button>
+        )}
+        {/* Contar con la cámara: sólo en celular y sólo si el ejercicio actual
+            está soportado por el contador. Como no lo está la mayoría todavía,
+            aparece sólo cuando de verdad sirve. */}
+        {!enDescanso && puedeContar && movCamara && (
+          <button
+            type="button"
+            onClick={() => setContando(true)}
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-border-idle py-3 font-body text-sm whitespace-nowrap text-text-secondary"
+          >
+            <Camera size={16} /> Contar con cámara
           </button>
         )}
         {!enDescanso && c.progreso.total > 1 && (

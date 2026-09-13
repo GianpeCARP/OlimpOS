@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import basicSsl from '@vitejs/plugin-basic-ssl'
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -9,6 +10,11 @@ export default defineConfig(({ mode }) => {
   // código de la app NUNCA habla con esta URL directamente.
   const destinoApi = loadEnv(mode, process.cwd(), '').API_PROXY_DESTINO
     ?? 'http://127.0.0.1:8000'
+
+  // HTTPS en la LAN, sólo cuando se pide con VITE_HTTPS=1. Sirve para probar
+  // en el celular (la cámara del contador de reps exige contexto seguro y por
+  // la IP en HTTP no anda). No afecta el `npm run dev` normal.
+  const httpsLan = process.env.VITE_HTTPS === '1'
 
   return {
   // =======================================================================
@@ -42,6 +48,10 @@ export default defineConfig(({ mode }) => {
   // La app Flet no pasa por acá: es de escritorio, le pega directo al backend
   // y se autentica con Bearer, que no depende de cookies ni de orígenes.
   server: {
+    // Con VITE_HTTPS=1: se expone en la LAN (host) y se aceptan hosts por IP,
+    // para poder entrar desde el celular por la IP de la compu.
+    host: httpsLan ? true : undefined,
+    allowedHosts: httpsLan ? true : undefined,
     proxy: {
       '/api': {
         target: destinoApi,
@@ -54,10 +64,18 @@ export default defineConfig(({ mode }) => {
   },
 
   plugins: [
+    ...(httpsLan ? [basicSsl()] : []),
     react(),
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      // El modelo de pose y el WASM de MediaPipe (~35 MB) NO se precachean: son
+      // enormes y sólo los necesita quien usa el contador de reps. Se sirven
+      // como estáticos y se cargan on-demand la primera vez. Sin este ignore,
+      // vite-plugin-pwa aborta el build porque superan el límite de 2 MB.
+      workbox: {
+        globIgnores: ['**/mediapipe/**'],
+      },
       // devOptions APAGADO a proposito.
       //
       // Con `enabled: true` el plugin sirve el manifiesto y registra un

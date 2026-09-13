@@ -143,10 +143,15 @@ def _a_rutina_out(rutina: Rutina, con_ejercicios: bool = True) -> RutinaOut:
                 observaciones=re.observaciones,
             ))
 
+    # id_entrenador NULL ⟺ rutina propia (crear_rutina siempre resuelve un
+    # entrenador real, así que un NULL no puede venir de otro lado). El socio no
+    # tiene por qué ver "Sin asignar": lee "Rutina propia".
+    es_propia = rutina.id_entrenador is None
+
     return RutinaOut(
         id_rutina=rutina.id_rutina,
         id_entrenador=rutina.id_entrenador,
-        entrenador=_nombre_entrenador(rutina.entrenador),
+        entrenador="Rutina propia" if es_propia else _nombre_entrenador(rutina.entrenador),
         nombre=rutina.nombre,
         objetivo=rutina.objetivo,
         nivel=rutina.nivel,
@@ -156,6 +161,23 @@ def _a_rutina_out(rutina: Rutina, con_ejercicios: bool = True) -> RutinaOut:
         asignados=sum(1 for a in rutina.asignaciones if a.estado == "ACTIVA"),
         ejercicios=ejercicios,
     )
+
+
+def _rutina_del_staff(db: Session, id_rutina: int) -> Rutina:
+    """
+    Trae una rutina que el PERSONAL tiene derecho a ver, o 404.
+
+    Una rutina propia de un socio (id_entrenador NULL) es invisible del lado del
+    staff: se devuelve el MISMO 404 que si no existiera, a propósito. Un 403 —o
+    cualquier mensaje distinto— confirmaría que el id existe y es de alguien,
+    que es justo lo que no tiene que poder saberse desde acá. Así ningún
+    endpoint del personal (obtener, asignar, editar, baja, reactivar) puede
+    tocar ni enumerar la rutina propia de un socio.
+    """
+    rutina = db.get(Rutina, id_rutina)
+    if rutina is None or rutina.id_entrenador is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La rutina no existe.")
+    return rutina
 
 
 # =============================================================================
@@ -215,8 +237,20 @@ def listar_rutinas(
     db: Session = Depends(get_db),
     sesion: Sesion = Depends(requiere_seccion(Seccion.RUTINAS)),
 ):
-    """Catálogo de rutinas. Sin los ejercicios: la grilla muestra tarjetas."""
-    rutinas = db.query(Rutina).order_by(Rutina.id_rutina.desc()).all()
+    """
+    Catálogo de rutinas. Sin los ejercicios: la grilla muestra tarjetas.
+
+    Las rutinas PROPIAS de socios (id_entrenador NULL) NO están: el catálogo es
+    lo que un entrenador elige para asignar, y una rutina propia no se le asigna
+    a nadie más que a su autor. Que apareciera acá sería, literalmente, ofrecerla
+    para asignar a terceros.
+    """
+    rutinas = (
+        db.query(Rutina)
+        .filter(Rutina.id_entrenador.isnot(None))
+        .order_by(Rutina.id_rutina.desc())
+        .all()
+    )
     return [_a_rutina_out(r, con_ejercicios=False) for r in rutinas]
 
 
@@ -227,9 +261,7 @@ def obtener_rutina(
     sesion: Sesion = Depends(requiere_seccion(Seccion.RUTINAS)),
 ):
     """El detalle SÍ trae los ejercicios, ordenados por día y orden."""
-    rutina = db.get(Rutina, id_rutina)
-    if rutina is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La rutina no existe.")
+    rutina = _rutina_del_staff(db, id_rutina)
     return _a_rutina_out(rutina)
 
 
@@ -313,10 +345,12 @@ def asignar_rutina(
     día que alguien se olvide el socio queda con dos.
 
     La anterior NO se borra: queda como historial, con su estado en FINALIZADA.
+
+    Una rutina propia (id_entrenador NULL) NO se puede asignar por acá: da 404,
+    igual que una inexistente. Una rutina propia es de su autor y de nadie más;
+    el personal no puede endosársela a otro socio.
     """
-    rutina = db.get(Rutina, id_rutina)
-    if rutina is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La rutina no existe.")
+    rutina = _rutina_del_staff(db, id_rutina)
 
     socio = db.get(Socio, datos.id_socio)
     if socio is None:
@@ -390,10 +424,16 @@ def rutinas_de_socio(
     propia rutina va por el portal (`mi-rutina`), que filtra por el id_socio
     firmado en su token y no acepta un id por parámetro — si aceptara uno,
     cualquier socio podría pedir la rutina de otro cambiando un número.
+
+    Las rutinas PROPIAS del socio (id_entrenador NULL) quedan fuera también acá:
+    son suyas y no parte del historial que gestiona el personal. El socio las ve
+    por su portal; el staff, ni siquiera en el historial de asignaciones.
     """
     asignaciones = (
         db.query(AsignacionRutina)
-        .filter(AsignacionRutina.id_socio == id_socio)
+        .join(Rutina, Rutina.id_rutina == AsignacionRutina.id_rutina)
+        .filter(AsignacionRutina.id_socio == id_socio,
+                Rutina.id_entrenador.isnot(None))
         .order_by(AsignacionRutina.fecha_inicio.desc())
         .all()
     )
@@ -431,9 +471,7 @@ def editar_rutina(
     colega; el Dueño y el Recepcionista sí pueden reasignarla — es lo que hace
     falta cuando alguien se va del gimnasio.
     """
-    rutina = db.get(Rutina, id_rutina)
-    if rutina is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La rutina no existe.")
+    rutina = _rutina_del_staff(db, id_rutina)
 
     if datos.id_entrenador is not None and datos.id_entrenador != rutina.id_entrenador:
         rutina.id_entrenador = _resolver_entrenador(db, sesion, datos.id_entrenador).id_entrenador
@@ -465,9 +503,7 @@ def dar_de_baja_rutina(
     termina. Cortársela de un día para el otro dejaría a alguien sin plan de
     entrenamiento sin que nadie lo decidiera.
     """
-    rutina = db.get(Rutina, id_rutina)
-    if rutina is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La rutina no existe.")
+    rutina = _rutina_del_staff(db, id_rutina)
     if not rutina.activo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Esa rutina ya estaba desactivada.")
@@ -484,9 +520,7 @@ def reactivar_rutina(
     db: Session = Depends(get_db),
     sesion: Sesion = Depends(requiere_accion(Accion.GESTION_RUTINAS)),
 ):
-    rutina = db.get(Rutina, id_rutina)
-    if rutina is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La rutina no existe.")
+    rutina = _rutina_del_staff(db, id_rutina)
     if rutina.activo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Esa rutina ya estaba activa.")
