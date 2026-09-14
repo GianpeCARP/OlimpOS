@@ -5,7 +5,11 @@ import {
   Bolt,
   Flame,
   Minus,
+  Pencil,
+  Plus,
+  Sparkles,
   StickyNote,
+  Trash2,
   TrendingDown,
   TrendingUp,
   User,
@@ -14,11 +18,13 @@ import {
 import { PrimaryButton, SectionCard, Topbar } from '../../components/ui';
 import { ObjetivoDieta, colors, type ObjetivoDietaValue } from '../../config';
 import { mensajeDeError } from '../../services/api';
-import { getMiDieta, type MiDieta } from '../../services/socioService';
+import { eliminarMiDietaPropia, getMiDieta, type MiDieta } from '../../services/socioService';
 import { useAuthStore } from '../../store/authStore';
 import { formatearFecha, formatearNumero } from '../../utils/format';
 import { parsearFecha } from '../../utils/fechas';
 import { InfoPill } from '../rutinas/InfoPill';
+import { ArmarMiDieta } from './ArmarMiDieta';
+import { RegistrarComida } from './RegistrarComida';
 import { SinSocioEnSesion } from './SinSocioEnSesion';
 
 // Vista 4 del portal (docs/prompt_portal_socio.md). Espejo de MiRutinaView:
@@ -54,6 +60,11 @@ export function MiDietaView() {
   const [cargado, setCargado] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [intento, setIntento] = useState(0);
+  // Modos de esta pantalla (fixed inset-0), no rutas: armar/rehacer la dieta
+  // propia, y registrar lo que comió.
+  const [armando, setArmando] = useState(false);
+  const [registrando, setRegistrando] = useState(false);
+  const [eliminando, setEliminando] = useState(false);
 
   useEffect(() => {
     if (idSocio === null) return;
@@ -76,8 +87,38 @@ export function MiDietaView() {
 
   const recargar = useCallback(() => setIntento((n) => n + 1), []);
 
+  const eliminarPropia = useCallback(async () => {
+    if (eliminando) return;
+    setEliminando(true);
+    setError(null);
+    try {
+      await eliminarMiDietaPropia();
+      setDieta(null);
+    } catch (err: unknown) {
+      setError(mensajeDeError(err));
+    } finally {
+      setEliminando(false);
+    }
+  }, [eliminando]);
+
   if (idSocio === null) {
     return <SinSocioEnSesion titulo="Mi dieta" />;
+  }
+
+  if (armando) {
+    return (
+      <ArmarMiDieta
+        onCerrar={() => setArmando(false)}
+        onGuardada={(d) => {
+          setDieta(d);
+          setArmando(false);
+        }}
+      />
+    );
+  }
+
+  if (registrando) {
+    return <RegistrarComida onCerrar={() => setRegistrando(false)} />;
   }
 
   // Mismo fallback defensivo que se corrigió en PlanCard: objetivo es
@@ -91,7 +132,13 @@ export function MiDietaView() {
     <div>
       <Topbar
         title="Mi dieta"
-        subtitle={cargado && dieta ? `Te la armó ${dieta.nutricionista}` : undefined}
+        subtitle={
+          cargado && dieta
+            ? dieta.esPropia
+              ? 'Te la armaste vos'
+              : `Te la armó ${dieta.nutricionista}`
+            : undefined
+        }
       />
 
       <div className="space-y-4 p-4 md:p-8">
@@ -109,6 +156,24 @@ export function MiDietaView() {
           </div>
         )}
 
+        {/* Registrar comida: siempre disponible, tengas dieta o no. Anotar lo
+            que comés no depende de tener un plan cargado. */}
+        {!error && cargado && (
+          <SectionCard>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-heading text-base font-semibold text-text-main">
+                  ¿Qué comiste?
+                </p>
+                <p className="font-body text-xs text-text-secondary">
+                  Anotá tus comidas y seguí tus macros día a día.
+                </p>
+              </div>
+              <PrimaryButton label="Registrar" icon={Plus} onClick={() => setRegistrando(true)} />
+            </div>
+          </SectionCard>
+        )}
+
         {!error && cargado && !dieta && (
           <SectionCard>
             <div className="flex flex-col items-center gap-3 py-8 text-center">
@@ -117,9 +182,16 @@ export function MiDietaView() {
                 Todavía no tenés un plan nutricional
               </p>
               <p className="max-w-md font-body text-sm text-text-secondary">
-                Si querés uno, pedilo en recepción y te coordinan una consulta con la
-                nutricionista.
+                Podés pedir uno en recepción y coordinar una consulta con la nutricionista,
+                o armarte vos mismo un plan mientras tanto.
               </p>
+              <button
+                type="button"
+                onClick={() => setArmando(true)}
+                className="mt-2 flex items-center gap-2 rounded-lg bg-primary-volt px-5 py-3 font-body text-base font-semibold whitespace-nowrap text-surface-base active:opacity-90"
+              >
+                <Sparkles size={18} /> Armar mi dieta
+              </button>
             </div>
           </SectionCard>
         )}
@@ -185,8 +257,31 @@ export function MiDietaView() {
               )}
 
               <p className="mt-4 border-t border-border-idle pt-4 font-body text-xs text-text-muted">
-                Lo tenés asignado desde el {formatearFecha(parsearFecha(dieta.fechaInicio))}.
+                {dieta.esPropia ? 'La armaste el ' : 'Lo tenés asignado desde el '}
+                {formatearFecha(parsearFecha(dieta.fechaInicio))}.
               </p>
+
+              {/* Editar/eliminar SÓLO en la dieta propia: la del nutricionista
+                  no la toca el socio. */}
+              {dieta.esPropia && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setArmando(true)}
+                    className="flex items-center gap-2 rounded-lg border border-border-idle px-4 py-2 font-body text-sm whitespace-nowrap text-text-secondary"
+                  >
+                    <Pencil size={15} /> Rehacer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void eliminarPropia()}
+                    disabled={eliminando}
+                    className="flex items-center gap-2 rounded-lg border border-border-idle px-4 py-2 font-body text-sm whitespace-nowrap text-status-danger disabled:opacity-40"
+                  >
+                    <Trash2 size={15} /> {eliminando ? 'Eliminando…' : 'Eliminar'}
+                  </button>
+                </div>
+              )}
 
               {dieta.dietaDeBaja && (
                 <div
@@ -216,7 +311,7 @@ export function MiDietaView() {
               dieta.dias.map((dia) => (
                 <SectionCard
                   key={dia.dia}
-                  title={dia.dia === 0 ? 'Sin día asignado' : `Día ${dia.dia}`}
+                  title={dia.dia === 0 ? (dieta.esPropia ? 'Tu plan' : 'Sin día asignado') : `Día ${dia.dia}`}
                 >
                   <div className="flex flex-col divide-y divide-border-idle">
                     {dia.comidas.map((comida) => (

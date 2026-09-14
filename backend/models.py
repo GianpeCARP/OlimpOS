@@ -657,12 +657,18 @@ class CatalogoComida(Base):
 
 
 class Dieta(Base):
-    """Plantilla que arma un nutricionista. Mismo patrón que Rutina."""
+    """
+    Plantilla que arma un nutricionista. Mismo patrón que Rutina.
+
+    id_nutricionista NULL = DIETA PROPIA del socio (se la arma él, sin
+    nutricionista). El dueño se deriva de Asignacion_Dieta; invisible para el
+    staff. Espejo de Rutina.id_entrenador NULL.
+    """
     __tablename__ = "Dieta"
 
     id_dieta = Column(Integer, primary_key=True)
     id_nutricionista = Column(Integer, ForeignKey("Nutricionista.id_nutricionista"),
-                               nullable=False)
+                               nullable=True)
     nombre = Column(String(100), nullable=False)
     objetivo = Column(String(100))
     calorias_diarias = Column(Integer)
@@ -679,9 +685,10 @@ class Comida(Base):
     """
     Una comida de la dieta. El equivalente de RutinaEjercicio.
 
-    El plato SIEMPRE sale de Catalogo_Comida (id_catalogo_comida OBLIGATORIO).
-    Por eso `descripcion` y `calorias` se eliminaron de acá: al volverse
-    obligatorio el catálogo, eran redundancia total contra Catalogo_Comida.
+    El plato sale del catálogo (id_catalogo_comida) O, en una dieta propia con el
+    catálogo vacío, de `descripcion` (texto libre). Al menos una de las dos
+    (CHECK chk_comida_plato). `descripcion` NO son calorías: el contenido real de
+    lo comido va en Registro_Comida.
     """
     __tablename__ = "Comida"
 
@@ -690,7 +697,8 @@ class Comida(Base):
     dia = Column(Integer)
     momento = Column(String(30))          # Desayuno, Almuerzo, Merienda, Cena
     id_catalogo_comida = Column(Integer, ForeignKey("Catalogo_Comida.id_catalogo_comida"),
-                                 nullable=False)
+                                 nullable=True)
+    descripcion = Column(String(200))
 
     dieta = relationship("Dieta", back_populates="comidas")
     catalogo = relationship("CatalogoComida")
@@ -1123,6 +1131,10 @@ class RegistroComida(Base):
     `id_comida` = qué comida de la dieta CORRESPONDÍA (opcional).
     `comida_ingerida` = qué comió DE VERDAD (texto libre, NOT NULL): a
     propósito no apunta al catálogo, para que anote cualquier cosa.
+
+    Los macros (calorías/proteínas/carbos/grasas) los carga el socio a mano o
+    los completa el coach IA a partir del texto. Todos opcionales: sin ellos el
+    registro vale igual por el texto.
     """
     __tablename__ = "Registro_Comida"
 
@@ -1131,7 +1143,11 @@ class RegistroComida(Base):
     id_comida = Column(Integer, ForeignKey("Comida.id_comida"))
     fecha = Column(Date, nullable=False, server_default=func.now())
     comida_ingerida = Column(Text, nullable=False)
+    momento = Column(String(30))          # Desayuno, Almuerzo, Merienda, Cena, Snack
     calorias_estimadas = Column(Integer)
+    proteinas_g = Column(Numeric(6, 2))
+    carbohidratos_g = Column(Numeric(6, 2))
+    grasas_g = Column(Numeric(6, 2))
 
     socio = relationship("Socio")
     comida = relationship("Comida")

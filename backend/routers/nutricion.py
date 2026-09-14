@@ -111,14 +111,18 @@ def _resolver_nutricionista(db: Session, sesion: Sesion, id_pedido: int | None) 
 
 
 def _a_comida_out(c) -> ComidaOut:
-    """El nombre, la descripción y las calorías salen del catálogo (el plato)."""
+    """
+    El nombre/descripción/calorías salen del catálogo si la comida apunta a uno.
+    En una dieta propia sin catálogo, el nombre es el texto libre `descripcion`
+    de la Comida (sin calorías: eso va en Registro_Comida).
+    """
     cat = c.catalogo
     return ComidaOut(
         id_comida=c.id_comida,
         dia=c.dia,
         momento=c.momento,
         id_catalogo_comida=c.id_catalogo_comida,
-        nombre=cat.nombre if cat else "?",
+        nombre=cat.nombre if cat else (c.descripcion or "?"),
         descripcion=cat.descripcion if cat else None,
         calorias=cat.calorias if cat else None,
     )
@@ -130,10 +134,14 @@ def _a_dieta_out(dieta: Dieta, con_comidas: bool = True) -> DietaOut:
         comidas = [_a_comida_out(c)
                    for c in sorted(dieta.comidas, key=_clave_orden_comida)]
 
+    # id_nutricionista NULL ⟺ dieta propia (crear_dieta siempre resuelve uno
+    # real). El socio lee "Dieta propia", no "Sin asignar".
+    es_propia = dieta.id_nutricionista is None
+
     return DietaOut(
         id_dieta=dieta.id_dieta,
         id_nutricionista=dieta.id_nutricionista,
-        nutricionista=_nombre_nutricionista(dieta.nutricionista),
+        nutricionista="Dieta propia" if es_propia else _nombre_nutricionista(dieta.nutricionista),
         nombre=dieta.nombre,
         objetivo=dieta.objetivo,
         calorias_diarias=dieta.calorias_diarias,
@@ -143,6 +151,18 @@ def _a_dieta_out(dieta: Dieta, con_comidas: bool = True) -> DietaOut:
         asignados=sum(1 for a in dieta.asignaciones if a.estado == "ACTIVA"),
         comidas=comidas,
     )
+
+
+def _dieta_del_staff(db: Session, id_dieta: int) -> Dieta:
+    """
+    Trae una dieta que el PERSONAL tiene derecho a ver, o 404. Una dieta propia
+    de un socio (id_nutricionista NULL) es invisible del lado del staff: mismo
+    404 que si no existiera, igual que _rutina_del_staff en rutinas.py.
+    """
+    dieta = db.get(Dieta, id_dieta)
+    if dieta is None or dieta.id_nutricionista is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La dieta no existe.")
+    return dieta
 
 
 # =============================================================================
@@ -174,8 +194,19 @@ def listar_dietas(
     db: Session = Depends(get_db),
     sesion: Sesion = Depends(requiere_seccion(Seccion.NUTRICION)),
 ):
-    """Catálogo. Sin las comidas: la grilla muestra tarjetas con macros."""
-    dietas = db.query(Dieta).order_by(Dieta.id_dieta.desc()).all()
+    """
+    Catálogo. Sin las comidas: la grilla muestra tarjetas con macros.
+
+    Las dietas PROPIAS de socios (id_nutricionista NULL) NO están: el catálogo
+    es lo que un nutricionista elige para asignar, y una dieta propia es del
+    socio y de nadie más.
+    """
+    dietas = (
+        db.query(Dieta)
+        .filter(Dieta.id_nutricionista.isnot(None))
+        .order_by(Dieta.id_dieta.desc())
+        .all()
+    )
     return [_a_dieta_out(d, con_comidas=False) for d in dietas]
 
 
@@ -186,9 +217,7 @@ def obtener_dieta(
     sesion: Sesion = Depends(requiere_seccion(Seccion.NUTRICION)),
 ):
     """El detalle trae las comidas ordenadas por día y momento del día."""
-    dieta = db.get(Dieta, id_dieta)
-    if dieta is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La dieta no existe.")
+    dieta = _dieta_del_staff(db, id_dieta)
     return _a_dieta_out(dieta)
 
 
@@ -249,10 +278,11 @@ def asignar_dieta(
     Igual que con las rutinas: si ya tenía una ACTIVA se la finaliza en vez de
     rechazar el pedido. Nadie sigue dos planes alimentarios a la vez, y la
     anterior queda como historial con estado FINALIZADA, no se borra.
+
+    Una dieta propia (id_nutricionista NULL) NO se puede asignar por acá: 404,
+    igual que una inexistente. Es del socio y de nadie más.
     """
-    dieta = db.get(Dieta, id_dieta)
-    if dieta is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La dieta no existe.")
+    dieta = _dieta_del_staff(db, id_dieta)
 
     socio = db.get(Socio, datos.id_socio)
     if socio is None:
@@ -328,10 +358,15 @@ def dietas_de_socio(
     (`mi-dieta`), que filtra por el id_socio firmado en su token en vez de
     aceptar uno por parámetro — si lo aceptara, cualquier socio podría leer la
     dieta de otro cambiando un número en la URL.
+
+    Las dietas PROPIAS del socio (id_nutricionista NULL) quedan fuera también
+    acá: son suyas, no parte del historial que gestiona el personal.
     """
     asignaciones = (
         db.query(AsignacionDieta)
-        .filter(AsignacionDieta.id_socio == id_socio)
+        .join(Dieta, Dieta.id_dieta == AsignacionDieta.id_dieta)
+        .filter(AsignacionDieta.id_socio == id_socio,
+                Dieta.id_nutricionista.isnot(None))
         .order_by(AsignacionDieta.fecha_inicio.desc())
         .all()
     )
@@ -363,9 +398,7 @@ def editar_dieta(
     sesion: Sesion = Depends(requiere_accion(Accion.GESTION_DIETAS)),
 ):
     """Edita los datos de la dieta. Las comidas se manejan aparte."""
-    dieta = db.get(Dieta, id_dieta)
-    if dieta is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La dieta no existe.")
+    dieta = _dieta_del_staff(db, id_dieta)
 
     if datos.id_nutricionista is not None and datos.id_nutricionista != dieta.id_nutricionista:
         nutri = _resolver_nutricionista(db, sesion, datos.id_nutricionista)
@@ -392,9 +425,7 @@ def dar_de_baja_dieta(
     los socios que la están siguiendo la terminan, pero deja de ofrecerse para
     asignaciones nuevas.
     """
-    dieta = db.get(Dieta, id_dieta)
-    if dieta is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La dieta no existe.")
+    dieta = _dieta_del_staff(db, id_dieta)
     if not dieta.activo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Esa dieta ya estaba desactivada.")
@@ -411,9 +442,7 @@ def reactivar_dieta(
     db: Session = Depends(get_db),
     sesion: Sesion = Depends(requiere_accion(Accion.GESTION_DIETAS)),
 ):
-    dieta = db.get(Dieta, id_dieta)
-    if dieta is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La dieta no existe.")
+    dieta = _dieta_del_staff(db, id_dieta)
     if dieta.activo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Esa dieta ya estaba activa.")

@@ -1,24 +1,37 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, Check, Play, RefreshCw, RotateCcw, Square, X } from 'lucide-react';
+import { Bell, Camera, Check, Play, RefreshCw, RotateCcw, Search, Square, X } from 'lucide-react';
 import {
   DrawingUtils,
   FilesetResolver,
   PoseLandmarker,
 } from '@mediapipe/tasks-vision';
 import { colors } from '../../config';
+import { mensajeDeError } from '../../services/api';
+import {
+  listarEjerciciosCatalogo,
+  type EjercicioCatalogo,
+} from '../../services/socioService';
 import {
   activarReintentoAutomatico,
   encolarRegistro,
   sincronizar,
 } from '../../utils/colaRegistros';
 import {
-  anguloMovimiento,
   crearFiltroUnEuro,
+  medirMovimiento,
   MOVIMIENTOS,
+  movimientoDeEjercicio,
   pasoRep,
   type Fase,
   type Movimiento,
 } from './logicaReps';
+
+// Al empezar la serie se ignoran los conteos del primer tramo: es cuando el
+// socio se acomoda en posición, y ese movimiento de setup no es una rep.
+const GRACIA_MS = 700;
+// Dos reps no pueden estar más cerca que esto: mata dobles conteos por temblor
+// y algún fantasma. Nadie hace una rep real en menos de medio segundo.
+const MIN_ENTRE_REPS_MS = 450;
 
 // =============================================================================
 // CONTADOR DE REPETICIONES — prototipo (incremento 2: conteo)
@@ -45,9 +58,12 @@ interface ContadorRepsProps {
    *  permite ANOTAR la serie en Registro_Ejercicio. Sin él (modo "Probar"
    *  suelto) el contador cuenta pero no guarda —hasta el selector de catálogo. */
   idEjercicio?: number;
+  /** Objetivo de reps sugerido (del circuito: las que dice el ejercicio).
+   *  Prellena el input; el socio lo puede cambiar. */
+  objetivoSugerido?: number;
 }
 
-export function ContadorReps({ onSalir, movimientoFijo, idEjercicio }: ContadorRepsProps) {
+export function ContadorReps({ onSalir, movimientoFijo, idEjercicio, objetivoSugerido }: ContadorRepsProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const landmarkerRef = useRef<PoseLandmarker | null>(null);
@@ -55,12 +71,28 @@ export function ContadorReps({ onSalir, movimientoFijo, idEjercicio }: ContadorR
   const streamRef = useRef<MediaStream | null>(null);
   const drawRef = useRef<DrawingUtils | null>(null);
 
-  // 'prep' = eligiendo posición, cámara APAGADA. 'camara' = cámara encendida.
-  const [pantalla, setPantalla] = useState<'prep' | 'camara'>('prep');
+  // 'elegir' = eligiendo el ejercicio del catálogo (sólo modo suelto);
+  // 'prep' = leyendo la posición, cámara APAGADA; 'camara' = cámara encendida.
+  // Desde el circuito el ejercicio ya viene fijo, así que se salta 'elegir'.
+  const [pantalla, setPantalla] = useState<'elegir' | 'prep' | 'camara'>(
+    movimientoFijo ? 'prep' : 'elegir',
+  );
   const [estado, setEstado] = useState<Estado>('cargando');
   const [error, setError] = useState<string | null>(null);
   const [detectado, setDetectado] = useState(false);
   const [frontal, setFrontal] = useState(true);
+
+  // --- Elección del ejercicio (modo suelto) --------------------------------
+  // El ejercicio elegido del catálogo aporta su id, así que en modo suelto la
+  // serie TAMBIÉN se puede guardar (igual que desde el circuito). El del
+  // circuito llega por prop; el suelto se elige acá.
+  const [idEjercicioElegido, setIdEjercicioElegido] = useState<number | undefined>(undefined);
+  const idEjercicioEfectivo = idEjercicio ?? idEjercicioElegido;
+  // El catálogo, sólo los ejercicios que sabemos contar. Se carga una vez, en
+  // modo suelto (desde el circuito no se elige nada).
+  const [catalogo, setCatalogo] = useState<EjercicioCatalogo[] | null>(null);
+  const [errorCatalogo, setErrorCatalogo] = useState<string | null>(null);
+  const [busqueda, setBusqueda] = useState('');
 
   // --- Conteo --------------------------------------------------------------
   const [movimiento, setMovimiento] = useState<Movimiento>(movimientoFijo ?? MOVIMIENTOS[0]);
@@ -70,18 +102,31 @@ export function ContadorReps({ onSalir, movimientoFijo, idEjercicio }: ContadorR
   const [pulso, setPulso] = useState(0);
   const [bump, setBump] = useState(false);
 
+  // --- Objetivo de reps + pitido ------------------------------------------
+  // El socio dice cuántas quiere hacer; cuando las iguala, el celu PITA (y
+  // vibra fuerte), porque en la serie de tu vida vas con los ojos cerrados y no
+  // estás mirando la pantalla. Vacío = sin objetivo, no avisa.
+  const [objetivo, setObjetivo] = useState(objetivoSugerido ? String(objetivoSugerido) : '');
+  const objetivoNum = Math.floor(Number(objetivo)) || 0;
+  const audioRef = useRef<AudioContext | null>(null);
+
   // --- Guardado de la serie (sólo si vino del circuito con id de ejercicio) --
   // 'guardado' entró al backend; 'encolado' quedó pendiente sin red y se subirá
   // solo cuando vuelva. El peso lo carga el socio al terminar: la cámara no lo
   // sabe. Vacío = 0 kg (la fila igual sirve para el conteo de reps).
-  const puedeGuardar = idEjercicio !== undefined;
+  const puedeGuardar = idEjercicioEfectivo !== undefined;
   const [peso, setPeso] = useState('');
   const [guardado, setGuardado] = useState<'idle' | 'guardando' | 'guardado' | 'encolado'>('idle');
 
   const serieRef = useRef(false);
   const movRef = useRef(movimiento);
   const faseRef = useRef<Fase>('ext');
-  const filtroRef = useRef(crearFiltroUnEuro());
+  // Un filtro por señal (lado más flexionado y lado más extendido): se suavizan
+  // por separado antes de decidir la fase.
+  const filtroMinRef = useRef(crearFiltroUnEuro());
+  const filtroMaxRef = useRef(crearFiltroUnEuro());
+  const inicioSerieRef = useRef(0);   // cuándo arrancó la serie (para la gracia)
+  const ultimaRepRef = useRef(0);     // cuándo se contó la última (anti-rebote)
   useEffect(() => { movRef.current = movimiento; }, [movimiento]);
   useEffect(() => { serieRef.current = serieActiva; }, [serieActiva]);
 
@@ -210,16 +255,25 @@ export function ContadorReps({ onSalir, movimientoFijo, idEjercicio }: ContadorR
         }
 
         if (serieRef.current) {
-          const ang = hay && res.worldLandmarks?.length
-            ? anguloMovimiento(res.worldLandmarks[0], res.landmarks[0], movRef.current)
+          const med = hay && res.worldLandmarks?.length
+            ? medirMovimiento(res.worldLandmarks[0], res.landmarks[0], movRef.current)
             : null;
-          if (ang !== null) {
+          if (med !== null) {
             sinSenalRef.current = 0;
             marcarVer(true);
-            const suave = filtroRef.current.filtrar(ang, performance.now());
-            const r = pasoRep(faseRef.current, suave, movRef.current);
+            const ahora = performance.now();
+            const suaveMin = filtroMinRef.current.filtrar(med.min, ahora);
+            const suaveMax = filtroMaxRef.current.filtrar(med.max, ahora);
+            const r = pasoRep(faseRef.current, suaveMin, suaveMax, movRef.current);
             faseRef.current = r.fase;
-            if (r.conto) {
+            // Sólo cuenta si pasó la gracia del arranque (setup) y el anti-rebote
+            // desde la última rep. Si no, la fase avanza igual pero no suma.
+            if (
+              r.conto &&
+              ahora - inicioSerieRef.current > GRACIA_MS &&
+              ahora - ultimaRepRef.current > MIN_ENTRE_REPS_MS
+            ) {
+              ultimaRepRef.current = ahora;
               setReps((n) => n + 1);
               setPulso((p) => p + 1);
               navigator.vibrate?.(30);
@@ -261,17 +315,88 @@ export function ContadorReps({ onSalir, movimientoFijo, idEjercicio }: ContadorR
     void sincronizar();
   }, []);
 
+  // El catálogo para elegir en modo suelto. Sólo si no viene fijo del circuito.
+  useEffect(() => {
+    if (movimientoFijo) return;
+    let cancelado = false;
+    listarEjerciciosCatalogo()
+      .then((c) => { if (!cancelado) setCatalogo(c); })
+      .catch((e: unknown) => { if (!cancelado) setErrorCatalogo(mensajeDeError(e)); });
+    return () => { cancelado = true; };
+  }, [movimientoFijo]);
+
+  const elegirEjercicio = (ej: EjercicioCatalogo) => {
+    const mov = movimientoDeEjercicio(ej.nombre);
+    if (!mov) return; // sólo se muestran los soportados, pero por las dudas
+    setMovimiento(mov);
+    setIdEjercicioElegido(ej.idEjercicio);
+    setPantalla('prep');
+  };
+
+  // El pitido usa Web Audio: hay que crear/despertar el AudioContext desde un
+  // gesto del usuario (iOS lo exige), y "Empezar serie" lo es.
+  const asegurarAudio = () => {
+    try {
+      if (!audioRef.current) {
+        const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (AC) audioRef.current = new AC();
+      }
+      void audioRef.current?.resume();
+    } catch {
+      // Sin audio (permisos, navegador raro): la vibración sigue avisando.
+    }
+  };
+
+  const pitar = () => {
+    const ctx = audioRef.current;
+    if (!ctx) return;
+    try {
+      // Dos beeps cortos, bien distinguibles del silencio de la serie.
+      for (const t0 of [0, 0.18]) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = 880;
+        const t = ctx.currentTime + t0;
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(0.35, t + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t);
+        osc.stop(t + 0.15);
+      }
+    } catch {
+      // Ignorar: si el audio falla, ya vibró.
+    }
+  };
+
   const empezar = () => {
+    asegurarAudio();
     setResumen(null);
     setReps(0);
     setPeso('');
     setGuardado('idle');
     faseRef.current = 'ext';
-    filtroRef.current.reiniciar();
+    filtroMinRef.current.reiniciar();
+    filtroMaxRef.current.reiniciar();
+    inicioSerieRef.current = performance.now();
+    ultimaRepRef.current = 0;
     sinSenalRef.current = 0;
     marcarVer(true);
     setSerieActiva(true);
   };
+
+  // Avisa (pitido + vibración fuerte) al igualar el objetivo. Se dispara sólo en
+  // el frame en que reps llega justo al número: reps sube de a uno.
+  useEffect(() => {
+    if (!serieActiva || objetivoNum <= 0) return;
+    if (reps === objetivoNum) {
+      pitar();
+      navigator.vibrate?.([120, 60, 120]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reps]);
 
   const terminar = () => {
     setSerieActiva(false);
@@ -286,7 +411,7 @@ export function ContadorReps({ onSalir, movimientoFijo, idEjercicio }: ContadorR
     setGuardado('guardando');
     const kg = Number(peso.replace(',', '.'));
     const resultado = await encolarRegistro({
-      idEjercicio: idEjercicio!,
+      idEjercicio: idEjercicioEfectivo!,
       repeticiones: resumen.reps,
       peso: Number.isFinite(kg) && kg > 0 ? kg : 0,
       observaciones: 'Contado con cámara',
@@ -297,8 +422,95 @@ export function ContadorReps({ onSalir, movimientoFijo, idEjercicio }: ContadorR
   const reiniciar = () => {
     setReps(0);
     faseRef.current = 'ext';
-    filtroRef.current.reiniciar();
+    filtroMinRef.current.reiniciar();
+    filtroMaxRef.current.reiniciar();
+    inicioSerieRef.current = performance.now();
+    ultimaRepRef.current = 0;
   };
+
+  // ==========================================================================
+  // PANTALLA DE ELECCIÓN — elegir el ejercicio del catálogo (modo suelto)
+  // ==========================================================================
+  if (pantalla === 'elegir') {
+    // Sólo los ejercicios que sabemos contar, filtrados por la búsqueda y
+    // agrupados por grupo muscular.
+    const q = busqueda.trim().toLowerCase();
+    const soportados = (catalogo ?? []).filter((e) => movimientoDeEjercicio(e.nombre) !== null);
+    const filtrados = q
+      ? soportados.filter(
+          (e) => e.nombre.toLowerCase().includes(q) || e.grupoMuscular.toLowerCase().includes(q),
+        )
+      : soportados;
+    const grupos = new Map<string, EjercicioCatalogo[]>();
+    for (const e of filtrados) {
+      const g = grupos.get(e.grupoMuscular) ?? [];
+      g.push(e);
+      grupos.set(e.grupoMuscular, g);
+    }
+
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col bg-surface-base">
+        <header className="flex shrink-0 items-center justify-between px-4 py-3">
+          <p className="font-heading text-lg font-semibold uppercase tracking-wide text-text-main">
+            ¿Qué vas a hacer?
+          </p>
+          <button
+            type="button"
+            onClick={onSalir}
+            aria-label="Cerrar"
+            className="flex size-10 items-center justify-center rounded-full bg-surface-card text-text-main"
+          >
+            <X size={20} />
+          </button>
+        </header>
+
+        <div className="shrink-0 px-4 pb-3">
+          <div className="flex items-center gap-2 rounded-lg bg-surface-card px-3 py-2 ring-1 ring-border-idle focus-within:ring-primary-volt">
+            <Search size={16} className="shrink-0 text-text-muted" />
+            <input
+              type="text"
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              placeholder="Buscar ejercicio o grupo…"
+              className="w-full bg-transparent font-body text-sm text-text-main outline-none"
+            />
+          </div>
+        </div>
+
+        <div className="flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 pb-6">
+          {errorCatalogo && <p className="font-body text-sm text-status-danger">{errorCatalogo}</p>}
+          {!catalogo && !errorCatalogo && (
+            <p className="font-body text-sm text-text-muted">Cargando ejercicios…</p>
+          )}
+          {catalogo && [...grupos.keys()].length === 0 && (
+            <p className="font-body text-sm text-text-muted">
+              No hay ejercicios que la cámara sepa contar todavía.
+            </p>
+          )}
+          {[...grupos.entries()].map(([grupo, ejercicios]) => (
+            <div key={grupo} className="space-y-2">
+              <p className="font-body text-xs font-semibold uppercase tracking-wide text-text-muted">
+                {grupo}
+              </p>
+              <div className="space-y-1.5">
+                {ejercicios.map((e) => (
+                  <button
+                    key={e.idEjercicio}
+                    type="button"
+                    onClick={() => elegirEjercicio(e)}
+                    className="flex w-full items-center justify-between gap-2 rounded-lg bg-surface-card px-3 py-3 text-left ring-1 ring-border-idle active:bg-surface-hover"
+                  >
+                    <span className="min-w-0 truncate font-body text-sm text-text-main">{e.nombre}</span>
+                    <Camera size={16} className="shrink-0 text-primary-volt" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   // ==========================================================================
   // PANTALLA DE PREPARACIÓN — cámara apagada, posición centrada
@@ -321,29 +533,22 @@ export function ContadorReps({ onSalir, movimientoFijo, idEjercicio }: ContadorR
         </header>
 
         <div className="flex flex-1 flex-col items-center justify-center gap-7 px-6 text-center">
-          {movimientoFijo ? (
-            // Viene del circuito: el ejercicio ya está decidido, sin selector.
+          <div className="flex flex-col items-center gap-2">
             <p className="font-heading text-2xl font-bold text-text-main">
               {movimiento.nombre}
             </p>
-          ) : (
-            <div className="flex max-w-sm flex-wrap justify-center gap-2">
-              {MOVIMIENTOS.map((m) => (
-                <button
-                  key={m.clave}
-                  type="button"
-                  onClick={() => setMovimiento(m)}
-                  className={`rounded-full px-3 py-1.5 font-body text-sm font-medium transition-colors ${
-                    movimiento.clave === m.clave
-                      ? 'bg-primary-volt text-surface-base'
-                      : 'bg-surface-card text-text-secondary'
-                  }`}
-                >
-                  {m.nombre}
-                </button>
-              ))}
-            </div>
-          )}
+            {/* Del circuito el ejercicio es fijo; en modo suelto se puede volver
+                a elegir otro del catálogo. */}
+            {!movimientoFijo && (
+              <button
+                type="button"
+                onClick={() => setPantalla('elegir')}
+                className="font-body text-sm text-primary-volt underline underline-offset-2"
+              >
+                Cambiar ejercicio
+              </button>
+            )}
+          </div>
 
           <div className="flex max-w-xs flex-col items-center gap-3">
             <div className="flex size-14 items-center justify-center rounded-full bg-primary-volt/10">
@@ -356,6 +561,25 @@ export function ContadorReps({ onSalir, movimientoFijo, idEjercicio }: ContadorR
               {movimiento.pista}
             </p>
           </div>
+
+          {/* Objetivo de reps: cuando llegás, el celu pita. Prellenado con lo
+              que dice el ejercicio si viene del circuito; editable siempre. */}
+          <label className="flex w-full max-w-xs flex-col items-center gap-2">
+            <span className="flex items-center gap-1.5 font-heading text-sm font-semibold uppercase tracking-widest text-text-muted">
+              <Bell size={14} /> ¿Cuántas repes?
+            </span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={objetivo}
+              onChange={(e) => setObjetivo(e.target.value.replace(/\D/g, ''))}
+              placeholder="—"
+              className="w-24 rounded-lg bg-surface-card px-3 py-2 text-center font-heading text-3xl font-bold tabular-nums text-text-main outline-none ring-1 ring-border-idle focus:ring-primary-volt"
+            />
+            <span className="font-body text-xs text-text-muted">
+              Te aviso con un pitido cuando llegues. Dejalo vacío si vas libre.
+            </span>
+          </label>
         </div>
 
         <div className="shrink-0 px-6 pb-8">
@@ -456,8 +680,13 @@ export function ContadorReps({ onSalir, movimientoFijo, idEjercicio }: ContadorR
             {reps}
           </span>
           <span className="mt-1 font-body text-sm font-medium uppercase tracking-widest text-white/85 drop-shadow-[0_1px_6px_rgba(0,0,0,0.9)]">
-            repeticiones
+            {objetivoNum > 0 ? `de ${objetivoNum}` : 'repeticiones'}
           </span>
+          {objetivoNum > 0 && reps >= objetivoNum && (
+            <span className="mt-3 flex items-center gap-1.5 rounded-full bg-primary-volt px-3 py-1 font-heading text-sm font-bold uppercase tracking-wide text-surface-base drop-shadow-[0_2px_10px_rgba(0,0,0,0.6)]">
+              <Bell size={14} /> ¡Llegaste!
+            </span>
+          )}
           {!verBien && (
             <span className="mt-3 rounded-full bg-status-warn/90 px-3 py-1 font-body text-xs font-medium text-surface-base">
               Acomodate: no te veo bien

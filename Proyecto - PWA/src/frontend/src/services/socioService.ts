@@ -352,6 +352,41 @@ export async function eliminarMiRutinaPropia(): Promise<void> {
   await pedir('/portal/mi-rutina/propia', { metodo: 'DELETE' });
 }
 
+// Progreso de fuerza: lo que el socio levantó, para graficar la evolución.
+export interface RegistroEjercicioListado {
+  idRegistroEjercicio: number;
+  idEjercicio: number;
+  nombreEjercicio: string;
+  fecha: string;
+  pesoHecho: number;
+  seriesHechas?: number;
+  repeticionesHechas?: string;
+}
+
+interface RegistroEjercicioListadoApi {
+  id_registro_ejercicio: number;
+  id_ejercicio: number;
+  nombre_ejercicio: string;
+  fecha: string;
+  peso_hecho: number;
+  series_hechas: number | null;
+  repeticiones_hechas: string | null;
+}
+
+/** Los registros de ejercicio del socio (últimos `dias` días, viejo→nuevo). */
+export async function listarMisRegistrosEjercicio(dias = 120): Promise<RegistroEjercicioListado[]> {
+  const r = await pedir<RegistroEjercicioListadoApi[]>(`/portal/mi-rutina/registro-ejercicio?dias=${dias}`);
+  return r.map((x) => ({
+    idRegistroEjercicio: x.id_registro_ejercicio,
+    idEjercicio: x.id_ejercicio,
+    nombreEjercicio: x.nombre_ejercicio,
+    fecha: x.fecha,
+    pesoHecho: x.peso_hecho,
+    seriesHechas: x.series_hechas ?? undefined,
+    repeticionesHechas: x.repeticiones_hechas ?? undefined,
+  }));
+}
+
 // =========================================================================
 // MI DIETA
 // =========================================================================
@@ -377,6 +412,8 @@ export interface MiDieta {
   caloriasDiarias?: number;
   descripcion?: string;
   nutricionista: string;
+  /** True si es la dieta PROPIA del socio (la puede editar/eliminar él). */
+  esPropia: boolean;
   dietaDeBaja: boolean;
   /** Desde cuándo la tiene asignada. Viene de la asignación, no de la plantilla. */
   fechaInicio: string;
@@ -392,6 +429,7 @@ interface DietaApi {
   calorias_diarias: number | null;
   descripcion: string | null;
   nutricionista: string;
+  es_propia?: boolean;
   dieta_de_baja: boolean;
   fecha_inicio: string;
   observaciones: string | null;
@@ -407,10 +445,7 @@ interface DietaApi {
   }[];
 }
 
-export async function getMiDieta(): Promise<MiDieta | null> {
-  const d = await pedir<DietaApi | null>('/portal/mi-dieta');
-  if (!d) return null;
-
+function mapearMiDieta(d: DietaApi): MiDieta {
   // Ya vienen agrupadas por día y en el orden del día (Desayuno → Almuerzo →
   // Cena), con las calorías sumadas. Eso lo hace el backend: es la misma
   // cuenta para todos y ordenar alfabéticamente pondría Almuerzo primero.
@@ -421,6 +456,7 @@ export async function getMiDieta(): Promise<MiDieta | null> {
     caloriasDiarias: d.calorias_diarias ?? undefined,
     descripcion: d.descripcion ?? undefined,
     nutricionista: d.nutricionista,
+    esPropia: d.es_propia ?? false,
     dietaDeBaja: d.dieta_de_baja,
     fechaInicio: d.fecha_inicio,
     observaciones: d.observaciones ?? undefined,
@@ -435,6 +471,129 @@ export async function getMiDieta(): Promise<MiDieta | null> {
       })),
     })),
   };
+}
+
+export async function getMiDieta(): Promise<MiDieta | null> {
+  const d = await pedir<DietaApi | null>('/portal/mi-dieta');
+  if (!d) return null;
+  return mapearMiDieta(d);
+}
+
+// =========================================================================
+// MI DIETA PROPIA — el socio se la arma solo (id_nutricionista NULL)
+// =========================================================================
+// Espejo de la rutina propia, pero con comidas de TEXTO LIBRE (el catálogo del
+// gimnasio puede estar vacío). Invisible para el personal; se autoasigna.
+
+/** Una comida del plan propio, en texto libre. */
+export interface ComidaPropia {
+  momento?: string;       // Desayuno, Almuerzo, Merienda, Cena…
+  descripcion: string;    // "avena con banana y huevos"
+  dia?: number;
+}
+
+export interface MiDietaPropiaNueva {
+  nombre: string;
+  objetivo?: string;
+  caloriasDiarias?: number;
+  comidas: ComidaPropia[];
+}
+
+/**
+ * Crea (o rehace) la dieta propia del socio y la deja activa. Si ya tenía una
+ * del NUTRICIONISTA activa, el backend rechaza con 409. El socio destino no se
+ * manda: sale del token.
+ */
+export async function crearMiDietaPropia(datos: MiDietaPropiaNueva): Promise<MiDieta> {
+  const d = await pedir<DietaApi>('/portal/mi-dieta/propia', {
+    metodo: 'POST',
+    cuerpo: {
+      nombre: datos.nombre.trim(),
+      objetivo: datos.objetivo?.trim() || null,
+      calorias_diarias: datos.caloriasDiarias ?? null,
+      comidas: datos.comidas.map((c) => ({
+        momento: c.momento?.trim() || null,
+        descripcion: c.descripcion.trim(),
+        dia: c.dia ?? null,
+      })),
+    },
+  });
+  return mapearMiDieta(d);
+}
+
+/** Retira la dieta propia activa (queda como historial; no se borra). */
+export async function eliminarMiDietaPropia(): Promise<void> {
+  await pedir('/portal/mi-dieta/propia', { metodo: 'DELETE' });
+}
+
+// =========================================================================
+// MIS COMIDAS — lo que el socio comió (Registro_Comida)
+// =========================================================================
+
+export interface ComidaRegistrada {
+  idRegistroComida: number;
+  fecha: string;
+  momento?: string;
+  comidaIngerida: string;
+  calorias?: number;
+  proteinas?: number;
+  carbohidratos?: number;
+  grasas?: number;
+}
+
+export interface RegistroComidaNuevo {
+  comidaIngerida: string;
+  momento?: string;
+  calorias?: number;
+  proteinas?: number;
+  carbohidratos?: number;
+  grasas?: number;
+}
+
+interface ComidaRegistradaApi {
+  id_registro_comida: number;
+  fecha: string;
+  momento: string | null;
+  comida_ingerida: string;
+  calorias_estimadas: number | null;
+  proteinas_g: number | null;
+  carbohidratos_g: number | null;
+  grasas_g: number | null;
+}
+
+function mapearComidaRegistrada(r: ComidaRegistradaApi): ComidaRegistrada {
+  return {
+    idRegistroComida: r.id_registro_comida,
+    fecha: r.fecha,
+    momento: r.momento ?? undefined,
+    comidaIngerida: r.comida_ingerida,
+    calorias: r.calorias_estimadas ?? undefined,
+    proteinas: r.proteinas_g ?? undefined,
+    carbohidratos: r.carbohidratos_g ?? undefined,
+    grasas: r.grasas_g ?? undefined,
+  };
+}
+
+/** Lo que el socio registró que comió en los últimos `dias` días (nuevo primero). */
+export async function listarMisComidas(dias = 7): Promise<ComidaRegistrada[]> {
+  const r = await pedir<ComidaRegistradaApi[]>(`/portal/mi-dieta/comidas?dias=${dias}`);
+  return r.map(mapearComidaRegistrada);
+}
+
+/** Registra una comida. El texto es obligatorio; los macros, opcionales. */
+export async function registrarComida(datos: RegistroComidaNuevo): Promise<ComidaRegistrada> {
+  const r = await pedir<ComidaRegistradaApi>('/portal/mi-dieta/comidas', {
+    metodo: 'POST',
+    cuerpo: {
+      comida_ingerida: datos.comidaIngerida.trim(),
+      momento: datos.momento?.trim() || null,
+      calorias_estimadas: datos.calorias ?? null,
+      proteinas_g: datos.proteinas ?? null,
+      carbohidratos_g: datos.carbohidratos ?? null,
+      grasas_g: datos.grasas ?? null,
+    },
+  });
+  return mapearComidaRegistrada(r);
 }
 
 // =========================================================================

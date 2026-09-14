@@ -170,10 +170,15 @@ export function CircuitoView({
   // El contador se monta ENCIMA del circuito; al cerrarlo (X) se vuelve acá,
   // a la misma serie. El circuito no se desmonta por debajo.
   if (contando && movCamara && c.ejercicio) {
+    // Objetivo sugerido = el primer número de las reps del ejercicio ("8-12" -> 8,
+    // "al fallo" -> sin objetivo). El socio lo puede cambiar en el contador.
+    const m = c.ejercicio.repeticiones?.match(/\d+/);
+    const objetivoSugerido = m ? Number(m[0]) : undefined;
     return (
       <ContadorReps
         movimientoFijo={movCamara}
         idEjercicio={c.ejercicio.idEjercicio}
+        objetivoSugerido={objetivoSugerido}
         onSalir={() => setContando(false)}
       />
     );

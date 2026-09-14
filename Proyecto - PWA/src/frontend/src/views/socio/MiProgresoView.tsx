@@ -19,6 +19,7 @@ import { useAuthStore } from '../../store/authStore';
 import { useUiStore } from '../../store/uiStore';
 import { formatearFecha, formatearFechaCorta } from '../../utils/format';
 import { parsearFecha } from '../../utils/fechas';
+import { SeccionFuerza, SeccionNutricion } from './ProgresoExtra';
 import { SinSocioEnSesion } from './SinSocioEnSesion';
 
 // Vista 3 del portal (docs/prompt_portal_socio.md). El ÚNICO lugar donde el
@@ -268,6 +269,12 @@ export function MiProgresoView() {
             <SectionCard title="Evolución del peso">
               <GraficoDePeso mediciones={progreso.mediciones} />
             </SectionCard>
+
+            {/* Nutrición y fuerza: se alimentan de lo que el socio carga en Mi
+                dieta (comidas) y del contador de reps (peso levantado). Cada una
+                trae sus propios datos y muestra su vacío si todavía no hay. */}
+            <SeccionNutricion />
+            <SeccionFuerza />
 
             <form onSubmit={handleSubmit}>
               <SectionCard title="Cargar medición de hoy">

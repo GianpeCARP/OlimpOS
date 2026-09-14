@@ -71,7 +71,7 @@ export const MOVIMIENTOS: Movimiento[] = [
     izq: [11, 13, 15],
     der: [12, 14, 16],
     flex: 90,
-    ext: 155,
+    ext: 150,
     pista: 'De frente o de perfil, parado, que se vean hombros y brazos.',
   },
   {
@@ -98,7 +98,7 @@ export const MOVIMIENTOS: Movimiento[] = [
     izq: [11, 13, 15],
     der: [12, 14, 16],
     flex: 100,
-    ext: 155,
+    ext: 150,
     pista: 'DE PERFIL, que se vean hombro, codo y muñeca.',
   },
   {
@@ -115,8 +115,11 @@ export const MOVIMIENTOS: Movimiento[] = [
     nombre: 'Flexiones',
     izq: [11, 13, 15],
     der: [12, 14, 16],
-    flex: 100,
-    ext: 155,
+    // Antes flex 100 / ext 155: contaba tarde y de menos. Poca gente traba del
+    // todo el codo arriba ni baja hasta 100° prolijo. Se relaja el recorrido
+    // exigido para que la rep entre cuando de verdad se hizo.
+    flex: 105,
+    ext: 150,
     pista: 'DE PERFIL y a ras del piso: que se vean hombro, codo y muñeca.',
   },
   {
@@ -161,7 +164,10 @@ export const MOVIMIENTOS: Movimiento[] = [
     nombre: 'Peso muerto',
     izq: [11, 23, 25],
     der: [12, 24, 26],
-    flex: 120,
+    // Antes flex 120: demasiado permisivo — con sacar el culo un poco ya bajaba
+    // de 120° sin bajar el torso. Se exige una bisagra REAL (por debajo de 100°)
+    // para que una técnica de mentira no cuente.
+    flex: 100,
     ext: 160,
     pista: 'DE PERFIL y cuerpo completo. (Bisagra de cadera, sensible a la forma.)',
   },
@@ -237,36 +243,55 @@ function visMin(l2d: Punto2D[], idx: [number, number, number]): number {
   return Math.min(...idx.map((i) => l2d[i]?.visibility ?? 1));
 }
 
-/**
- * Ángulo del movimiento eligiendo el lado del cuerpo MEJOR VISTO. Devuelve null
- * si ni el mejor lado se ve con confianza suficiente (ocluido, fuera de cuadro):
- * ahí no conviene contar nada.
- */
-export function anguloMovimiento(
-  world: Punto3D[],
-  l2d: Punto2D[],
-  m: Movimiento,
-): number | null {
-  const visL = visMin(l2d, m.izq);
-  const visR = visMin(l2d, m.der);
-  // Compuerta de confianza: si ni el lado mejor visto llega a 0.6, no medimos
-  // (cuerpo ocluido, fuera de cuadro, contraluz). Mejor no contar que contar mal.
-  if (Math.max(visL, visR) < 0.6) return null;
-  const lado = visR >= visL ? m.der : m.izq;
-  return anguloEntre(world[lado[0]], world[lado[1]], world[lado[2]]);
+/** El ángulo del movimiento en cada lado suficientemente visible. */
+export interface MedicionMovimiento {
+  /** El lado MÁS flexionado (ángulo menor): dice si se llegó ABAJO. */
+  min: number;
+  /** El lado MÁS extendido (ángulo mayor): dice si se volvió ARRIBA. */
+  max: number;
 }
 
 /**
- * Un paso de la máquina de estados. Recibe la fase actual y el ángulo (ya
- * suavizado) y devuelve la fase nueva y si se completó una repetición.
+ * Mide el movimiento en AMBOS lados del cuerpo (los que se ven con confianza) y
+ * devuelve el mínimo y el máximo. Null si ningún lado llega al umbral de
+ * visibilidad (ocluido, fuera de cuadro): ahí no conviene contar nada.
+ *
+ * Por qué min y max y no un solo lado: en un jalón o un press, si un brazo baja
+ * o sube antes que el otro, medir un solo lado (el "mejor visto") hace que la
+ * rep no cuente cuando el lado medido es el que se quedó. Con min/max, "bajó"
+ * = el lado más flexionado tocó abajo, y "subió" = el lado más extendido volvió
+ * arriba: la rep cuenta aunque los brazos no vuelvan parejos —"de la forma que
+ * sea"—, que es como se entrena de verdad. Si sólo un lado se ve (perfil),
+ * min === max y se comporta como antes.
+ */
+export function medirMovimiento(
+  world: Punto3D[],
+  l2d: Punto2D[],
+  m: Movimiento,
+): MedicionMovimiento | null {
+  const angs: number[] = [];
+  if (visMin(l2d, m.izq) >= 0.6) angs.push(anguloEntre(world[m.izq[0]], world[m.izq[1]], world[m.izq[2]]));
+  if (visMin(l2d, m.der) >= 0.6) angs.push(anguloEntre(world[m.der[0]], world[m.der[1]], world[m.der[2]]));
+  if (angs.length === 0) return null;
+  return { min: Math.min(...angs), max: Math.max(...angs) };
+}
+
+/**
+ * Un paso de la máquina de estados. Recibe la fase actual y los ángulos (ya
+ * suavizados) y devuelve la fase nueva y si se completó una repetición.
+ *
+ * Se baja (entra en 'flex') cuando el lado MÁS flexionado cruza el umbral de
+ * abajo, y se cuenta (vuelve a 'ext') cuando el lado MÁS extendido cruza el de
+ * arriba. La histéresis (flex < ext) evita que un temblor cuente de ida y vuelta.
  */
 export function pasoRep(
   fase: Fase,
-  angulo: number,
+  angMin: number,
+  angMax: number,
   m: Movimiento,
 ): { fase: Fase; conto: boolean } {
-  if (fase === 'ext' && angulo < m.flex) return { fase: 'flex', conto: false };
-  if (fase === 'flex' && angulo > m.ext) return { fase: 'ext', conto: true };
+  if (fase === 'ext' && angMin < m.flex) return { fase: 'flex', conto: false };
+  if (fase === 'flex' && angMax > m.ext) return { fase: 'ext', conto: true };
   return { fase, conto: false };
 }
 

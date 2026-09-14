@@ -47,11 +47,11 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import (
-    Actividad, AsignacionDieta, AsignacionEntrenador, AsignacionRutina, Asistencia, Baja, Congelamiento, ContactoEmergencia, Ejercicio, InscripcionActividad, Membresia, Pago, Patologia, Persona, RegistroEjercicio, RegistroSalud, Reserva, Rutina, RutinaEjercicio, Socio, SocioPatologia, Telefono, Turno,
+    Actividad, AsignacionDieta, AsignacionEntrenador, AsignacionRutina, Asistencia, Baja, Comida, Congelamiento, ContactoEmergencia, Dieta, Ejercicio, InscripcionActividad, Membresia, Pago, Patologia, Persona, RegistroComida, RegistroEjercicio, RegistroSalud, Reserva, Rutina, RutinaEjercicio, Socio, SocioPatologia, Telefono, Turno,
 )
 from permisos import Seccion
 from schemas import (
-    ActividadOut, AsignacionDietaOut, AsignacionEntrenadorOut, AsignacionRutinaOut, AsignarPatologiaRequest, AsistenciaOut, BajaPropiaRequest, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, CongelamientoOut, CongelarRequest, DietaOut, EjercicioOut, InscripcionOut, MedicionCrear, MedicionOut, MensajeResponse, MiComidaOut, MiCuotaOut, MiDiaDeDietaOut, MiDietaOut, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRutinaOut, MiRutinaPropiaCrear, PagoOut, PatologiaDeSocioOut, PatologiaOut, RegistroEjercicioCrear, RegistroEjercicioOut, ReservaOut, RutinaOut, TurnoDisponibleOut,
+    ActividadOut, AsignacionDietaOut, AsignacionEntrenadorOut, AsignacionRutinaOut, AsignarPatologiaRequest, AsistenciaOut, BajaPropiaRequest, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, CongelamientoOut, CongelarRequest, DietaOut, EjercicioOut, InscripcionOut, MedicionCrear, MedicionOut, MensajeResponse, MiComidaOut, MiCuotaOut, MiDiaDeDietaOut, MiDietaOut, MiDietaPropiaCrear, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRegistroEjercicioOut, MiRutinaOut, MiRutinaPropiaCrear, PagoOut, PatologiaDeSocioOut, PatologiaOut, RegistroComidaCrear, RegistroComidaOut, RegistroEjercicioCrear, RegistroEjercicioOut, ReservaOut, RutinaOut, TurnoDisponibleOut,
 )
 from notificaciones import notificar_promocion_lista_espera
 from turnos import ocupacion, promover_de_lista_de_espera
@@ -466,11 +466,20 @@ def mi_dieta(
     if asignacion is None or asignacion.dieta is None:
         return None
 
-    dieta = asignacion.dieta
+    return _armar_mi_dieta(asignacion)
 
+
+def _armar_mi_dieta(asignacion) -> MiDietaOut:
+    """
+    Arma la respuesta de 'mi dieta' desde la asignación activa. Sirve para una
+    dieta de nutricionista o una propia (id_nutricionista NULL → "Dieta propia").
+    """
+    dieta = asignacion.dieta
     from routers.nutricion import _clave_orden_comida, _nombre_nutricionista
 
-    # Agrupadas por día, en el orden del día (Desayuno -> Almuerzo -> Cena).
+    # El nombre y las calorías de cada comida salen del catálogo si apunta a uno;
+    # en una dieta propia con texto libre, el nombre es la descripción y no hay
+    # calorías (el contenido real va en Registro_Comida).
     dias: list[MiDiaDeDietaOut] = []
     for c in sorted(dieta.comidas, key=_clave_orden_comida):
         numero = c.dia or 0
@@ -478,9 +487,12 @@ def mi_dieta(
         if grupo is None:
             grupo = MiDiaDeDietaOut(dia=numero, comidas=[], calorias_del_dia=None)
             dias.append(grupo)
+        cat = c.catalogo
         grupo.comidas.append(MiComidaOut(
-            id_comida=c.id_comida, momento=c.momento,
-            descripcion=c.descripcion, calorias=c.calorias,
+            id_comida=c.id_comida,
+            momento=c.momento,
+            descripcion=cat.nombre if cat else (c.descripcion or "?"),
+            calorias=cat.calorias if cat else None,
         ))
 
     for grupo in dias:
@@ -489,13 +501,15 @@ def mi_dieta(
         # diría "este día no se come nada", que es distinto de "no se sabe".
         grupo.calorias_del_dia = sum(con_calorias) if con_calorias else None
 
+    es_propia = dieta.id_nutricionista is None
     return MiDietaOut(
         id_dieta=dieta.id_dieta,
         nombre=dieta.nombre,
         objetivo=dieta.objetivo,
         calorias_diarias=dieta.calorias_diarias,
         descripcion=dieta.descripcion,
-        nutricionista=_nombre_nutricionista(dieta.nutricionista),
+        nutricionista="Dieta propia" if es_propia else _nombre_nutricionista(dieta.nutricionista),
+        es_propia=es_propia,
         dieta_de_baja=not bool(dieta.activo),
         # Estos dos vienen de la ASIGNACIÓN, no de la plantilla: son propios
         # del vínculo entre esta dieta y esta persona.
@@ -531,6 +545,155 @@ def mi_historial_dietas(
         )
         for a in asignaciones
     ]
+
+
+def _asignacion_dieta_activa(db: Session, id_socio: int) -> AsignacionDieta | None:
+    """La asignación de dieta ACTIVA del socio, o None."""
+    return (
+        db.query(AsignacionDieta)
+        .filter(AsignacionDieta.id_socio == id_socio,
+                AsignacionDieta.estado == "ACTIVA")
+        .first()
+    )
+
+
+@router.post("/mi-dieta/propia", response_model=MiDietaOut,
+             status_code=status.HTTP_201_CREATED)
+def crear_mi_dieta_propia(
+    datos: MiDietaPropiaCrear,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_DIETA)),
+):
+    """
+    El socio se arma su PROPIA dieta y queda asignada a él, activa. Espejo exacto
+    de crear_mi_rutina_propia: id_nutricionista NULL (propia, invisible al
+    staff), socio destino del token, y las comidas son de TEXTO LIBRE
+    (Comida.descripcion), porque el catálogo puede estar vacío.
+
+    Si ya tenía una del NUTRICIONISTA activa → 409 (la del profesional manda).
+    Si tenía una propia anterior → la reemplaza (FINALIZADA + desactivada).
+    """
+    socio = _mi_socio(db, sesion)
+    hoy = date.today()
+
+    activa = _asignacion_dieta_activa(db, socio.id_socio)
+    if activa is not None and activa.dieta is not None:
+        if activa.dieta.id_nutricionista is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Ya tenés una dieta asignada por tu nutricionista. "
+                       "Para cambiarla, hablá con él.",
+            )
+        activa.estado = "FINALIZADA"
+        activa.fecha_fin = hoy
+        activa.dieta.activo = False
+
+    dieta = Dieta(
+        id_nutricionista=None,       # ← propia
+        nombre=datos.nombre.strip(),
+        objetivo=datos.objetivo,
+        calorias_diarias=datos.calorias_diarias,
+        descripcion=datos.descripcion,
+        activo=True,
+    )
+    db.add(dieta)
+    db.flush()
+
+    for c in datos.comidas:
+        db.add(Comida(
+            id_dieta=dieta.id_dieta,
+            dia=c.dia,
+            momento=c.momento,
+            id_catalogo_comida=None,       # texto libre, sin plato del catálogo
+            descripcion=c.descripcion.strip(),
+        ))
+
+    db.flush()   # ordena el INSERT después del UPDATE (índice "una activa")
+
+    asignacion = AsignacionDieta(
+        id_socio=socio.id_socio,
+        id_dieta=dieta.id_dieta,
+        fecha_inicio=hoy,
+        estado="ACTIVA",
+    )
+    db.add(asignacion)
+    db.commit()
+    db.refresh(asignacion)
+    return _armar_mi_dieta(asignacion)
+
+
+@router.delete("/mi-dieta/propia", response_model=MensajeResponse)
+def eliminar_mi_dieta_propia(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_DIETA)),
+):
+    """Retira la dieta propia activa (queda como historial). 404 si la activa es
+    la del nutricionista: esa no la maneja el socio."""
+    socio = _mi_socio(db, sesion)
+    activa = _asignacion_dieta_activa(db, socio.id_socio)
+    if activa is None or activa.dieta is None or activa.dieta.id_nutricionista is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No tenés una dieta propia activa para eliminar.",
+        )
+    activa.estado = "FINALIZADA"
+    activa.fecha_fin = date.today()
+    activa.dieta.activo = False
+    db.commit()
+    return MensajeResponse(mensaje="Tu dieta se eliminó.")
+
+
+# =============================================================================
+# MIS COMIDAS — lo que el socio comió (Registro_Comida)
+# =============================================================================
+
+@router.get("/mi-dieta/comidas", response_model=list[RegistroComidaOut])
+def mis_comidas(
+    dias: int = 7,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_DIETA)),
+):
+    """Lo que el socio registró que comió en los últimos `dias` días, lo más nuevo primero."""
+    socio = _mi_socio(db, sesion)
+    desde = date.today() - timedelta(days=max(1, min(dias, 90)))
+    regs = (
+        db.query(RegistroComida)
+        .filter(RegistroComida.id_socio == socio.id_socio,
+                RegistroComida.fecha >= desde)
+        .order_by(RegistroComida.fecha.desc(), RegistroComida.id_registro_comida.desc())
+        .all()
+    )
+    return [RegistroComidaOut.model_validate(r) for r in regs]
+
+
+@router.post("/mi-dieta/comidas", response_model=RegistroComidaOut,
+             status_code=status.HTTP_201_CREATED)
+def registrar_comida(
+    datos: RegistroComidaCrear,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_DIETA)),
+):
+    """
+    Registra lo que el socio comió. El texto es obligatorio; los macros son
+    opcionales — los pone a mano ahora, o los completa el coach IA más adelante.
+    A diferencia de la medición, NO es una por día: se puede registrar cada
+    comida.
+    """
+    socio = _mi_socio(db, sesion)
+    reg = RegistroComida(
+        id_socio=socio.id_socio,
+        fecha=datos.fecha or date.today(),
+        comida_ingerida=datos.comida_ingerida.strip(),
+        momento=datos.momento,
+        calorias_estimadas=datos.calorias_estimadas,
+        proteinas_g=datos.proteinas_g,
+        carbohidratos_g=datos.carbohidratos_g,
+        grasas_g=datos.grasas_g,
+    )
+    db.add(reg)
+    db.commit()
+    db.refresh(reg)
+    return RegistroComidaOut.model_validate(reg)
 
 
 # =============================================================================
@@ -909,6 +1072,40 @@ def _sumar_reps(previas: str | None, reps: int) -> str:
     while len(",".join(partes)) > 20 and len(partes) > 1:
         partes.pop(0)
     return ",".join(partes)
+
+
+@router.get("/mi-rutina/registro-ejercicio", response_model=list[MiRegistroEjercicioOut])
+def mis_registros_ejercicio(
+    dias: int = 120,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_RUTINA)),
+):
+    """
+    Lo que el socio levantó, para el gráfico de progreso de fuerza. De lo más
+    viejo a lo más nuevo (así el gráfico se lee de izquierda a derecha), con el
+    nombre del ejercicio ya resuelto para no pegarle al catálogo en el cliente.
+    """
+    socio = _mi_socio(db, sesion)
+    desde = date.today() - timedelta(days=max(1, min(dias, 365)))
+    regs = (
+        db.query(RegistroEjercicio)
+        .filter(RegistroEjercicio.id_socio == socio.id_socio,
+                RegistroEjercicio.fecha >= desde)
+        .order_by(RegistroEjercicio.fecha)
+        .all()
+    )
+    return [
+        MiRegistroEjercicioOut(
+            id_registro_ejercicio=r.id_registro_ejercicio,
+            id_ejercicio=r.id_ejercicio,
+            nombre_ejercicio=r.ejercicio.nombre if r.ejercicio else "?",
+            fecha=r.fecha,
+            peso_hecho=float(r.peso_hecho),
+            series_hechas=r.series_hechas,
+            repeticiones_hechas=r.repeticiones_hechas,
+        )
+        for r in regs
+    ]
 
 
 @router.post("/mi-rutina/registro-ejercicio", response_model=RegistroEjercicioOut,

@@ -835,10 +835,61 @@ class MiDietaOut(BaseModel):
     calorias_diarias: int | None = None
     descripcion: str | None = None
     nutricionista: str
+    # True si es la dieta PROPIA del socio (la puede editar/eliminar él).
+    es_propia: bool = False
     dieta_de_baja: bool = False
     fecha_inicio: date
     observaciones: str | None = None
     dias: list[MiDiaDeDietaOut] = []
+
+
+class MiComidaPropiaCrear(BaseModel):
+    """Una comida del plan propio, en texto libre (el catálogo puede estar vacío)."""
+    momento: str | None = Field(default=None, max_length=30)   # Desayuno, Almuerzo…
+    descripcion: str = Field(min_length=1, max_length=200)      # "avena con banana"
+    dia: int | None = Field(default=None, ge=1, le=7)
+
+
+class MiDietaPropiaCrear(BaseModel):
+    """
+    La dieta que el socio se arma para sí mismo (sin nutricionista).
+
+    A propósito NO tiene id_nutricionista ni socio destino: el backend la crea a
+    NULL y se la autoasigna al id del token. Espejo de MiRutinaPropiaCrear.
+    """
+    nombre: str = Field(min_length=1, max_length=100)
+    objetivo: str | None = Field(default=None, max_length=100)
+    calorias_diarias: int | None = Field(default=None, ge=0, le=20000)
+    descripcion: str | None = None
+    comidas: list[MiComidaPropiaCrear] = Field(min_length=1)
+
+
+class RegistroComidaCrear(BaseModel):
+    """
+    Lo que el socio comió, cargado por él. El texto es obligatorio; los macros
+    son opcionales (los pone a mano, o los completa el coach IA después).
+    """
+    comida_ingerida: str = Field(min_length=1, max_length=1000)
+    momento: str | None = Field(default=None, max_length=30)
+    # Por defecto hoy. Se permite atrasado por si carga la cena a la mañana.
+    fecha: date | None = None
+    calorias_estimadas: int | None = Field(default=None, ge=0, le=20000)
+    proteinas_g: float | None = Field(default=None, ge=0, le=2000)
+    carbohidratos_g: float | None = Field(default=None, ge=0, le=2000)
+    grasas_g: float | None = Field(default=None, ge=0, le=2000)
+
+
+class RegistroComidaOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id_registro_comida: int
+    fecha: date
+    momento: str | None = None
+    comida_ingerida: str
+    calorias_estimadas: int | None = None
+    proteinas_g: float | None = None
+    carbohidratos_g: float | None = None
+    grasas_g: float | None = None
 
 
 class MiPerfilEditarRequest(BaseModel):
@@ -891,6 +942,17 @@ class RegistroEjercicioOut(BaseModel):
     # varchar(20) en la base: una lista corta de reps por serie, "12,10,8".
     repeticiones_hechas: str | None = None
     observaciones: str | None = None
+
+
+class MiRegistroEjercicioOut(BaseModel):
+    """Una serie hecha, para el gráfico de progreso de fuerza del socio."""
+    id_registro_ejercicio: int
+    id_ejercicio: int
+    nombre_ejercicio: str
+    fecha: date
+    peso_hecho: float
+    series_hechas: int | None = None
+    repeticiones_hechas: str | None = None
 
 
 class RegistroEjercicioCrear(BaseModel):
@@ -1119,7 +1181,8 @@ class ComidaOut(BaseModel):
     id_comida: int
     dia: int | None = None
     momento: str | None = None
-    id_catalogo_comida: int
+    # None en una dieta propia con comida de texto libre (sin plato del catálogo).
+    id_catalogo_comida: int | None = None
     # nombre / descripcion / calorias salen del catálogo (el plato), no de la
     # fila Comida. Se conservan los nombres de campo por compatibilidad.
     nombre: str
@@ -1168,7 +1231,8 @@ class ProfesionalOpcion(BaseModel):
 
 class DietaOut(BaseModel):
     id_dieta: int
-    id_nutricionista: int
+    # None = dieta propia del socio (sin nutricionista); el texto es "Dieta propia".
+    id_nutricionista: int | None = None
     nutricionista: str
     nombre: str
     objetivo: str | None = None
