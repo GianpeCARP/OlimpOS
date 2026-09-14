@@ -501,6 +501,10 @@ git push origin main
 
 Este archivo es el resumen. El detalle fino vive en varios lugares:
 
+- **`docs/ESTADO-ACTUAL.md`** — ARRANCÁ POR ACÁ: qué se hizo último (portal del
+  socio autosuficiente: contador de reps, rutina/dieta propia, registro de comida,
+  progreso) y qué sigue (coach IA). Es el equivalente versionado de la memoria de
+  Claude Code, que es local a cada máquina y no viaja con el repo.
 - **`docs/RESUMEN-PARA-CLAUDE-CODE.md`** — qué cambió en el esquema nuevo y por qué.
 - **`backend/BITACORA.md`** — el recorrido completo del backend (secciones §1–§15).
 - La **memoria de Claude Code**, en `C:\Users\Pardini\.claude\projects\<carpeta>\memory\`,
