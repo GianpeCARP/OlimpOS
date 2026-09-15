@@ -117,14 +117,19 @@ class CobrosView:
             # Filtrado en memoria sobre la lista que ya vino: son decenas de
             # socios, no miles, y un endpoint de búsqueda por cada tecla sería
             # un pedido por letra tipeada.
+            #
+            # Por nombre O DNI y sólo ACTIVOS, igual que CobrosView.tsx: en el
+            # mostrador la persona suele dar el documento, y a un socio dado de
+            # baja no se le cobra desde acá (primero se lo reactiva).
             encontrados = [
                 s for s in app_state.get_socios()
-                if texto in s["nombre"].lower()
+                if s.get("activo", True)
+                and (texto in s["nombre"].lower() or texto in str(s.get("dni", "")))
             ][:6]
 
             if not encontrados:
                 resultados.controls.append(
-                    empty_state("Ningún socio coincide con la búsqueda.",
+                    empty_state("Ningún socio activo coincide.",
                                 ft.Icons.SEARCH_ROUNDED)
                 )
             else:
@@ -151,8 +156,8 @@ class CobrosView:
                 ft.Column([
                     ft.Text(socio["nombre"], color=Colors.TEXT_MAIN, size=14,
                             font_family=Fonts.BODY),
-                    ft.Text(socio["plan"], color=Colors.TEXT_MUTED, size=12,
-                            font_family=Fonts.BODY),
+                    ft.Text(f"DNI {socio.get('dni') or '—'} · {socio['plan']}",
+                            color=Colors.TEXT_MUTED, size=12, font_family=Fonts.BODY),
                 ], spacing=1, tight=True, expand=True),
                 status_badge(socio["estado"]),
             ], spacing=12),
@@ -174,15 +179,12 @@ class CobrosView:
     def _panel_cuenta(self) -> ft.Control:
         cuenta = app_state.get_cuenta_socio(self._socio["id"])
 
+        # Sin bloque de deudas: el esquema eliminó la tabla Deuda (prepago puro)
+        # y "debe" es simplemente no tener membresía vigente, que ya lo dice el
+        # bloque de Membresía. Igual que CobrosView.tsx.
         bloques = [
             self._ficha_socio(cuenta),
         ]
-
-        # Las deudas van primero: mientras haya una pendiente, la regla de
-        # negocio de la web bloquea comprar planes y clases sueltas.
-        if cuenta["total_adeudado"] > 0:
-            bloques.append(ft.Container(height=16))
-            bloques.append(self._bloque_deudas(cuenta))
 
         bloques += [
             ft.Container(height=16),
@@ -233,44 +235,6 @@ class CobrosView:
     def _cambiar_metodo(self, e):
         self._metodo = e.control.value
 
-    def _bloque_deudas(self, cuenta: dict) -> ft.Control:
-        filas = [
-            ft.Container(
-                content=ft.Row([
-                    ft.Icon(ft.Icons.WARNING_ROUNDED, color=Colors.STATUS_DANGER, size=18),
-                    ft.Text("Tiene que regularizar la deuda antes de comprar planes "
-                            "o clases sueltas.",
-                            color=Colors.STATUS_DANGER, size=14, font_family=Fonts.BODY),
-                ], spacing=10),
-                bgcolor=alpha(Colors.STATUS_DANGER, 0.10),
-                border_radius=Radius.SM,
-                padding=ft.Padding.symmetric(horizontal=14, vertical=10),
-            ),
-            ft.Container(height=12),
-        ]
-
-        for d in cuenta["deudas"]:
-            filas.append(
-                ft.Container(
-                    content=ft.Row([
-                        ft.Column([
-                            ft.Text(_moneda(d["monto"]), color=Colors.TEXT_MAIN,
-                                    size=15, weight=ft.FontWeight.W_600,
-                                    font_family=Fonts.MONO),
-                            ft.Text(
-                                f"Generada el {d['generada']} · {d['dias_atraso']} días "
-                                f"de atraso · {d['detalle']}",
-                                color=Colors.TEXT_MUTED, size=12, font_family=Fonts.BODY),
-                        ], spacing=2, tight=True, expand=True),
-                        primary_button("Cobrar",
-                                       on_click=lambda e, x=d: self._cobrar_deuda(x)),
-                    ], spacing=12),
-                    padding=ft.Padding.symmetric(vertical=10),
-                )
-            )
-
-        return section_card(ft.Column(filas, spacing=0), title="Deudas pendientes")
-
     def _bloque_membresia(self, cuenta: dict) -> ft.Control:
         tipos = app_state.get_tipos_membresia()
         # El plan a cobrar arranca en el que el socio ya tiene: lo más habitual
@@ -297,8 +261,10 @@ class CobrosView:
             )
             self._refrescar_previa()
 
+        tiene_membresia = cuenta["plan"] != "—"
         controles = [
-            ft.Text(f"Plan actual: {cuenta['plan']} · vence el {cuenta['vencimiento']}",
+            ft.Text(f"Plan actual: {cuenta['plan']} · vence el {cuenta['vencimiento']}"
+                    if tiene_membresia else "Todavía no tiene ninguna membresía.",
                     color=Colors.TEXT_SECONDARY, size=14, font_family=Fonts.BODY),
             ft.Container(height=10),
         ]
@@ -325,7 +291,8 @@ class CobrosView:
                 value="", width=280, on_change=elegir_promo,
             ))
 
-        fila.append(primary_button("Cobrar renovación", on_click=self._cobrar_membresia))
+        fila.append(primary_button("Cobrar renovación" if tiene_membresia else "Cobrar membresía",
+                                   on_click=self._cobrar_membresia))
         controles.append(ft.Row(fila, spacing=12,
                                 vertical_alignment=ft.CrossAxisAlignment.CENTER))
 
@@ -476,32 +443,6 @@ class CobrosView:
         # vencimiento y su lista de pagos, y dejar la pantalla con los datos
         # viejos invita a cobrar dos veces.
         self._refrescar()
-
-    def _cobrar_deuda(self, deuda: dict):
-        """
-        Saldar una deuda suelta.
-
-        Hoy pasa por el mismo cobro de membresía, que ya salda las deudas
-        pendientes del socio como parte de la operación (saldar_deudas=True en
-        el backend). Un endpoint dedicado sólo para deudas todavía no existe:
-        cuando exista, esta función lo llama y el resto de la pantalla no se
-        entera.
-        """
-        def confirmar():
-            show_snack(
-                self.page,
-                "Las deudas se saldan al cobrar la próxima membresía. "
-                "Cobrale el plan y se cancelan solas.",
-                Colors.STATUS_WARN,
-            )
-
-        open_dialog(self.page, confirm_dialog(
-            self.page,
-            f"¿Cobrar deuda de {_moneda(deuda['monto'])}?",
-            "Al cobrar la próxima membresía, esta deuda se salda "
-            "automáticamente con ese mismo pago.",
-            on_confirm=confirmar, texto_confirmar="Entendido",
-        ))
 
 
     # ── Promociones ───────────────────────────────────────────────────────────
@@ -832,6 +773,38 @@ class CobrosView:
         ))
 
     def _cobrar_plan(self, actividad: dict, plan: dict):
+        """
+        Cobra un abono de actividad.
+
+        Si la membresía no llega a cubrir el mes del abono, en vez de dejar que
+        el mostrador se entere con el rechazo se ofrece el combo: renovar la
+        membresía + cobrar el plan en UNA operación (el backend crea las dos en
+        la misma transacción). Pasa todo el tiempo — la cuota vence a mitad de
+        mes. Espejo de cobrarPlanClick en CobrosView.tsx.
+        """
+        chequeo = app_state.puede_comprar_actividad(self._socio["id"])
+        tipo = getattr(self, "_tipo_elegido", None)
+
+        if not chequeo["puede"] and tipo:
+            total = tipo["precio"] + plan["precio"]
+
+            def combo():
+                self._resolver(app_state.cobrar_membresia(
+                    self._socio["id"], tipo["id"], self._metodo,
+                    id_plan_actividad=plan["id"],
+                ))
+
+            open_dialog(self.page, confirm_dialog(
+                self.page,
+                f"¿Renovar membresía y cobrar \"{plan['nombre']}\"?",
+                f"{chequeo['motivo'] or 'La membresía actual no cubre este plan.'} "
+                f"Se renueva junto con el plan: {_moneda(tipo['precio'])} de {tipo['nombre']} + "
+                f"{_moneda(plan['precio'])} de {plan['nombre']} = {_moneda(total)} "
+                f"en {self._metodo}.",
+                on_confirm=combo, texto_confirmar="Cobrar las dos",
+            ))
+            return
+
         def confirmar():
             self._resolver(app_state.comprar_plan_actividad(
                 self._socio["id"], plan["id"], self._metodo,

@@ -166,6 +166,29 @@ def requiere_seccion(seccion: str, minimo: str = Acceso.LECTURA):
     return dependencia
 
 
+def requiere_alguna_seccion(*secciones: str, minimo: str = Acceso.LECTURA):
+    """
+    Como requiere_seccion, pero alcanza con acceso a CUALQUIERA de las secciones.
+
+    Para los datos que dos pantallas necesitan leer por motivos distintos. El
+    caso que lo motivó: el catálogo de actividades y sus planes. Actividades
+    (configurarlas) es del Dueño; pero Cobros tiene que LEERLOS para cobrar un
+    abono o una clase suelta, y el Recepcionista tiene Cobros sin tener
+    Actividades. Con requiere_seccion(ACTIVIDADES) a secas, el mostrador no
+    podía cobrar actividades en ninguna de las dos apps (y en la PWA el 403
+    tumbaba la pantalla de Cobros entera).
+    """
+    def dependencia(sesion: Sesion = Depends(obtener_sesion)) -> Sesion:
+        if not any(alcanza(acceso_a_seccion(sesion.roles, s), minimo) for s in secciones):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tenés permisos para acceder a esta sección.",
+            )
+        return sesion
+
+    return dependencia
+
+
 def requiere_accion(accion: str):
     """
     Fábrica de dependencias: exige una acción puntual de la matriz.

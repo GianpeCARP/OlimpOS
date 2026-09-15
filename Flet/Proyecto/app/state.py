@@ -668,7 +668,8 @@ class AppState:
             # "Al día" / "Con deuda" es lo que decide el backend cruzando
             # membresía vigente Y ausencia de deudas: alguien puede tener la
             # cuota del mes paga y arrastrar una deuda vieja.
-            "estado": "Al día" if datos.get("al_dia") else "Con deuda",
+            # Prepago puro: sin tabla Deuda, "al día" es tener membresía vigente.
+            "estado": "Al día" if datos.get("al_dia") else "Sin cuota vigente",
             "vencimiento": self._fecha(membresia.get("fecha_vencimiento")),
             "deudas": deudas,
             "total_adeudado": datos.get("deuda_total", 0),
@@ -834,7 +835,8 @@ class AppState:
 
     def cobrar_membresia(self, id_socio: int, id_tipo: int, metodo_display: str,
                           comprobante: str | None = None,
-                          id_promocion: int | None = None) -> dict:
+                          id_promocion: int | None = None,
+                          id_plan_actividad: int | None = None) -> dict:
         """
         Cobra una membresía.
 
@@ -853,6 +855,9 @@ class AppState:
             "metodo": METODO_PAGO_BACKEND.get(metodo_display, "EFECTIVO"),
             "numero_comprobante": comprobante or None,
             "id_promocion": id_promocion,
+            # Combo renovar + abono: el backend crea membresía e inscripción en
+            # la misma transacción (Inscripcion_Actividad.id_membresia es NOT NULL).
+            "id_plan_actividad": id_plan_actividad,
         }))
 
     def comprar_plan_actividad(self, id_socio: int, id_plan: int,

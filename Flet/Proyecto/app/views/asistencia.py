@@ -109,10 +109,12 @@ class AsistenciaView:
             # El filtrado es en memoria sobre la lista que ya vino: son
             # decenas de socios, no miles, y un endpoint de búsqueda por cada
             # tecla sería un pedido por letra tipeada.
+            # Por nombre O DNI y sólo activos, igual que AsistenciaView.tsx.
             encontrados = [
                 s for s in app_state.get_socios()
-                if texto in s["nombre"].lower()
-            ][:5]
+                if s.get("activo", True)
+                and (texto in s["nombre"].lower() or texto in str(s.get("dni", "")))
+            ][:6]
 
             if not encontrados:
                 resultados.controls.append(
@@ -142,7 +144,7 @@ class AsistenciaView:
                 ft.Column([
                     ft.Text(socio["nombre"], color=Colors.TEXT_MAIN, size=14,
                             font_family=Fonts.BODY),
-                    ft.Text(socio["plan"], color=Colors.TEXT_MUTED, size=12,
+                    ft.Text(f"DNI {socio.get('dni') or '—'}", color=Colors.TEXT_MUTED, size=12,
                             font_family=Fonts.BODY),
                 ], spacing=1, tight=True, expand=True),
                 primary_button("Registrar ingreso", on_click=registrar),

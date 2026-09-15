@@ -50,7 +50,12 @@ from permisos import Acceso, Accion, Seccion
 from schemas import (
     ActividadCrear, ActividadOut, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarPlanRequest, ComprarPlanResponse, GeneracionTurnosOut, HorarioActividadOut, HorarioActividadRequest, InscripcionOut, PagoOut, PlanActividadCrear, PlanActividadOut, ProfesorActividadOut, PuedeComprarOut, ReservaOut, ReservarRequest, TurnoCrear, TurnoOut,
 )
-from security import Sesion, requiere_accion, requiere_seccion
+from security import Sesion, requiere_accion, requiere_alguna_seccion, requiere_seccion
+
+# Lecturas que Cobros necesita para cobrar abonos y clases sueltas. El
+# Recepcionista tiene Cobros y NO Actividades (configurar el catálogo no es
+# tarea del mostrador, cobrarlo sí). Ver requiere_alguna_seccion.
+_LEER_PARA_COBRAR = requiere_alguna_seccion(Seccion.ACTIVIDADES, Seccion.COBROS)
 from notificaciones import notificar_promocion_lista_espera
 from turnos import (
     DIAS_A_GENERAR, generar_turnos, promover_de_lista_de_espera,
@@ -198,7 +203,7 @@ def _inscripcion_vigente(db: Session, id_socio: int, id_actividad: int) -> Inscr
 @router.get("", response_model=list[ActividadOut])
 def listar_actividades(
     db: Session = Depends(get_db),
-    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES)),
+    sesion: Sesion = Depends(_LEER_PARA_COBRAR),
 ):
     actividades = db.query(Actividad).order_by(Actividad.nombre).all()
     return [_a_actividad_out(a) for a in actividades]
@@ -242,7 +247,7 @@ def listar_turnos(
     desde: date | None = None,
     hasta: date | None = None,
     db: Session = Depends(get_db),
-    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES)),
+    sesion: Sesion = Depends(_LEER_PARA_COBRAR),
 ):
     """
     Turnos en un rango de fechas. Por defecto, la semana que viene — es lo que
@@ -721,7 +726,7 @@ def alternar_estado_actividad(
 def listar_planes(
     id_actividad: int,
     db: Session = Depends(get_db),
-    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES)),
+    sesion: Sesion = Depends(_LEER_PARA_COBRAR),
 ):
     _buscar_actividad(db, id_actividad)
     planes = (db.query(PlanActividad)
@@ -809,7 +814,7 @@ def alternar_estado_plan(
 def listar_profesores(
     id_actividad: int,
     db: Session = Depends(get_db),
-    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES)),
+    sesion: Sesion = Depends(_LEER_PARA_COBRAR),
 ):
     """Quiénes pueden dictar esta actividad."""
     _buscar_actividad(db, id_actividad)
@@ -918,7 +923,7 @@ def _a_inscripcion_out(db: Session, i: InscripcionActividad) -> InscripcionOut:
 def inscripciones_de_socio(
     id_socio: int,
     db: Session = Depends(get_db),
-    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES)),
+    sesion: Sesion = Depends(_LEER_PARA_COBRAR),
 ):
     """Abonos de un socio. Endpoint de GESTIÓN — el socio ve los suyos en /portal."""
     inscripciones = (db.query(InscripcionActividad)
@@ -1113,7 +1118,7 @@ def cancelar_inscripcion(
 def puede_comprar(
     id_socio: int,
     db: Session = Depends(get_db),
-    sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES)),
+    sesion: Sesion = Depends(_LEER_PARA_COBRAR),
 ):
     """
     Si el socio está en condiciones de comprar un abono HOY, sin comprar nada.
