@@ -22,6 +22,11 @@ python-jose[cryptography]~=3.3.0   # firma y verificación de JWT
 # --- Configuración ---
 python-dotenv~=1.0.1         # carga el .env al entorno del proceso
 
+# --- Videos tutoriales ---
+# Sin ~=: yt-dlp se rompe cuando YouTube cambia algo y la solución es siempre
+# actualizarlo. Lo usa demonio_videos.py (necesita además ffmpeg en el PATH).
+yt-dlp>=2026.8.19
+
 # NOTA sobre bcrypt: se usa la librería directa y NO passlib. Passlib está sin
 # mantenimiento desde 2020 y es incompatible con bcrypt 4.1+, lo que produce
 # errores engañosos del tipo "password cannot be longer than 72 bytes" que no

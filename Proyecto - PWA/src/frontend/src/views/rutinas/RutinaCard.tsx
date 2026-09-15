@@ -1,4 +1,4 @@
-import { Ban, Calendar, Dumbbell, RotateCcw, Target } from 'lucide-react';
+import { Ban, Calendar, Dumbbell, RotateCcw, Target, User } from 'lucide-react';
 import { LevelBadge, PrimaryButton, StatusBadge } from '../../components/ui';
 import { EstadoRutina } from '../../config';
 import type { RutinaListado } from '../../services/rutinasService';
@@ -80,6 +80,9 @@ export function RutinaCard({
           <InfoPill icon={Calendar} text={`${rutina.diasPorSemana} días/sem`} />
         )}
         {rutina.objetivo && <InfoPill icon={Target} text={rutina.objetivo} />}
+        {/* Quién la armó: con las rutinas de todo el plantel a la vista, es lo
+            que explica por qué algunas no tienen botones. */}
+        <InfoPill icon={User} text={rutina.entrenador} />
       </div>
 
       <p className="mt-4 font-body text-sm text-text-secondary">

@@ -378,6 +378,7 @@ class AppState:
                 "telefono": s.get("telefono") or "",
                 "objetivo": s.get("objetivo") or "",
                 "observaciones": s.get("observaciones") or "",
+                "activo": s.get("activo", True),
             }
             for s in datos
         ]
@@ -450,9 +451,50 @@ class AppState:
                 "dias": r.get("dias_por_semana") or 0,
                 "duracion": r.get("objetivo") or "—",
                 "asignados": r.get("asignados", 0),
+                "objetivo": r.get("objetivo") or "",
+                "id_entrenador": r.get("id_entrenador"),
+                "entrenador": r.get("entrenador") or "—",
+                "activo": r.get("activo", True),
+                # Lo decide el backend: un Entrenador ve las rutinas de sus
+                # colegas pero no las edita, ni las da de baja, ni las asigna.
+                "puede_editar": r.get("puede_editar", True),
             }
             for r in datos
         ]
+
+    def get_rutina(self, id_rutina: int) -> dict | None:
+        """El detalle, CON la planilla de ejercicios (el listado no la trae)."""
+        r = self._datos(api_client.obtener_rutina(id_rutina), None)
+        if not r:
+            return None
+        return {
+            "id": r["id_rutina"],
+            "nombre": r["nombre"],
+            "nivel": r.get("nivel") or "",
+            "dias": r.get("dias_por_semana") or 1,
+            "objetivo": r.get("objetivo") or "",
+            "id_entrenador": r.get("id_entrenador"),
+            "entrenador": r.get("entrenador") or "—",
+            "asignados": r.get("asignados", 0),
+            "activo": r.get("activo", True),
+            "puede_editar": r.get("puede_editar", True),
+            "ejercicios": [
+                {
+                    "id_ejercicio": e["id_ejercicio"],
+                    "nombre": e["nombre_ejercicio"],
+                    "grupo": e.get("grupo_muscular") or "—",
+                    "dia": e["dia"],
+                    "orden": e["orden"],
+                    "series": e.get("series"),
+                    "repeticiones": e.get("repeticiones"),
+                    "peso": e.get("peso_sugerido"),
+                    "descanso": e.get("descanso_segundos"),
+                    "observaciones": e.get("observaciones"),
+                    "video": e.get("video_local"),
+                }
+                for e in r.get("ejercicios", [])
+            ],
+        }
 
     # ── Nutrición ─────────────────────────────────────────────────────────────
 
@@ -978,6 +1020,16 @@ class AppState:
         return self._resultado(api_client.asignar_rutina(id_rutina, id_socio),
                                 "Rutina asignada.")
 
+    def editar_rutina(self, id_rutina: int, datos: dict) -> dict:
+        return self._resultado(api_client.editar_rutina(id_rutina, datos),
+                                "Rutina actualizada.")
+
+    def baja_rutina(self, id_rutina: int) -> dict:
+        return self._resultado(api_client.baja_rutina(id_rutina), "Rutina dada de baja.")
+
+    def reactivar_rutina(self, id_rutina: int) -> dict:
+        return self._resultado(api_client.reactivar_rutina(id_rutina), "Rutina reactivada.")
+
     def crear_dieta(self, datos: dict) -> dict:
         return self._resultado(api_client.crear_dieta(datos), "Plan nutricional creado.")
 
@@ -985,11 +1037,16 @@ class AppState:
         return self._resultado(api_client.asignar_dieta(id_dieta, id_socio),
                                 "Plan asignado.")
 
+    def crear_ejercicio(self, datos: dict) -> dict:
+        return self._resultado(api_client.crear_ejercicio(datos), "Ejercicio creado.")
+
     def get_ejercicios(self) -> list[dict]:
         datos = self._datos(api_client.obtener_ejercicios(), [])
         return [
             {"id": e["id_ejercicio"], "nombre": e["nombre"],
-             "grupo": e.get("grupo_muscular", "—")}
+             "grupo": e.get("grupo_muscular", "—"),
+             "descripcion": e.get("descripcion") or "",
+             "video": e.get("video_local")}
             for e in datos
         ]
 

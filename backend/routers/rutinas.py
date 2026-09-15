@@ -44,6 +44,7 @@ from schemas import (
     RutinaCrear, RutinaEditarRequest, RutinaEjercicioOut, RutinaOut,
 )
 from security import Sesion, requiere_accion, requiere_seccion
+from videos import video_local
 
 router = APIRouter(prefix="/rutinas", tags=["Rutinas"])
 
@@ -77,6 +78,53 @@ def _entrenador_de_sesion(db: Session, sesion: Sesion) -> Entrenador | None:
         .first()
     )
     return empleado.entrenador if empleado else None
+
+
+def _puede_editar(propio: Entrenador | None, rutina: Rutina) -> bool:
+    """
+    Un Entrenador sólo toca SUS rutinas; el Dueño y el Recepcionista, todas.
+
+    Es la misma regla que "no crear a nombre de otro" llevada al resto: si un
+    entrenador pudiera editar o asignar la rutina de un colega, el que figura
+    como autor dejaría de ser quien la armó.
+    """
+    return propio is None or rutina.id_entrenador == propio.id_entrenador
+
+
+def _exigir_editable(db: Session, sesion: Sesion, rutina: Rutina) -> None:
+    if not _puede_editar(_entrenador_de_sesion(db, sesion), rutina):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Esa rutina es de otro entrenador: podés verla, no modificarla.",
+        )
+
+
+def _validar_ejercicios(db: Session, items) -> None:
+    """
+    Todos los ejercicios existen, ANTES de insertar ninguno: si el tercero no
+    existe, no tiene que quedar una rutina con los dos primeros cargados.
+    """
+    for item in items:
+        if db.get(Ejercicio, item.id_ejercicio) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"El ejercicio con id {item.id_ejercicio} no existe.",
+            )
+
+
+def _agregar_ejercicios(db: Session, id_rutina: int, items) -> None:
+    for item in items:
+        db.add(RutinaEjercicio(
+            id_rutina=id_rutina,
+            id_ejercicio=item.id_ejercicio,
+            dia=item.dia,
+            orden=item.orden,
+            series=item.series,
+            repeticiones=item.repeticiones,
+            peso_sugerido=item.peso_sugerido,
+            descanso_segundos=item.descanso_segundos,
+            observaciones=item.observaciones,
+        ))
 
 
 def _resolver_entrenador(db: Session, sesion: Sesion, id_pedido: int | None) -> Entrenador:
@@ -141,6 +189,7 @@ def _a_rutina_out(rutina: Rutina, con_ejercicios: bool = True) -> RutinaOut:
                 peso_sugerido=float(re.peso_sugerido) if re.peso_sugerido is not None else None,
                 descanso_segundos=re.descanso_segundos,
                 observaciones=re.observaciones,
+                video_local=video_local(re.ejercicio.url_video) if re.ejercicio else None,
             ))
 
     # id_entrenador NULL ⟺ rutina propia (crear_rutina siempre resuelve un
@@ -251,7 +300,13 @@ def listar_rutinas(
         .order_by(Rutina.id_rutina.desc())
         .all()
     )
-    return [_a_rutina_out(r, con_ejercicios=False) for r in rutinas]
+    propio = _entrenador_de_sesion(db, sesion)
+    salida = []
+    for r in rutinas:
+        out = _a_rutina_out(r, con_ejercicios=False)
+        out.puede_editar = _puede_editar(propio, r)
+        salida.append(out)
+    return salida
 
 
 @router.get("/{id_rutina}", response_model=RutinaOut)
@@ -262,7 +317,9 @@ def obtener_rutina(
 ):
     """El detalle SÍ trae los ejercicios, ordenados por día y orden."""
     rutina = _rutina_del_staff(db, id_rutina)
-    return _a_rutina_out(rutina)
+    out = _a_rutina_out(rutina)
+    out.puede_editar = _puede_editar(_entrenador_de_sesion(db, sesion), rutina)
+    return out
 
 
 @router.post("", response_model=RutinaOut, status_code=status.HTTP_201_CREATED)
@@ -296,27 +353,8 @@ def crear_rutina(
     db.add(rutina)
     db.flush()
 
-    # Se validan TODOS los ejercicios antes de insertar ninguno: si el tercero
-    # no existe, no tiene que quedar una rutina con los dos primeros cargados.
-    for item in datos.ejercicios:
-        if db.get(Ejercicio, item.id_ejercicio) is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"El ejercicio con id {item.id_ejercicio} no existe.",
-            )
-
-    for item in datos.ejercicios:
-        db.add(RutinaEjercicio(
-            id_rutina=rutina.id_rutina,
-            id_ejercicio=item.id_ejercicio,
-            dia=item.dia,
-            orden=item.orden,
-            series=item.series,
-            repeticiones=item.repeticiones,
-            peso_sugerido=item.peso_sugerido,
-            descanso_segundos=item.descanso_segundos,
-            observaciones=item.observaciones,
-        ))
+    _validar_ejercicios(db, datos.ejercicios)
+    _agregar_ejercicios(db, rutina.id_rutina, datos.ejercicios)
 
     db.commit()
     db.refresh(rutina)
@@ -351,6 +389,7 @@ def asignar_rutina(
     el personal no puede endosársela a otro socio.
     """
     rutina = _rutina_del_staff(db, id_rutina)
+    _exigir_editable(db, sesion, rutina)
 
     socio = db.get(Socio, datos.id_socio)
     if socio is None:
@@ -464,7 +503,12 @@ def editar_rutina(
     sesion: Sesion = Depends(requiere_accion(Accion.GESTION_RUTINAS)),
 ):
     """
-    Edita los datos de la rutina. Los ejercicios se manejan aparte.
+    Edita la rutina y, si vienen, REEMPLAZA sus ejercicios.
+
+    Reemplazar la lista entera (y no agregar/quitar de a uno) es lo que hace
+    el formulario: el entrenador reacomoda la planilla y guarda cómo quedó.
+    Nada apunta a Rutina_Ejercicio (el registro de series va por Ejercicio),
+    así que borrar y volver a insertar no rompe ningún historial.
 
     Cambiar el entrenador a cargo sigue la misma regla que el alta: un
     entrenador no puede pasarle su rutina a otro ni quedarse con la de un
@@ -472,6 +516,7 @@ def editar_rutina(
     falta cuando alguien se va del gimnasio.
     """
     rutina = _rutina_del_staff(db, id_rutina)
+    _exigir_editable(db, sesion, rutina)
 
     if datos.id_entrenador is not None and datos.id_entrenador != rutina.id_entrenador:
         rutina.id_entrenador = _resolver_entrenador(db, sesion, datos.id_entrenador).id_entrenador
@@ -481,8 +526,17 @@ def editar_rutina(
     rutina.nivel = datos.nivel
     rutina.dias_por_semana = datos.dias_por_semana
 
+    if datos.ejercicios is not None:
+        _validar_ejercicios(db, datos.ejercicios)
+        db.query(RutinaEjercicio).filter(
+            RutinaEjercicio.id_rutina == rutina.id_rutina
+        ).delete(synchronize_session=False)
+        db.flush()
+        _agregar_ejercicios(db, rutina.id_rutina, datos.ejercicios)
+
     db.commit()
     db.refresh(rutina)
+    db.expire(rutina, ["ejercicios"])
     return _a_rutina_out(rutina)
 
 
@@ -504,6 +558,7 @@ def dar_de_baja_rutina(
     entrenamiento sin que nadie lo decidiera.
     """
     rutina = _rutina_del_staff(db, id_rutina)
+    _exigir_editable(db, sesion, rutina)
     if not rutina.activo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Esa rutina ya estaba desactivada.")
@@ -521,6 +576,7 @@ def reactivar_rutina(
     sesion: Sesion = Depends(requiere_accion(Accion.GESTION_RUTINAS)),
 ):
     rutina = _rutina_del_staff(db, id_rutina)
+    _exigir_editable(db, sesion, rutina)
     if rutina.activo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Esa rutina ya estaba activa.")

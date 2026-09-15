@@ -44,6 +44,14 @@ export function mensajeDeError(err: unknown): string {
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000';
 
+/**
+ * URL absoluta de un archivo que sirve el backend (p. ej. un video en
+ * /videos/...). Para <video src>, que no pasa por `pedir`.
+ */
+export function urlDelBackend(ruta: string): string {
+  return `${API_URL}${ruta}`;
+}
+
 // ESTA APP NO GUARDA EL TOKEN. En ningún lado.
 //
 // La sesión vive en una cookie `httponly` que setea el backend en el login, y

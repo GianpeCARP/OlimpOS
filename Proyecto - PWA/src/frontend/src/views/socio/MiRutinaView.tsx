@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, Calendar, Camera, Dumbbell, Pencil, Play, Sparkles, Target, Timer, Trash2, User } from 'lucide-react';
+import { AlertTriangle, BookOpen, Calendar, Camera, Dumbbell, Pencil, Play, PlayCircle, Sparkles, Target, Timer, Trash2, User } from 'lucide-react';
 import { LevelBadge, PrimaryButton, SectionCard, Topbar } from '../../components/ui';
 import { colors } from '../../config';
 import { mensajeDeError } from '../../services/api';
@@ -10,10 +10,12 @@ import { parsearFecha } from '../../utils/fechas';
 import { esCelular } from '../../utils/dispositivo';
 import { InfoPill } from '../rutinas/InfoPill';
 import { ArmarMiRutina } from './ArmarMiRutina';
+import { CatalogoEjercicios } from './CatalogoEjercicios';
 import { CircuitoView } from './CircuitoView';
 import { ContadorReps } from './ContadorReps';
 import { MiEntrenadorCard } from './MiEntrenadorCard';
 import { SinSocioEnSesion } from './SinSocioEnSesion';
+import { VerTecnica } from './VerTecnica';
 
 // Vista 2 del portal (docs/prompt_portal_socio.md). SOLO LECTURA: no hay un
 // solo botón que modifique nada.
@@ -47,13 +49,26 @@ function formatearDescanso(segundos: number): string {
 }
 
 function FilaEjercicio({ ejercicio }: { ejercicio: EjercicioDelDia }) {
+  const [viendo, setViendo] = useState(false);
   return (
     <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+      {viendo && ejercicio.video && (
+        <VerTecnica nombre={ejercicio.nombre} video={ejercicio.video} onCerrar={() => setViendo(false)} />
+      )}
       <div className="min-w-0">
         <p className="font-body text-sm text-text-main">{ejercicio.nombre}</p>
         <p className="font-body text-xs text-text-muted">{ejercicio.grupoMuscular}</p>
         {ejercicio.observaciones && (
           <p className="mt-1 font-body text-xs text-status-warn">{ejercicio.observaciones}</p>
+        )}
+        {ejercicio.video && (
+          <button
+            type="button"
+            onClick={() => setViendo(true)}
+            className="mt-2 flex shrink-0 items-center gap-1.5 rounded-md border border-border-idle px-3 py-1.5 font-body text-xs whitespace-nowrap text-primary-volt"
+          >
+            <PlayCircle size={14} /> Ver técnica
+          </button>
         )}
       </div>
 
@@ -107,6 +122,8 @@ export function MiRutinaView() {
   // Armar/rehacer la rutina propia: otro MODO de esta pantalla (no una ruta).
   const [armando, setArmando] = useState(false);
   const [eliminando, setEliminando] = useState(false);
+  // Mirar el catálogo de ejercicios suelto: otro MODO, no una ruta.
+  const [explorando, setExplorando] = useState(false);
 
   const idSocio = useAuthStore((s) => s.idSocio);
 
@@ -176,8 +193,11 @@ export function MiRutinaView() {
 
       {contando && <ContadorReps onSalir={() => setContando(false)} />}
 
+      {explorando && <CatalogoEjercicios onCerrar={() => setExplorando(false)} />}
+
       {armando && (
         <ArmarMiRutina
+          actual={rutina?.esPropia ? rutina : null}
           onCerrar={() => setArmando(false)}
           onGuardada={(r) => {
             setRutina(r);
@@ -243,6 +263,24 @@ export function MiRutinaView() {
                 icon={Camera}
                 onClick={() => setContando(true)}
               />
+            </div>
+          </SectionCard>
+        )}
+
+        {/* El catálogo se ofrece siempre, tenga o no rutina: mirar cómo se
+            hace un ejercicio no depende de tener un plan. */}
+        {!error && cargado && (
+          <SectionCard>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-heading text-base font-semibold text-text-main">
+                  Ejercicios del gimnasio
+                </p>
+                <p className="font-body text-xs text-text-secondary">
+                  Mirá cómo se hace cada uno, con video.
+                </p>
+              </div>
+              <PrimaryButton label="Ver" icon={BookOpen} onClick={() => setExplorando(true)} />
             </div>
           </SectionCard>
         )}

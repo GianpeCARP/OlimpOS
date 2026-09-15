@@ -11,6 +11,8 @@ import {
 } from '../../services/rutinasService';
 import { useUiStore } from '../../store/uiStore';
 import { usePuedeAccion } from '../../hooks/usePermisos';
+import { AsignarRutinaModal } from './AsignarRutinaModal';
+import { EjercicioFormModal } from './EjercicioFormModal';
 import { RutinaCard } from './RutinaCard';
 import { RutinaDetailModal } from './RutinaDetailModal';
 import { RutinaFormModal } from './RutinaFormModal';
@@ -47,6 +49,8 @@ export function RutinasView() {
 
   const [formModal, setFormModal] = useState<{ rutina: RutinaListado | null } | null>(null);
   const [detalle, setDetalle] = useState<RutinaListado | null>(null);
+  const [asignando, setAsignando] = useState<RutinaListado | null>(null);
+  const [nuevoEjercicio, setNuevoEjercicio] = useState(false);
 
   useEffect(() => {
     let cancelado = false;
@@ -88,13 +92,11 @@ export function RutinasView() {
     );
   }, []);
 
-  // "Asignar" es un stub tal cual lo describe el doc — la pantalla de
-  // selección de socio es una spec propia que todavía no existe.
-  const asignar = useCallback(
-    (rutina: RutinaListado) => {
-      showSnack(`Asignar "${rutina.nombre}" a un socio — función disponible próximamente`, colors.statusWarn);
-    },
-    [showSnack],
+  // Gestionar ESTA rutina: tener la acción y que el backend diga que es
+  // editable (un Entrenador ve las de sus colegas pero no las toca).
+  const gestionable = useCallback(
+    (rutina: RutinaListado) => puedeGestionar && rutina.puedeEditar,
+    [puedeGestionar],
   );
 
   const pedirBaja = useCallback(
@@ -137,16 +139,25 @@ export function RutinasView() {
         subtitle={rutinas ? `${rutinas.length} rutinas disponibles` : undefined}
         actions={
           puedeGestionar ? (
-            <PrimaryButton
-              label="Nueva Rutina"
-              icon={Plus}
-              onClick={() => setFormModal({ rutina: null })}
-            />
+            <div className="flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setNuevoEjercicio(true)}
+                className="flex shrink-0 items-center gap-1.5 rounded-md border border-border-idle px-3 py-2 font-body text-sm whitespace-nowrap text-text-secondary hover:bg-surface-hover hover:text-text-main"
+              >
+                <Plus size={16} /> Ejercicio
+              </button>
+              <PrimaryButton
+                label="Nueva Rutina"
+                icon={Plus}
+                onClick={() => setFormModal({ rutina: null })}
+              />
+            </div>
           ) : undefined
         }
       />
 
-      <div className="space-y-4 p-8">
+      <div className="space-y-4 p-4 md:p-8">
         {error && (
           <SectionCard>
             <p className="mb-4 font-body text-sm text-status-danger">{error}</p>
@@ -198,9 +209,9 @@ export function RutinasView() {
                   <RutinaCard
                     key={rutina.idRutina}
                     rutina={rutina}
-                    puedeGestionar={puedeGestionar}
+                    puedeGestionar={gestionable(rutina)}
                     onVerDetalle={() => setDetalle(rutina)}
-                    onAsignar={() => asignar(rutina)}
+                    onAsignar={() => setAsignando(rutina)}
                     onDarDeBaja={() => pedirBaja(rutina)}
                     onActivar={() => activar(rutina)}
                   />
@@ -222,13 +233,29 @@ export function RutinasView() {
       {detalle && (
         <RutinaDetailModal
           rutina={detalle}
-          puedeGestionar={puedeGestionar}
+          puedeGestionar={gestionable(detalle)}
           onClose={() => setDetalle(null)}
           onEditar={() => {
             setFormModal({ rutina: detalle });
             setDetalle(null);
           }}
+          onAsignar={() => {
+            setAsignando(detalle);
+            setDetalle(null);
+          }}
         />
+      )}
+
+      {asignando && (
+        <AsignarRutinaModal
+          rutina={asignando}
+          onClose={() => setAsignando(null)}
+          onAsignada={recargar}
+        />
+      )}
+
+      {nuevoEjercicio && (
+        <EjercicioFormModal onClose={() => setNuevoEjercicio(false)} onCreado={() => {}} />
       )}
     </div>
   );

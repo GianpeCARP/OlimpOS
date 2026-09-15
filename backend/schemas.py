@@ -18,7 +18,9 @@ frontends.
 from datetime import date, datetime, time  # noqa: F401  (los usan los *Out)
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+
+from videos import id_youtube, video_local
 
 
 # =============================================================================
@@ -1043,14 +1045,33 @@ class EjercicioOut(BaseModel):
     descripcion: str | None = None
     url_video: str | None = None
     requiere_maquina: bool = False
+    # Ruta HTTP del video YA descargado por demonio_videos.py, o None si
+    # todavía no está. Se deriva del archivo en disco, no se guarda.
+    video_local: str | None = None
+
+    @model_validator(mode="after")
+    def _con_video_local(self):
+        self.video_local = video_local(self.url_video)
+        return self
 
 
 class EjercicioCrear(BaseModel):
     nombre: str = Field(min_length=1, max_length=100)
     grupo_muscular: str = Field(min_length=1, max_length=50)
     descripcion: str | None = None
-    url_video: str | None = None
+    url_video: str | None = Field(default=None, max_length=255)
     requiere_maquina: bool = False
+
+    @field_validator("url_video")
+    @classmethod
+    def _link_de_youtube(cls, v: str | None) -> str | None:
+        # Se rechaza acá y no en el demonio: si el link no es de YouTube el
+        # entrenador tiene que enterarse al guardar, no descubrir días después
+        # que el video nunca apareció.
+        v = (v or "").strip() or None
+        if v and id_youtube(v) is None:
+            raise ValueError("El video tiene que ser un link de YouTube.")
+        return v
 
 
 class RutinaEjercicioCrear(BaseModel):
@@ -1077,6 +1098,8 @@ class RutinaEjercicioOut(BaseModel):
     peso_sugerido: float | None = None
     descanso_segundos: int | None = None
     observaciones: str | None = None
+    # Ver EjercicioOut.video_local: None hasta que el demonio lo baja.
+    video_local: str | None = None
 
 
 class RutinaCrear(BaseModel):
@@ -1108,6 +1131,9 @@ class RutinaEditarRequest(BaseModel):
     nivel: str | None = None
     dias_por_semana: int | None = Field(default=None, ge=1, le=7)
     id_entrenador: int | None = None
+    # None = los ejercicios no se tocan. Una lista (aunque sea vacía) REEMPLAZA
+    # todos los de la rutina: el formulario manda la planilla entera como quedó.
+    ejercicios: list[RutinaEjercicioCrear] | None = None
 
 
 class MiRutinaPropiaCrear(BaseModel):
@@ -1145,6 +1171,9 @@ class RutinaOut(BaseModel):
     # a bajarse todas las asignaciones para mostrar un número.
     asignados: int = 0
     ejercicios: list[RutinaEjercicioOut] = []
+    # Si quien pide puede editarla, darla de baja y asignarla. False para un
+    # Entrenador mirando la rutina de un colega: la ve, pero no la toca.
+    puede_editar: bool = True
 
 
 class AsignarRutinaRequest(BaseModel):

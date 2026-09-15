@@ -12,6 +12,7 @@
 import type { NivelRutinaValue, EstadoRutinaValue } from '../config';
 import { EstadoRutina } from '../config';
 import { pedir } from './api';
+import type { EjercicioCatalogo } from './socioService';
 
 /**
  * Cuántos socios se consideran "rutina llena" para la barra de progreso.
@@ -38,6 +39,11 @@ export interface RutinaListado {
   fechaCreacion: string;
   activo: boolean;
   estado: EstadoRutinaValue;
+  /**
+   * Si quien la mira puede editarla, darla de baja y asignarla. Lo decide el
+   * backend: un Entrenador ve las rutinas de sus colegas pero no las toca.
+   */
+  puedeEditar: boolean;
 }
 
 export interface EjercicioDeRutina {
@@ -53,6 +59,8 @@ export interface EjercicioDeRutina {
   pesoSugerido?: number;
   descansoSegundos?: number;
   observaciones?: string;
+  /** Ruta del video tutorial ya descargado, si hay. */
+  video?: string;
 }
 
 interface RutinaApi {
@@ -78,7 +86,9 @@ interface RutinaApi {
     peso_sugerido: number | null;
     descanso_segundos: number | null;
     observaciones: string | null;
+    video_local: string | null;
   }[];
+  puede_editar?: boolean;
 }
 
 function aRutinaListado(r: RutinaApi): RutinaListado {
@@ -95,6 +105,7 @@ function aRutinaListado(r: RutinaApi): RutinaListado {
     fechaCreacion: r.fecha_creacion ?? '',
     activo: r.activo,
     estado: r.activo ? EstadoRutina.ACTIVA : EstadoRutina.INACTIVA,
+    puedeEditar: r.puede_editar ?? true,
   };
 }
 
@@ -126,8 +137,63 @@ export async function obtenerRutina(
       pesoSugerido: e.peso_sugerido ?? undefined,
       descansoSegundos: e.descanso_segundos ?? undefined,
       observaciones: e.observaciones ?? undefined,
+      video: e.video_local ?? undefined,
     })),
   };
+}
+
+// --- Catálogo de ejercicios ---
+
+interface EjercicioApi {
+  id_ejercicio: number;
+  nombre: string;
+  grupo_muscular: string;
+  descripcion: string | null;
+  requiere_maquina: boolean;
+  video_local: string | null;
+}
+
+function aEjercicioCatalogo(e: EjercicioApi): EjercicioCatalogo {
+  return {
+    idEjercicio: e.id_ejercicio,
+    nombre: e.nombre,
+    grupoMuscular: e.grupo_muscular,
+    descripcion: e.descripcion ?? undefined,
+    requiereMaquina: e.requiere_maquina,
+    video: e.video_local ?? undefined,
+  };
+}
+
+/** El catálogo compartido, para elegir ejercicios al armar una rutina. */
+export async function listarEjercicios(): Promise<EjercicioCatalogo[]> {
+  const datos = await pedir<EjercicioApi[]>('/rutinas/ejercicios');
+  return datos.map(aEjercicioCatalogo);
+}
+
+export interface EjercicioNuevoInput {
+  nombre: string;
+  grupoMuscular: string;
+  descripcion?: string;
+  /**
+   * Link de YouTube del canal del gimnasio. El demonio del servidor lo baja
+   * solo; hasta entonces el socio ve el ejercicio sin "Ver técnica".
+   */
+  urlVideo?: string;
+  requiereMaquina: boolean;
+}
+
+export async function crearEjercicio(input: EjercicioNuevoInput): Promise<EjercicioCatalogo> {
+  const datos = await pedir<EjercicioApi>('/rutinas/ejercicios', {
+    metodo: 'POST',
+    cuerpo: {
+      nombre: input.nombre.trim(),
+      grupo_muscular: input.grupoMuscular.trim(),
+      descripcion: input.descripcion?.trim() || null,
+      url_video: input.urlVideo?.trim() || null,
+      requiere_maquina: input.requiereMaquina,
+    },
+  });
+  return aEjercicioCatalogo(datos);
 }
 
 // --- Entrenadores para el selector del formulario ---
@@ -163,6 +229,36 @@ export interface RutinaInput {
    * entrenadores, así que para ellos elegir no es suplantar, es delegar.
    */
   idEntrenador?: number;
+  /**
+   * La planilla entera, como quedó. Al editar REEMPLAZA todos los ejercicios
+   * de la rutina; si se omite, no se tocan.
+   */
+  ejercicios?: EjercicioInput[];
+}
+
+/** Un ejercicio dentro de la rutina, tal como lo carga el entrenador. */
+export interface EjercicioInput {
+  idEjercicio: number;
+  dia: number;
+  orden: number;
+  series?: number;
+  repeticiones?: string;
+  pesoSugerido?: number;
+  descansoSegundos?: number;
+  observaciones?: string;
+}
+
+function aEjercicioApi(e: EjercicioInput) {
+  return {
+    id_ejercicio: e.idEjercicio,
+    dia: e.dia,
+    orden: e.orden,
+    series: e.series ?? null,
+    repeticiones: e.repeticiones ?? null,
+    peso_sugerido: e.pesoSugerido ?? null,
+    descanso_segundos: e.descansoSegundos ?? null,
+    observaciones: e.observaciones ?? null,
+  };
 }
 
 export async function crearRutina(input: RutinaInput): Promise<RutinaListado> {
@@ -174,7 +270,7 @@ export async function crearRutina(input: RutinaInput): Promise<RutinaListado> {
       dias_por_semana: input.diasPorSemana,
       objetivo: input.objetivo?.trim() || null,
       id_entrenador: input.idEntrenador ?? null,
-      ejercicios: [],
+      ejercicios: (input.ejercicios ?? []).map(aEjercicioApi),
     },
   });
   return aRutinaListado(datos);
@@ -192,6 +288,9 @@ export async function actualizarRutina(
       dias_por_semana: input.diasPorSemana,
       objetivo: input.objetivo?.trim() || null,
       id_entrenador: input.idEntrenador ?? null,
+      // Sin la clave (y no null) cuando no vienen: el backend interpreta
+      // ausencia como "no tocar los ejercicios".
+      ...(input.ejercicios ? { ejercicios: input.ejercicios.map(aEjercicioApi) } : {}),
     },
   });
   return aRutinaListado(datos);

@@ -151,6 +151,9 @@ export interface EjercicioDelDia {
   pesoSugerido?: number;
   descansoSegundos?: number;
   observaciones?: string;
+  /** Ruta del video tutorial ya descargado en el servidor. Sin él, no hay
+   *  botón "Ver técnica" (el entrenador no cargó link o todavía se está bajando). */
+  video?: string;
 }
 
 export interface DiaDeRutina {
@@ -196,6 +199,7 @@ interface RutinaApi {
     peso_sugerido: number | null;
     descanso_segundos: number | null;
     observaciones: string | null;
+    video_local: string | null;
   }[];
 }
 
@@ -224,6 +228,7 @@ function agruparPorDia(ejercicios: RutinaApi['ejercicios']): DiaDeRutina[] {
       pesoSugerido: e.peso_sugerido ?? undefined,
       descansoSegundos: e.descanso_segundos ?? undefined,
       observaciones: e.observaciones ?? undefined,
+      video: e.video_local ?? undefined,
     });
   }
   return dias;
@@ -274,6 +279,8 @@ export interface EjercicioCatalogo {
   grupoMuscular: string;
   descripcion?: string;
   requiereMaquina: boolean;
+  /** Ruta del video tutorial ya descargado en el servidor, si hay. */
+  video?: string;
 }
 
 interface EjercicioCatalogoApi {
@@ -282,6 +289,7 @@ interface EjercicioCatalogoApi {
   grupo_muscular: string;
   descripcion: string | null;
   url_video: string | null;
+  video_local: string | null;
   requiere_maquina: boolean;
 }
 
@@ -294,6 +302,7 @@ export async function listarEjerciciosCatalogo(): Promise<EjercicioCatalogo[]> {
     grupoMuscular: e.grupo_muscular,
     descripcion: e.descripcion ?? undefined,
     requiereMaquina: e.requiere_maquina,
+    video: e.video_local ?? undefined,
   }));
 }
 

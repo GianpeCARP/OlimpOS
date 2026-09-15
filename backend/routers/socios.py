@@ -48,6 +48,7 @@ from schemas import (
     AsignacionEntrenadorOut, AsignarEntrenadorRequest, BajaRequest, PersonaOut,
     SocioAltaRequest, SocioAltaResponse, SocioEditarRequest, SocioOut,
 )
+from routers.rutinas import _entrenador_de_sesion
 from security import Sesion, requiere_accion, requiere_seccion
 
 router = APIRouter(prefix="/socios", tags=["Socios"])
@@ -608,9 +609,13 @@ def reactivar(
 # QUIÉN PUEDE: la acción GESTION_RUTINAS, no ALTA_BAJA_SOCIOS. Asignar un
 # entrenador no es un dato administrativo del socio, es una decisión de
 # entrenamiento — y con GESTION_RUTINAS la tienen el Dueño, el Recepcionista
-# y el propio Entrenador, que es quien toma un cliente nuevo. No hay
-# escalación de privilegios en dejárselo al entrenador: ya ve a todos los
-# socios en LECTURA, así que asignarse uno no le muestra nada que no viera.
+# y el propio Entrenador, que es quien toma un cliente nuevo.
+#
+# PERO un Entrenador sólo decide por SÍ MISMO: puede tomar un socio o
+# soltarlo, no ponerle ni sacarle a otro entrenador. Eso es del Dueño y del
+# Recepcionista. Es la misma regla que _resolver_entrenador aplica a las
+# rutinas ("no a nombre de otro"). Antes no estaba y un entrenador podía
+# asignarle a un socio cualquier colega.
 
 def _a_asignacion_out(a: AsignacionEntrenador) -> AsignacionEntrenadorOut:
     entrenador = a.entrenador
@@ -693,6 +698,13 @@ def asignar_entrenador(
                     "asignarle un entrenador."),
         )
 
+    propio = _entrenador_de_sesion(db, sesion)
+    if propio is not None and datos.id_entrenador != propio.id_entrenador:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Sólo podés asignarte a vos mismo como entrenador.",
+        )
+
     entrenador = db.get(Entrenador, datos.id_entrenador)
     if entrenador is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
@@ -752,6 +764,12 @@ def finalizar_asignacion(
     if asignacion is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="Esa asignación no existe.")
+    propio = _entrenador_de_sesion(db, sesion)
+    if propio is not None and asignacion.id_entrenador != propio.id_entrenador:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Sólo podés terminar tus propias asignaciones.",
+        )
     if asignacion.estado != "ACTIVA":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Esa asignación ya estaba finalizada.")

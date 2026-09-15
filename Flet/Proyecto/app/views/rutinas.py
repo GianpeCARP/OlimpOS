@@ -1,69 +1,93 @@
 # =============================================================================
 # views/rutinas.py — Gestión de rutinas de entrenamiento
 # =============================================================================
-# Esta vista muestra el catálogo de rutinas de entrenamiento disponibles.
-# Cada rutina se presenta como una tarjeta con:
-#   - Nivel de dificultad (badge coloreado)
-#   - Frecuencia semanal y duración
-#   - Barra de progreso de socios asignados vs. capacidad máxima
-#   - Botones para ver detalles o asignar la rutina
-# Permite crear nuevas rutinas mediante un modal.
+# Gemela de views/rutinas/ de la PWA (RutinasView, RutinaFormModal,
+# RutinaDetailModal, AsignarRutinaModal, EjercicioFormModal).
+#
+#   - Tarjetas con nivel, días, entrenador y socios asignados.
+#   - Detalle con la planilla de ejercicios por día.
+#   - Alta y edición CON ejercicios elegidos del catálogo, por día.
+#   - Asignar la rutina a un socio, y baja/reactivación.
+#   - Alta de ejercicios del catálogo con el link del video tutorial.
+#
+# QUIÉN TOCA QUÉ: hace falta la acción `gestionRutinas`, y además que la
+# rutina sea editable para esta sesión — un Entrenador ve las de sus colegas
+# pero no las toca. Lo decide el backend (`puede_editar`) y es el que de
+# verdad lo impide; acá sólo se decide qué botones se dibujan.
 
 import flet as ft
-from app.config import Colors, Routes
+from app.config import Colors, Radius, Routes
 from app.state import app_state
-from app.components.ui import (build_topbar, level_badge, primary_button,
-                                input_field, show_snack, open_dialog, close_dialog)
+from app.components.ui import (build_topbar, confirm_dialog, level_badge, primary_button,
+                                input_field, show_snack, open_dialog, close_dialog,
+                                status_badge)
+
+NIVELES = ["Principiante", "Intermedio", "Avanzado"]
+
+# Tope de socios dibujados en el diálogo de asignar: con cientos, se busca.
+MAX_SOCIOS_LISTA = 50
 
 
 class RutinasView:
     def __init__(self, page: ft.Page, router):
         self.page   = page
         self.router = router
+        self.puede_gestionar = app_state.puede("gestionRutinas")
 
     def build(self) -> ft.Column:
-        """Construye la vista con topbar y grilla responsiva de tarjetas de rutinas."""
-        rutinas = app_state.get_rutinas()  # Obtiene la lista de rutinas del estado global
+        rutinas = app_state.get_rutinas()
 
-        topbar = build_topbar(
-            "Rutinas",
-            f"{len(rutinas)} rutinas disponibles",
-            actions=[
+        acciones = []
+        if self.puede_gestionar:
+            acciones = [
+                primary_button("Nuevo Ejercicio", ft.Icons.ADD_ROUNDED,
+                               on_click=self._open_form_ejercicio),
                 primary_button("Nueva Rutina", ft.Icons.ADD_ROUNDED,
-                               on_click=self._open_form),
+                               on_click=lambda e: self._open_form()),
             ]
-        )
 
-        # Grilla responsiva: 1 col en mobile, 2 en tablet, 3 en desktop
-        cards = ft.ResponsiveRow(
-            [self._rutina_card(r) for r in rutinas],
-            spacing=16, run_spacing=16,
-        )
+        topbar = build_topbar("Rutinas", f"{len(rutinas)} rutinas disponibles",
+                              actions=acciones)
 
-        body = ft.Column([
+        if rutinas:
+            contenido = ft.ResponsiveRow(
+                [self._rutina_card(r) for r in rutinas],
+                spacing=16, run_spacing=16,
+            )
+        else:
+            contenido = ft.Text("Todavía no hay rutinas cargadas.",
+                                color=Colors.TEXT_MUTED, size=13)
+
+        return ft.Column([
             topbar,
             ft.Container(
-                content=ft.Column([cards], spacing=0,
+                content=ft.Column([contenido], spacing=0,
                                   scroll=ft.ScrollMode.AUTO, expand=True),
                 padding=ft.Padding.all(24),
                 expand=True,
             ),
         ], spacing=0, expand=True)
 
-        return body
+    def _gestionable(self, r: dict) -> bool:
+        return self.puede_gestionar and r.get("puede_editar", True)
+
+    # ── Tarjeta ───────────────────────────────────────────────────────────────
 
     def _rutina_card(self, r: dict) -> ft.Container:
-        """
-        Construye la tarjeta de una rutina individual.
-        Calcula el progreso como fracción de socios asignados sobre el máximo esperado (35).
-        """
-        # Calcula el porcentaje de ocupación — min(..., 1.0) evita superar el 100%
-        progress = min(r["asignados"] / 35, 1.0)
+        # Barra de ocupación: número de PRESENTACIÓN (el backend no pone cupo),
+        # el mismo que usa la PWA.
+        progress = min(r["asignados"] / 20, 1.0)
+
+        botones = [_boton_suave("Ver detalles", lambda e, x=r: self._open_detail(x), Colors.ACCENT)]
+        if self._gestionable(r):
+            botones += [
+                _boton_suave("Editar", lambda e, x=r: self._open_form(x)),
+                _boton_suave("Asignar", lambda e, x=r: self._open_asignar(x)),
+            ]
 
         return ft.Container(
-            col={"xs": 12, "sm": 6, "md": 4},  # Responsivo: 1/2/3 columnas
+            col={"xs": 12, "sm": 6, "md": 4},
             content=ft.Column([
-                # Fila superior: ícono de rutina + badge de nivel de dificultad
                 ft.Row([
                     ft.Container(
                         content=ft.Icon(ft.Icons.FITNESS_CENTER_ROUNDED,
@@ -73,52 +97,31 @@ class RutinasView:
                         alignment=ft.Alignment.CENTER,
                     ),
                     ft.Container(expand=True),
-                    level_badge(r["nivel"]),  # Verde/Amarillo/Rojo según dificultad
-                ]),
+                    level_badge(r["nivel"]),
+                    *([] if r["activo"] else [status_badge("Inactiva")]),
+                ], spacing=6),
                 ft.Container(height=14),
-                # Nombre de la rutina
                 ft.Text(r["nombre"], color=Colors.TEXT_PRIMARY, size=16,
                         weight=ft.FontWeight.BOLD),
                 ft.Container(height=8),
-                # Pills informativos: frecuencia y duración
                 ft.Row([
                     _info_pill(ft.Icons.CALENDAR_TODAY_ROUNDED, f"{r['dias']} días/sem"),
-                    _info_pill(ft.Icons.TIMER_ROUNDED, r["duracion"]),
-                ], spacing=8),
+                    _info_pill(ft.Icons.PERSON_ROUNDED, r["entrenador"]),
+                ], spacing=8, wrap=True),
+                *([ft.Container(height=6),
+                   ft.Text(r["objetivo"], color=Colors.TEXT_SECONDARY, size=12)]
+                  if r["objetivo"] else []),
                 ft.Container(height=14),
-                # Contador de socios asignados
                 ft.Row([
                     ft.Text("Asignados:", color=Colors.TEXT_MUTED, size=12),
                     ft.Text(f"{r['asignados']} socios", color=Colors.TEXT_SECONDARY,
                             size=12, weight=ft.FontWeight.W_500),
                 ], spacing=6),
                 ft.Container(height=6),
-                # Barra de progreso de ocupación (naranja, altura mínima 4px)
-                ft.ProgressBar(
-                    value=progress,
-                    bgcolor=Colors.BG_INPUT,  # Fondo de la barra (parte vacía)
-                    color=Colors.ACCENT,      # Color de la parte llena
-                    height=4,
-                    border_radius=2,
-                ),
+                ft.ProgressBar(value=progress, bgcolor=Colors.BG_INPUT,
+                               color=Colors.ACCENT, height=4, border_radius=2),
                 ft.Container(height=14),
-                # Botones de acción: ver detalles y asignar
-                ft.Row([
-                    ft.Container(
-                        content=ft.Text("Ver detalles", color=Colors.ACCENT,
-                                        size=12, weight=ft.FontWeight.W_500),
-                        # x=r captura el valor actual de r (evita closure con el valor final del loop)
-                        on_click=lambda e, x=r: self._open_detail(x),
-                        bgcolor=Colors.ACCENT_GLOW, border_radius=8,
-                        padding=ft.Padding.symmetric(horizontal=12, vertical=6),
-                    ),
-                    ft.Container(
-                        content=ft.Text("Asignar", color=Colors.TEXT_SECONDARY, size=12),
-                        on_click=lambda e: show_snack(self.page, "Función próximamente"),
-                        bgcolor=Colors.BG_SIDEBAR, border_radius=8,
-                        padding=ft.Padding.symmetric(horizontal=12, vertical=6),
-                    ),
-                ], spacing=8),
+                ft.Row(botones, spacing=8, wrap=True),
             ], spacing=0),
             bgcolor=Colors.BG_CARD,
             border_radius=14,
@@ -126,193 +129,619 @@ class RutinasView:
             padding=20,
         )
 
-    def _open_form(self, e=None, rutina: dict = None):
-        """
-        Abre el modal para crear o editar una rutina.
+    # ── Detalle ───────────────────────────────────────────────────────────────
 
-        El selector de entrenador es nuevo y no es cosmético: `id_entrenador`
-        es NOT NULL, y quien más usa esta pantalla —el Dueño— no es
-        entrenador, así que sin elegir a alguien el backend rechaza la
-        creación. Si el que está logueado SÍ es entrenador, el backend lo
-        resuelve solo e ignora lo que se elija acá salvo que elija a otro,
-        que es lo único que rechaza.
-        """
-        is_edit = rutina is not None
+    def _open_detail(self, r: dict):
+        """La rutina con su planilla de ejercicios por día."""
+        detalle = app_state.get_rutina(r["id"])
+        if detalle is None:
+            show_snack(self.page, "No se pudo cargar la rutina.", Colors.STATUS_DANGER)
+            return
 
-        nombre_ref    = ft.Ref[ft.TextField]()
-        dias_ref      = ft.Ref[ft.TextField]()
-        duracion_ref  = ft.Ref[ft.TextField]()
-        objetivo_ref  = ft.Ref[ft.TextField]()
-        nivel_ref     = ft.Ref[ft.Dropdown]()
-        entrenador_ref = ft.Ref[ft.Dropdown]()
+        filas = [
+            ft.Row([level_badge(r["nivel"]),
+                    status_badge("Activa" if detalle["activo"] else "Inactiva")], spacing=6),
+            ft.Container(height=12),
+            _detail_row("Frecuencia", f"{detalle['dias']} días por semana"),
+            _detail_row("Entrenador", detalle["entrenador"]),
+            _detail_row("Asignados", f"{detalle['asignados']} socios"),
+            _detail_row("Objetivo", detalle["objetivo"] or "Sin especificar"),
+            ft.Container(height=12),
+        ]
 
-        entrenadores = app_state.get_entrenadores()
+        ejercicios = detalle["ejercicios"]
+        if not ejercicios:
+            filas.append(ft.Text("Esta rutina todavía no tiene ejercicios.",
+                                 color=Colors.TEXT_MUTED, size=13))
+        for dia in sorted({e["dia"] for e in ejercicios}):
+            filas.append(ft.Text(f"DÍA {dia}", color=Colors.TEXT_MUTED, size=11,
+                                 weight=ft.FontWeight.W_600))
+            for e in (x for x in ejercicios if x["dia"] == dia):
+                filas.append(ft.Column([
+                    ft.Text(e["nombre"], color=Colors.TEXT_PRIMARY, size=13),
+                    ft.Text(" · ".join(p for p in [e["grupo"], _resumen(e)] if p),
+                            color=Colors.TEXT_MUTED, size=11),
+                    *([ft.Text(e["observaciones"], color=Colors.STATUS_WARN, size=11)]
+                      if e["observaciones"] else []),
+                ], spacing=0, tight=True))
+            filas.append(ft.Container(height=6))
+
+        acciones = [ft.TextButton("Cerrar", style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                                  on_click=lambda e: close_dialog(self.page, dlg))]
+        if self._gestionable(r):
+            acciones = [
+                ft.TextButton("Reactivar" if not detalle["activo"] else "Dar de baja",
+                              style=ft.ButtonStyle(color=Colors.STATUS_DANGER
+                                                   if detalle["activo"] else Colors.STATUS_OK),
+                              on_click=lambda e: (close_dialog(self.page, dlg),
+                                                  self._cambiar_estado(detalle))),
+                *acciones,
+                ft.TextButton("Asignar", style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                              on_click=lambda e: (close_dialog(self.page, dlg),
+                                                  self._open_asignar(r))),
+                ft.TextButton("Editar", style=ft.ButtonStyle(color=Colors.ACCENT),
+                              on_click=lambda e: (close_dialog(self.page, dlg),
+                                                  self._open_form(r))),
+            ]
 
         dlg = ft.AlertDialog(
             modal=True,
-            title=ft.Text("Nueva Rutina" if not is_edit else "Editar Rutina",
+            title=ft.Text(detalle["nombre"], color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
+            bgcolor=Colors.BG_CARD,
+            content=ft.Container(
+                width=460, height=460,
+                content=ft.Column(filas, spacing=6, scroll=ft.ScrollMode.AUTO),
+            ),
+            actions=acciones,
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        open_dialog(self.page, dlg)
+
+    def _cambiar_estado(self, r: dict):
+        """Baja con confirmación; reactivar sin, porque es reversible y de bajo riesgo."""
+        if not r["activo"]:
+            self._aplicar(app_state.reactivar_rutina(r["id"]))
+            return
+        dlg = confirm_dialog(
+            self.page, f"¿Dar de baja \"{r['nombre']}\"?",
+            "Deja de ofrecerse para asignar. Los socios que la están siguiendo la terminan.",
+            on_confirm=lambda: self._aplicar(app_state.baja_rutina(r["id"])),
+            texto_confirmar="Dar de baja",
+        )
+        open_dialog(self.page, dlg)
+
+    def _aplicar(self, resultado: dict):
+        if not resultado["ok"]:
+            show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+            return
+        show_snack(self.page, resultado["mensaje"], Colors.SUCCESS)
+        self.router.navigate(Routes.RUTINAS)
+
+    # ── Alta / edición con ejercicios ─────────────────────────────────────────
+
+    def _open_form(self, rutina: dict = None):
+        """
+        Alta o edición de una rutina CON su planilla de ejercicios por día.
+
+        Arriba los datos; abajo las pestañas de días, los ejercicios del día
+        elegido (series, reps, peso, descanso, observaciones, orden) y el
+        catálogo con buscador para sumar más. Al guardar se manda la planilla
+        entera: en edición, el backend reemplaza la anterior por esta.
+
+        El selector de entrenador existe porque `Rutina.id_entrenador` es NOT
+        NULL y el Dueño no es entrenador. A un Entrenador el backend le devuelve
+        sólo a sí mismo en esa lista.
+        """
+        es_edicion = rutina is not None
+        detalle = app_state.get_rutina(rutina["id"]) if es_edicion else None
+        if es_edicion and detalle is None:
+            show_snack(self.page, "No se pudo cargar la rutina.", Colors.STATUS_DANGER)
+            return
+
+        entrenadores = app_state.get_entrenadores()
+        catalogo = app_state.get_ejercicios()
+
+        # La planilla. Los números van como texto: son inputs y se validan al guardar.
+        items = [
+            {
+                "id_ejercicio": e["id_ejercicio"],
+                "nombre": e["nombre"],
+                "grupo": e["grupo"],
+                "dia": e["dia"],
+                "series": _texto(e["series"]),
+                "repeticiones": e["repeticiones"] or "",
+                "peso": _texto(e["peso"]),
+                "descanso": _texto(e["descanso"]),
+                "observaciones": e["observaciones"] or "",
+            }
+            for e in (detalle["ejercicios"] if detalle else [])
+        ]
+        estado = {"dia": 1}
+
+        nombre_tf = input_field("Nombre de la rutina", "Ej: Fuerza Total",
+                                icon=ft.Icons.FITNESS_CENTER_ROUNDED,
+                                value=detalle["nombre"] if detalle else "")
+        nivel_dd = _dropdown(
+            "Nivel", [ft.dropdown.Option(n) for n in NIVELES],
+            detalle["nivel"] if detalle and detalle["nivel"] in NIVELES else "Principiante",
+            width=200,
+        )
+        dias_tf = input_field("Días por semana", "Entre 1 y 7", width=160,
+                              value=str(detalle["dias"]) if detalle else "3")
+
+        opciones_entrenador = [ft.dropdown.Option(key=str(x["id"]), text=x["nombre"])
+                               for x in entrenadores]
+        if detalle and detalle["id_entrenador"] is not None \
+                and not any(x["id"] == detalle["id_entrenador"] for x in entrenadores):
+            # Ya no está activo: se ofrece igual para no reemplazarlo en silencio.
+            opciones_entrenador.append(ft.dropdown.Option(
+                key=str(detalle["id_entrenador"]), text=f"{detalle['entrenador']} (inactivo)"))
+        entrenador_dd = _dropdown(
+            "Entrenador a cargo", opciones_entrenador,
+            str(detalle["id_entrenador"]) if detalle
+            else (str(entrenadores[0]["id"]) if entrenadores else None),
+        )
+        objetivo_tf = input_field("Objetivo", "Ej: Ganancia de fuerza general",
+                                  value=detalle["objetivo"] if detalle else "")
+
+        chips = ft.Row(spacing=6, wrap=True)
+        lista = ft.Column(spacing=8)
+        titulo_catalogo = ft.Text("", color=Colors.TEXT_PRIMARY, size=13,
+                                  weight=ft.FontWeight.W_600)
+        busqueda_tf = ft.TextField(
+            hint_text="Buscar en el catálogo…", prefix_icon=ft.Icons.SEARCH_ROUNDED,
+            color=Colors.TEXT_MAIN, text_size=13, dense=True,
+            hint_style=ft.TextStyle(color=Colors.TEXT_MUTED),
+            bgcolor=Colors.BG_INPUT, border_color=Colors.BORDER,
+            focused_border_color=Colors.ACCENT, border_radius=Radius.MD,
+        )
+        catalogo_col = ft.Column(spacing=2, height=200, scroll=ft.ScrollMode.AUTO)
+
+        def dias() -> int:
+            crudo = (dias_tf.value or "").strip()
+            return min(7, max(1, int(crudo))) if crudo.isdigit() else 1
+
+        def render_catalogo():
+            q = (busqueda_tf.value or "").strip().lower()
+            en_dia = {it["id_ejercicio"] for it in items if it["dia"] == estado["dia"]}
+            filtrados = [c for c in catalogo
+                         if not q or q in c["nombre"].lower() or q in c["grupo"].lower()]
+            titulo_catalogo.value = f"Agregar ejercicios al Día {estado['dia']}"
+            catalogo_col.controls = [
+                ft.Row([
+                    ft.Column([
+                        ft.Text(c["nombre"], color=Colors.TEXT_PRIMARY, size=13),
+                        ft.Text(c["grupo"], color=Colors.TEXT_MUTED, size=11),
+                    ], spacing=0, tight=True, expand=True),
+                    ft.IconButton(
+                        ft.Icons.CHECK_CIRCLE_ROUNDED if c["id"] in en_dia
+                        else ft.Icons.ADD_CIRCLE_OUTLINE_ROUNDED,
+                        icon_color=Colors.ACCENT if c["id"] in en_dia else Colors.TEXT_MUTED,
+                        icon_size=20,
+                        tooltip="Quitar del día" if c["id"] in en_dia else "Agregar al día",
+                        on_click=lambda e, c=c: alternar(c),
+                    ),
+                ], vertical_alignment=ft.CrossAxisAlignment.CENTER)
+                for c in filtrados
+            ] or [ft.Text("No hay ejercicios que coincidan." if catalogo
+                          else "El catálogo está vacío: cargá ejercicios con \"Nuevo Ejercicio\".",
+                          color=Colors.TEXT_MUTED, size=12)]
+
+        def render():
+            n = dias()
+            estado["dia"] = min(estado["dia"], n)
+            dia = estado["dia"]
+
+            chips.controls = [_chip_dia(d, d == dia,
+                                        sum(1 for it in items if it["dia"] == d),
+                                        lambda e, d=d: elegir_dia(d))
+                              for d in range(1, n + 1)]
+
+            del_dia = [it for it in items if it["dia"] == dia]
+            lista.controls = [fila(it, i, len(del_dia)) for i, it in enumerate(del_dia)] or [
+                ft.Text(f"El Día {dia} todavía no tiene ejercicios.",
+                        color=Colors.TEXT_MUTED, size=12)
+            ]
+            fuera = sum(1 for it in items if it["dia"] > n)
+            if fuera:
+                lista.controls.append(ft.Text(
+                    f"Hay {fuera} ejercicio(s) en días que quedaron fuera de los {n} días por semana.",
+                    color=Colors.STATUS_WARN, size=12))
+            render_catalogo()
+            self.page.update()
+
+        def elegir_dia(d: int):
+            estado["dia"] = d
+            render()
+
+        def alternar(c: dict):
+            dia = estado["dia"]
+            ya = next((it for it in items if it["dia"] == dia and it["id_ejercicio"] == c["id"]), None)
+            if ya:
+                items.remove(ya)
+            else:
+                items.append({"id_ejercicio": c["id"], "nombre": c["nombre"], "grupo": c["grupo"],
+                              "dia": dia, "series": "", "repeticiones": "", "peso": "",
+                              "descanso": "", "observaciones": ""})
+            render()
+
+        def mover(it: dict, delta: int):
+            i = items.index(it)
+            j = i + delta
+            while 0 <= j < len(items) and items[j]["dia"] != it["dia"]:
+                j += delta
+            if 0 <= j < len(items):
+                items[i], items[j] = items[j], items[i]
+                render()
+
+        def quitar(it: dict):
+            items.remove(it)
+            render()
+
+        def campo(it: dict, etiqueta: str, clave: str, ancho=None) -> ft.TextField:
+            def cambio(e, it=it, clave=clave):
+                # Sin re-render: se guarda el valor y el foco no se pierde.
+                it[clave] = e.control.value or ""
+            return ft.TextField(
+                label=etiqueta, value=it[clave], width=ancho, expand=ancho is None,
+                dense=True, text_size=13, color=Colors.TEXT_MAIN,
+                label_style=ft.TextStyle(color=Colors.TEXT_MUTED, size=12),
+                bgcolor=Colors.BG_CARD, border_color=Colors.BORDER,
+                focused_border_color=Colors.ACCENT, border_radius=Radius.SM,
+                on_change=cambio,
+            )
+
+        def fila(it: dict, idx: int, total: int) -> ft.Container:
+            return ft.Container(
+                content=ft.Column([
+                    ft.Row([
+                        ft.Column([
+                            ft.Text(f"{idx + 1}. {it['nombre']}", color=Colors.TEXT_PRIMARY,
+                                    size=13, weight=ft.FontWeight.W_500),
+                            ft.Text(it["grupo"], color=Colors.TEXT_MUTED, size=11),
+                        ], spacing=0, tight=True, expand=True),
+                        ft.IconButton(ft.Icons.ARROW_UPWARD_ROUNDED, icon_size=16,
+                                      icon_color=Colors.TEXT_MUTED, tooltip="Subir",
+                                      disabled=idx == 0,
+                                      on_click=lambda e, it=it: mover(it, -1)),
+                        ft.IconButton(ft.Icons.ARROW_DOWNWARD_ROUNDED, icon_size=16,
+                                      icon_color=Colors.TEXT_MUTED, tooltip="Bajar",
+                                      disabled=idx == total - 1,
+                                      on_click=lambda e, it=it: mover(it, 1)),
+                        ft.IconButton(ft.Icons.DELETE_OUTLINE_ROUNDED, icon_size=16,
+                                      icon_color=Colors.STATUS_DANGER, tooltip="Quitar",
+                                      on_click=lambda e, it=it: quitar(it)),
+                    ], spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    ft.Row([
+                        campo(it, "Series", "series", 90),
+                        campo(it, "Reps", "repeticiones", 100),
+                        campo(it, "Peso (kg)", "peso", 100),
+                        campo(it, "Descanso (s)", "descanso", 120),
+                    ], spacing=6, wrap=True),
+                    ft.Row([campo(it, "Observaciones", "observaciones")]),
+                ], spacing=6, tight=True),
+                bgcolor=Colors.BG_INPUT,
+                border=ft.Border.all(1, Colors.BORDER),
+                border_radius=Radius.MD,
+                padding=ft.Padding.all(10),
+            )
+
+        def guardar(e=None):
+            nombre = (nombre_tf.value or "").strip()
+            if not nombre:
+                show_snack(self.page, "La rutina necesita un nombre.", Colors.STATUS_DANGER)
+                return
+            crudo = (dias_tf.value or "").strip()
+            if not crudo.isdigit() or not 1 <= int(crudo) <= 7:
+                show_snack(self.page, "Días por semana: un número entre 1 y 7.", Colors.STATUS_DANGER)
+                return
+            n = int(crudo)
+            if any(it["dia"] > n for it in items):
+                show_snack(self.page, "Hay ejercicios en días que quedan fuera de los días por "
+                                      "semana. Quitalos o subí los días.", Colors.STATUS_DANGER)
+                return
+            try:
+                ejercicios = _armar_ejercicios(items)
+            except ValueError as ex:
+                show_snack(self.page, str(ex), Colors.STATUS_DANGER)
+                return
+
+            datos = {
+                "nombre": nombre,
+                "nivel": nivel_dd.value,
+                "dias_por_semana": n,
+                "objetivo": (objetivo_tf.value or "").strip() or None,
+                "id_entrenador": int(entrenador_dd.value) if entrenador_dd.value else None,
+                "ejercicios": ejercicios,
+            }
+            resultado = (app_state.editar_rutina(detalle["id"], datos) if es_edicion
+                         else app_state.crear_rutina(datos))
+            if not resultado["ok"]:
+                show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+                return
+            close_dialog(self.page, dlg)
+            show_snack(self.page, resultado["mensaje"], Colors.SUCCESS)
+            self.router.navigate(Routes.RUTINAS)
+
+        dias_tf.on_change = lambda e: render()
+        busqueda_tf.on_change = lambda e: (render_catalogo(), self.page.update())
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Editar Rutina" if es_edicion else "Nueva Rutina",
                           color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
             bgcolor=Colors.BG_CARD,
             content=ft.Container(
-                width=440,
+                width=640, height=600,
                 content=ft.Column([
-                    input_field("Nombre de la rutina", "Ej: Fuerza Total",
-                                ref=nombre_ref,
-                                icon=ft.Icons.FITNESS_CENTER_ROUNDED),
-                    ft.Container(height=12),
-                    ft.Dropdown(
-                        ref=nivel_ref,
-                        label="Nivel",
-                        options=[
-                            ft.dropdown.Option("Principiante"),
-                            ft.dropdown.Option("Intermedio"),
-                            ft.dropdown.Option("Avanzado"),
-                        ],
-                        value="Principiante",
-                        color=Colors.TEXT_PRIMARY, bgcolor=Colors.BG_INPUT,
-                        border_color=Colors.BORDER, focused_border_color=Colors.ACCENT,
-                        border_radius=10,
-                    ),
-                    ft.Container(height=12),
-                    # Fila con dos inputs de ancho fijo en paralelo
-                    ft.Row([
-                        input_field("Días/semana", "Ej: 3", ref=dias_ref,
-                                    icon=ft.Icons.CALENDAR_TODAY_ROUNDED, width=180),
-                        ft.Container(width=8),
-                        # La duración en minutos NO se guarda: el esquema no
-                        # tiene la columna. La tarjeta la deriva de los días
-                        # por semana (ver get_rutinas en state.py). Se deja el
-                        # campo porque la PWA lo muestra y las dos apps tienen
-                        # que verse iguales, pero lo que se escriba se pierde.
-                        input_field("Duración (min)", "Ej: 60", ref=duracion_ref,
-                                    icon=ft.Icons.TIMER_ROUNDED, width=180),
-                    ]),
-                    ft.Container(height=12),
-                    ft.Dropdown(
-                        ref=entrenador_ref,
-                        label="Entrenador a cargo",
-                        options=[ft.dropdown.Option(key=str(x["id"]), text=x["nombre"])
-                                 for x in entrenadores],
-                        value=str(entrenadores[0]["id"]) if entrenadores else None,
-                        color=Colors.TEXT_PRIMARY, bgcolor=Colors.BG_INPUT,
-                        border_color=Colors.BORDER, focused_border_color=Colors.ACCENT,
-                        border_radius=10,
-                    ),
-                    ft.Container(height=12),
-                    # Área de texto multilínea para descripción detallada.
-                    # Va a `objetivo`, que es la única columna de texto libre
-                    # que tiene Rutina en el esquema.
-                    ft.TextField(
-                        ref=objetivo_ref,
-                        label="Descripción",
-                        hint_text="Detalle los ejercicios y objetivos...",
-                        multiline=True, min_lines=3, max_lines=5,
-                        color=Colors.TEXT_PRIMARY,
-                        hint_style=ft.TextStyle(color=Colors.TEXT_MUTED),
-                        bgcolor=Colors.BG_INPUT,
-                        border_color=Colors.BORDER,
-                        focused_border_color=Colors.ACCENT,
-                        border_radius=10,
-                        content_padding=ft.Padding.all(12),
-                    ),
-                ], spacing=0, tight=True),
+                    nombre_tf,
+                    ft.Row([nivel_dd, dias_tf], spacing=12, wrap=True),
+                    entrenador_dd,
+                    objetivo_tf,
+                    ft.Divider(height=1, color=Colors.BORDER),
+                    ft.Text("Ejercicios", color=Colors.TEXT_PRIMARY, size=15,
+                            weight=ft.FontWeight.BOLD),
+                    chips,
+                    lista,
+                    ft.Divider(height=1, color=Colors.BORDER),
+                    titulo_catalogo,
+                    busqueda_tf,
+                    catalogo_col,
+                ], spacing=12, scroll=ft.ScrollMode.AUTO),
             ),
             actions=[
                 ft.TextButton("Cancelar",
                               style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
                               on_click=lambda e: close_dialog(self.page, dlg)),
-                ft.TextButton("Crear Rutina",
+                ft.TextButton("Guardar" if es_edicion else "Crear Rutina",
                               style=ft.ButtonStyle(color=Colors.ACCENT),
-                              on_click=lambda e: self._save(
-                                  dlg, nombre_ref, nivel_ref, dias_ref,
-                                  objetivo_ref, entrenador_ref)),
+                              on_click=guardar),
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )
+        render()
         open_dialog(self.page, dlg)
 
-    def _open_detail(self, r: dict):
+    # ── Asignar a un socio ────────────────────────────────────────────────────
+
+    def _open_asignar(self, r: dict):
         """
-        Abre un modal de solo lectura con los detalles de una rutina.
-        Muestra nivel, frecuencia, duración, asignados y una descripción genérica.
+        Buscar un socio activo y asignarle la rutina. Si ya seguía otra, el
+        backend la FINALIZA (queda en su historial) y deja esta.
         """
+        socios = [s for s in app_state.get_socios() if s.get("activo", True)]
+
+        busqueda = ft.TextField(
+            hint_text="Buscar por nombre o DNI…", prefix_icon=ft.Icons.SEARCH_ROUNDED,
+            color=Colors.TEXT_MAIN, text_size=13, dense=True,
+            hint_style=ft.TextStyle(color=Colors.TEXT_MUTED),
+            bgcolor=Colors.BG_INPUT, border_color=Colors.BORDER,
+            focused_border_color=Colors.ACCENT, border_radius=Radius.MD,
+        )
+        lista = ft.Column(spacing=2, height=320, scroll=ft.ScrollMode.AUTO)
+
+        def asignar(s: dict):
+            resultado = app_state.asignar_rutina(r["id"], s["id"])
+            if not resultado["ok"]:
+                show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+                return
+            close_dialog(self.page, dlg)
+            show_snack(self.page, f"\"{r['nombre']}\" asignada a {s['nombre']}.", Colors.SUCCESS)
+            self.router.navigate(Routes.RUTINAS)
+
+        def render():
+            q = (busqueda.value or "").strip().lower()
+            filtrados = [s for s in socios
+                         if not q or q in s["nombre"].lower() or q in str(s.get("dni", ""))]
+            lista.controls = [
+                ft.Row([
+                    ft.Column([
+                        ft.Text(s["nombre"], color=Colors.TEXT_PRIMARY, size=13),
+                        ft.Text(f"DNI {s.get('dni') or '—'}", color=Colors.TEXT_MUTED, size=11),
+                    ], spacing=0, tight=True, expand=True),
+                    ft.TextButton("Asignar", style=ft.ButtonStyle(color=Colors.ACCENT),
+                                  on_click=lambda e, s=s: asignar(s)),
+                ], vertical_alignment=ft.CrossAxisAlignment.CENTER)
+                for s in filtrados[:MAX_SOCIOS_LISTA]
+            ] or [ft.Text("Ningún socio activo coincide.", color=Colors.TEXT_MUTED, size=12)]
+            self.page.update()
+
+        busqueda.on_change = lambda e: render()
+
         dlg = ft.AlertDialog(
             modal=True,
-            title=ft.Text(r["nombre"], color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
+            title=ft.Text(f"Asignar \"{r['nombre']}\"", color=Colors.TEXT_PRIMARY,
+                          weight=ft.FontWeight.BOLD),
             bgcolor=Colors.BG_CARD,
             content=ft.Container(
-                width=400,
+                width=440,
                 content=ft.Column([
-                    ft.Row([level_badge(r["nivel"])]),     # Badge de dificultad
-                    ft.Container(height=16),
-                    # Filas de información clave (label: valor)
-                    _detail_row("Frecuencia", f"{r['dias']} días por semana"),
-                    _detail_row("Duración",   r["duracion"]),
-                    _detail_row("Asignados",  f"{r['asignados']} socios"),
-                    ft.Container(height=12),
-                    ft.Text("Descripción", color=Colors.TEXT_MUTED, size=12,
-                            weight=ft.FontWeight.W_600),
-                    ft.Container(height=4),
-                    # Texto genérico — se reemplazará con datos reales del backend
-                    ft.Text("Rutina completa de entrenamiento. Los detalles específicos "
-                            "se configurarán al conectar con el backend.",
-                            color=Colors.TEXT_SECONDARY, size=13),
-                ], spacing=6),
+                    busqueda,
+                    ft.Text("Si el socio ya sigue otra rutina, se la finaliza y queda en su historial.",
+                            color=Colors.TEXT_MUTED, size=11),
+                    lista,
+                ], spacing=8, tight=True),
+            ),
+            actions=[ft.TextButton("Cerrar", style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                                   on_click=lambda e: close_dialog(self.page, dlg))],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        render()
+        open_dialog(self.page, dlg)
+
+    # ── Alta de ejercicio del catálogo ────────────────────────────────────────
+
+    def _open_form_ejercicio(self, e=None):
+        """
+        Alta de un ejercicio del catálogo, con el link del video tutorial.
+
+        El entrenador sólo pega el link de YouTube (del canal del gimnasio): el
+        demonio del servidor lo baja solo y recién ahí el socio ve "Ver
+        técnica". Nadie del personal necesita acceso al FTP.
+        """
+        nombre_tf      = input_field("Nombre", "Ej: Press de banca",
+                                     icon=ft.Icons.FITNESS_CENTER_ROUNDED)
+        grupo_tf       = input_field("Grupo muscular", "Ej: Pecho",
+                                     icon=ft.Icons.ACCESSIBILITY_NEW_ROUNDED)
+        descripcion_tf = input_field("Descripción", "Cómo se hace, qué cuidar...",
+                                     multiline=True)
+        video_tf       = input_field("Video (link de YouTube)",
+                                     "https://www.youtube.com/watch?v=...",
+                                     icon=ft.Icons.PLAY_CIRCLE_ROUNDED)
+        maquina_cb     = ft.Checkbox(label="Requiere máquina", active_color=Colors.ACCENT)
+
+        def guardar(e=None):
+            nombre = (nombre_tf.value or "").strip()
+            grupo = (grupo_tf.value or "").strip()
+            if not nombre or not grupo:
+                show_snack(self.page, "El ejercicio necesita nombre y grupo muscular.",
+                           Colors.STATUS_DANGER)
+                return
+            video = (video_tf.value or "").strip() or None
+            resultado = app_state.crear_ejercicio({
+                "nombre": nombre,
+                "grupo_muscular": grupo,
+                "descripcion": (descripcion_tf.value or "").strip() or None,
+                "url_video": video,
+                "requiere_maquina": bool(maquina_cb.value),
+            })
+            if not resultado["ok"]:
+                show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+                return
+            close_dialog(self.page, dlg)
+            show_snack(self.page,
+                       "Ejercicio creado. El video va a estar disponible en unos minutos."
+                       if video else resultado["mensaje"], Colors.SUCCESS)
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Nuevo Ejercicio", color=Colors.TEXT_PRIMARY,
+                          weight=ft.FontWeight.BOLD),
+            bgcolor=Colors.BG_CARD,
+            content=ft.Container(
+                width=440,
+                content=ft.Column([
+                    nombre_tf, grupo_tf, descripcion_tf, video_tf,
+                    ft.Text("El video tarda unos minutos en quedar disponible para los socios.",
+                            color=Colors.TEXT_MUTED, size=11),
+                    maquina_cb,
+                ], spacing=12, tight=True),
             ),
             actions=[
-                ft.TextButton("Cerrar",
-                              style=ft.ButtonStyle(color=Colors.ACCENT),
+                ft.TextButton("Cancelar",
+                              style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
                               on_click=lambda e: close_dialog(self.page, dlg)),
+                ft.TextButton("Crear Ejercicio",
+                              style=ft.ButtonStyle(color=Colors.ACCENT),
+                              on_click=guardar),
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )
         open_dialog(self.page, dlg)
 
-    def _save(self, dlg, nombre_ref, nivel_ref, dias_ref, objetivo_ref, entrenador_ref):
-        """Crea la rutina."""
-        nombre = (nombre_ref.current.value or "").strip() if nombre_ref.current else ""
-        if not nombre:
-            show_snack(self.page, "La rutina necesita un nombre.", Colors.STATUS_DANGER)
-            return
 
-        # dias_por_semana viaja como None si está vacío o no es un número. El
-        # backend lo acepta nulo, y mandar 0 sería peor: lo rechaza por el
-        # ge=1 del schema y el error no explicaría que el campo estaba vacío.
-        dias = None
-        crudo = (dias_ref.current.value or "").strip() if dias_ref.current else ""
-        if crudo.isdigit():
-            dias = int(crudo)
+# =============================================================================
+# Helpers
+# =============================================================================
 
-        elegido = entrenador_ref.current.value if entrenador_ref.current else None
+def _texto(valor) -> str:
+    """Número del backend → texto para un input ("60.0" se muestra "60")."""
+    if valor is None:
+        return ""
+    if isinstance(valor, float) and valor.is_integer():
+        return str(int(valor))
+    return str(valor)
 
-        resultado = app_state.crear_rutina({
-            "nombre": nombre,
-            "nivel": nivel_ref.current.value if nivel_ref.current else None,
-            "dias_por_semana": dias,
-            "objetivo": ((objetivo_ref.current.value or "").strip() or None
-                         if objetivo_ref.current else None),
-            "id_entrenador": int(elegido) if elegido else None,
+
+def _numero(valor: str, campo: str, ejercicio: str, entero: bool):
+    t = (valor or "").strip().replace(",", ".")
+    if not t:
+        return None
+    try:
+        n = float(t)
+    except ValueError:
+        n = -1
+    if n < 0 or (entero and not n.is_integer()):
+        raise ValueError(f"{ejercicio}: \"{valor}\" no es un valor válido para {campo}.")
+    return int(n) if entero else n
+
+
+def _armar_ejercicios(items: list[dict]) -> list[dict]:
+    """
+    La planilla lista para el backend. Gemela de armarEjercicios en
+    planillaEjercicios.ts: el orden se numera dentro de cada día según la lista.
+    """
+    orden_por_dia: dict[int, int] = {}
+    salida = []
+    for it in sorted(items, key=lambda x: x["dia"]):  # sorted es estable
+        orden_por_dia[it["dia"]] = orden_por_dia.get(it["dia"], 0) + 1
+        salida.append({
+            "id_ejercicio": it["id_ejercicio"],
+            "dia": it["dia"],
+            "orden": orden_por_dia[it["dia"]],
+            "series": _numero(it["series"], "series", it["nombre"], True),
+            "repeticiones": it["repeticiones"].strip()[:20] or None,
+            "peso_sugerido": _numero(it["peso"], "el peso", it["nombre"], False),
+            "descanso_segundos": _numero(it["descanso"], "el descanso", it["nombre"], True),
+            "observaciones": it["observaciones"].strip() or None,
         })
+    return salida
 
-        if not resultado["ok"]:
-            show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
-            return
 
-        close_dialog(self.page, dlg)
-        show_snack(self.page, resultado["mensaje"], Colors.SUCCESS)
-        self.router.navigate(Routes.RUTINAS)
+def _resumen(e: dict) -> str:
+    partes = []
+    if e["series"] is not None and e["repeticiones"]:
+        partes.append(f"{e['series']} × {e['repeticiones']}")
+    elif e["series"] is not None:
+        partes.append(f"{e['series']} series")
+    elif e["repeticiones"]:
+        partes.append(e["repeticiones"])
+    if e["peso"] is not None:
+        partes.append(f"{_texto(e['peso'])} kg")
+    if e["descanso"] is not None:
+        partes.append(f"{e['descanso']}s desc.")
+    return " · ".join(partes)
+
+
+def _dropdown(label: str, options: list, value, width=None) -> ft.Dropdown:
+    return ft.Dropdown(
+        label=label, options=options, value=value, width=width,
+        color=Colors.TEXT_PRIMARY, bgcolor=Colors.BG_INPUT,
+        border_color=Colors.BORDER, focused_border_color=Colors.ACCENT,
+        border_radius=Radius.MD,
+    )
+
+
+def _chip_dia(dia: int, activo: bool, cantidad: int, on_click) -> ft.Container:
+    texto = f"Día {dia}" + (f" ({cantidad})" if cantidad else "")
+    return ft.Container(
+        content=ft.Text(texto, size=12, weight=ft.FontWeight.W_500,
+                        color=Colors.SURFACE_BASE if activo else Colors.TEXT_SECONDARY),
+        bgcolor=Colors.PRIMARY_VOLT if activo else Colors.BG_SIDEBAR,
+        border_radius=20,
+        padding=ft.Padding.symmetric(horizontal=12, vertical=6),
+        on_click=on_click,
+    )
+
+
+def _boton_suave(texto: str, on_click, color: str = None) -> ft.Container:
+    return ft.Container(
+        content=ft.Text(texto, color=color or Colors.TEXT_SECONDARY, size=12,
+                        weight=ft.FontWeight.W_500),
+        on_click=on_click,
+        bgcolor=Colors.ACCENT_GLOW if color else Colors.BG_SIDEBAR,
+        border_radius=8,
+        padding=ft.Padding.symmetric(horizontal=12, vertical=6),
+    )
 
 
 def _info_pill(icon: str, text: str) -> ft.Container:
-    """
-    Pequeño chip/pill informativo con ícono y texto.
-    Se usa para mostrar frecuencia y duración en las tarjetas de rutinas.
-    """
+    """Chip informativo con ícono y texto (frecuencia, entrenador)."""
     return ft.Container(
         content=ft.Row([
             ft.Icon(icon, color=Colors.TEXT_MUTED, size=12),
             ft.Text(text, color=Colors.TEXT_SECONDARY, size=12),
-        ], spacing=4),
+        ], spacing=4, tight=True),
         bgcolor=Colors.BG_SIDEBAR,
         border_radius=20,
         padding=ft.Padding.symmetric(horizontal=10, vertical=4),
@@ -320,12 +749,9 @@ def _info_pill(icon: str, text: str) -> ft.Container:
 
 
 def _detail_row(label: str, value: str) -> ft.Row:
-    """
-    Fila de detalle con label muted a la izquierda y valor principal a la derecha.
-    Usada en el modal de detalles de la rutina.
-    """
-    from app.config import Colors
+    """Fila de detalle: label a la izquierda, valor a la derecha."""
     return ft.Row([
-        ft.Text(f"{label}:", color=Colors.TEXT_MUTED, size=13, width=100),  # Ancho fijo para alineación
-        ft.Text(value, color=Colors.TEXT_PRIMARY, size=13, weight=ft.FontWeight.W_500),
+        ft.Text(f"{label}:", color=Colors.TEXT_MUTED, size=13, width=100),
+        ft.Text(value, color=Colors.TEXT_PRIMARY, size=13, weight=ft.FontWeight.W_500,
+                expand=True),
     ])

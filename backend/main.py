@@ -20,12 +20,14 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from csrf import middleware_csrf
 from sqlalchemy import text
 from database import Base, SessionLocal, calentar_pool, engine
 from seeder import ejecutar_seeder
 from turnos import generar_turnos
+from videos import RUTA_HTTP, VIDEOS_DIR
 
 # El import de models tiene que estar aunque no se use ninguno de sus nombres
 # acá: es lo que registra las tablas en Base.metadata. Sin él, create_all no
@@ -224,6 +226,17 @@ app.include_router(promociones.router)
 app.include_router(portal.router)
 # Fuera del prefijo /portal: el webhook lo llama Mercado Pago sin sesion.
 app.include_router(pagos_online.router)
+
+
+# =============================================================================
+# VIDEOS TUTORIALES
+# =============================================================================
+# La carpeta donde demonio_videos.py deja los videos, servida por HTTP: el
+# navegador no reproduce ftp://. StaticFiles responde pedidos por rango, que es
+# lo que usa <video> para adelantar sin bajar el archivo entero. Sin sesión a
+# propósito: son tutoriales del canal público del gimnasio. Ver videos.py.
+VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount(RUTA_HTTP, StaticFiles(directory=VIDEOS_DIR), name="videos")
 
 
 @app.get("/", tags=["Salud"])

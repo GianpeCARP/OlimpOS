@@ -480,12 +480,28 @@ def obtener_ejercicios() -> dict:
     return _get("/rutinas/ejercicios")
 
 
+def crear_ejercicio(datos: dict) -> dict:
+    return _post("/rutinas/ejercicios", datos)
+
+
 def crear_rutina(datos: dict) -> dict:
     return _post("/rutinas", datos)
 
 
 def asignar_rutina(id_rutina: int, id_socio: int) -> dict:
     return _post(f"/rutinas/{id_rutina}/asignar", {"id_socio": id_socio})
+
+
+def editar_rutina(id_rutina: int, datos: dict) -> dict:
+    return _put(f"/rutinas/{id_rutina}", datos)
+
+
+def baja_rutina(id_rutina: int) -> dict:
+    return _post(f"/rutinas/{id_rutina}/baja")
+
+
+def reactivar_rutina(id_rutina: int) -> dict:
+    return _post(f"/rutinas/{id_rutina}/reactivar")
 
 
 # =============================================================================

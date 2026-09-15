@@ -50,6 +50,7 @@ from schemas import (
     EmpleadoEditarRequest, EmpleadoOut, FranjaLaboralOut, PersonaOut,
     ProfesionalOpcion, RolEmpleado,
 )
+from routers.rutinas import _entrenador_de_sesion
 from security import Sesion, requiere_accion, requiere_seccion
 
 router = APIRouter(prefix="/personal", tags=["Personal"])
@@ -380,8 +381,17 @@ def listar_entrenadores(
     Para el selector del formulario de rutinas. Pide permiso sobre RUTINAS y
     no sobre PERSONAL: quien arma una rutina necesita elegir el entrenador
     aunque no tenga acceso a la ficha de personal.
+
+    Un Entrenador logueado recibe SÓLO a sí mismo: no puede crear rutinas a
+    nombre de otro ni asignarle otro entrenador a un socio (el backend lo
+    rechaza igual). Filtrarlo acá hace que los selectores de las dos apps
+    dejen de ofrecer algo que después falla, sin tocar ninguna pantalla.
     """
-    return _opciones(db, Entrenador, "id_entrenador")
+    opciones = _opciones(db, Entrenador, "id_entrenador")
+    propio = _entrenador_de_sesion(db, sesion)
+    if propio is not None:
+        opciones = [o for o in opciones if o.id == propio.id_entrenador]
+    return opciones
 
 
 @router.get("/nutricionistas", response_model=list[ProfesionalOpcion])

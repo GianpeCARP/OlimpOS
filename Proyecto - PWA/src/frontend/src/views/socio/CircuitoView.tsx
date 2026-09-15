@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, Check, ChevronsRight, Pause, Play, X } from 'lucide-react';
+import { Camera, Check, ChevronsRight, Pause, Play, PlayCircle, X } from 'lucide-react';
 import type { DiaDeRutina } from '../../services/socioService';
 import { esCelular } from '../../utils/dispositivo';
 import { movimientoDeEjercicio } from './logicaReps';
 import { ContadorReps } from './ContadorReps';
 import { useCircuito } from './useCircuito';
+import { VerTecnica } from './VerTecnica';
 
 // El circuito: un ejercicio a la vez, a pantalla completa.
 //
@@ -61,6 +62,8 @@ export function CircuitoView({
   const [contando, setContando] = useState(false);
   const [puedeContar] = useState(() => esCelular());
   const movCamara = c.ejercicio ? movimientoDeEjercicio(c.ejercicio.nombre) : null;
+  // El video se abre ENCIMA del circuito: al cerrarlo se sigue en la misma serie.
+  const [viendoTecnica, setViendoTecnica] = useState(false);
 
   // --- Pantalla completa ---------------------------------------------------
   // La API de fullscreen SI funciona sobre HTTP (sólo pide un gesto del
@@ -192,6 +195,13 @@ export function CircuitoView({
       // index.css con 100dvh. Ver el comentario de AppLayout.
       className="fixed inset-0 z-50 flex h-full flex-col bg-surface-base"
     >
+      {viendoTecnica && c.ejercicio.video && (
+        <VerTecnica
+          nombre={c.ejercicio.nombre}
+          video={c.ejercicio.video}
+          onCerrar={() => setViendoTecnica(false)}
+        />
+      )}
       {/* ── Encabezado: contexto y salida ─────────────────────────────── */}
       <header className="flex shrink-0 items-center justify-between gap-3 px-5 pt-4 md:pt-5">
         <div className="min-w-0">
@@ -328,6 +338,15 @@ export function CircuitoView({
             className="flex w-full items-center justify-center gap-2 rounded-xl border border-border-idle py-3 font-body text-sm whitespace-nowrap text-text-secondary"
           >
             <Camera size={16} /> Contar con cámara
+          </button>
+        )}
+        {!enDescanso && c.ejercicio.video && (
+          <button
+            type="button"
+            onClick={() => setViendoTecnica(true)}
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-border-idle py-3 font-body text-sm whitespace-nowrap text-text-secondary"
+          >
+            <PlayCircle size={16} /> Ver técnica
           </button>
         )}
         {!enDescanso && c.progreso.total > 1 && (

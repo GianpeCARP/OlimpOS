@@ -66,6 +66,10 @@ desktop.ini
 *.sln
 *.sw?
 
+# --- Videos tutoriales descargados por backend/demonio_videos.py ---
+# Se regeneran solos desde los links cargados en los ejercicios.
+videos/
+
 # --- Bases de datos locales / dumps ---
 *.sqlite
 *.sqlite3
