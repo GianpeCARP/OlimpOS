@@ -98,6 +98,9 @@ export function PlanCard({
         <p className="font-body text-sm text-text-secondary">
           <span className="text-text-main">{plan.asignados}</span> socios asignados
         </p>
+        {/* Quién lo armó: con los planes de todo el plantel a la vista, es lo
+            que explica por qué algunos no tienen botones. */}
+        <p className="mt-1 font-body text-xs text-text-muted">{plan.nutricionista}</p>
       </div>
 
       <div className="mt-4">

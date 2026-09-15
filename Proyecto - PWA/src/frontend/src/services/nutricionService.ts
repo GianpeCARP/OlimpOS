@@ -25,12 +25,19 @@ export interface PlanListado {
   fechaCreacion: string;
   activo: boolean;
   estado: EstadoDietaValue;
+  /**
+   * Si quien lo mira puede editarlo, darlo de baja y asignarlo. Lo decide el
+   * backend: un Nutricionista ve los planes de sus colegas pero no los toca.
+   */
+  puedeEditar: boolean;
 }
 
 export interface ComidaListada {
   idComida: number;
   dia?: number;
   momento?: string;
+  /** Plato del catálogo, o undefined si la comida es texto libre (el texto va en `nombre`). */
+  idCatalogoComida?: number;
   /** Nombre del plato (viene del Catalogo_Comida). */
   nombre: string;
   descripcion?: string;
@@ -52,11 +59,12 @@ interface DietaApi {
     id_comida: number;
     dia: number | null;
     momento: string | null;
-    id_catalogo_comida: number;
+    id_catalogo_comida: number | null;
     nombre: string;
     descripcion: string | null;
     calorias: number | null;
   }[];
+  puede_editar?: boolean;
 }
 
 function aPlanListado(d: DietaApi): PlanListado {
@@ -72,6 +80,7 @@ function aPlanListado(d: DietaApi): PlanListado {
     fechaCreacion: d.fecha_creacion ?? '',
     activo: d.activo,
     estado: d.activo ? EstadoDieta.ACTIVA : EstadoDieta.INACTIVA,
+    puedeEditar: d.puede_editar ?? true,
   };
 }
 
@@ -106,10 +115,60 @@ export async function listarComidasDelPlan(idDieta: number): Promise<ComidaLista
     idComida: c.id_comida,
     dia: c.dia ?? undefined,
     momento: c.momento ?? undefined,
+    idCatalogoComida: c.id_catalogo_comida ?? undefined,
     nombre: c.nombre,
     descripcion: c.descripcion ?? undefined,
     calorias: c.calorias ?? undefined,
   }));
+}
+
+// --- Catálogo de platos ---
+//
+// De acá salen el nombre y las calorías de cada comida de un plan. Una comida
+// también puede ser texto libre, porque el catálogo suele arrancar vacío.
+
+export interface PlatoCatalogo {
+  idCatalogoComida: number;
+  nombre: string;
+  descripcion?: string;
+  calorias?: number;
+}
+
+interface PlatoApi {
+  id_catalogo_comida: number;
+  nombre: string;
+  descripcion: string | null;
+  calorias: number | null;
+}
+
+function aPlato(p: PlatoApi): PlatoCatalogo {
+  return {
+    idCatalogoComida: p.id_catalogo_comida,
+    nombre: p.nombre,
+    descripcion: p.descripcion ?? undefined,
+    calorias: p.calorias ?? undefined,
+  };
+}
+
+export async function listarPlatos(): Promise<PlatoCatalogo[]> {
+  const datos = await pedir<PlatoApi[]>('/nutricion/catalogo-comidas');
+  return datos.map(aPlato);
+}
+
+export async function crearPlato(input: {
+  nombre: string;
+  calorias?: number;
+  descripcion?: string;
+}): Promise<PlatoCatalogo> {
+  const datos = await pedir<PlatoApi>('/nutricion/catalogo-comidas', {
+    metodo: 'POST',
+    cuerpo: {
+      nombre: input.nombre.trim(),
+      calorias: input.calorias ?? null,
+      descripcion: input.descripcion?.trim() || null,
+    },
+  });
+  return aPlato(datos);
 }
 
 // --- Alta y edición ---
@@ -125,6 +184,28 @@ export interface PlanInput {
    * 403), pero el Dueño y el Recepcionista tienen que elegir uno.
    */
   idNutricionista?: number;
+  /**
+   * El plan alimentario entero, como quedó. Al editar REEMPLAZA todas las
+   * comidas; si se omite, no se tocan.
+   */
+  comidas?: ComidaInput[];
+}
+
+/** Una comida del plan: plato del catálogo O texto libre. */
+export interface ComidaInput {
+  dia: number;
+  momento?: string;
+  idCatalogoComida?: number;
+  descripcion?: string;
+}
+
+function aComidaApi(c: ComidaInput) {
+  return {
+    dia: c.dia,
+    momento: c.momento ?? null,
+    id_catalogo_comida: c.idCatalogoComida ?? null,
+    descripcion: c.idCatalogoComida ? null : c.descripcion?.trim() || null,
+  };
 }
 
 export async function crearPlan(input: PlanInput): Promise<PlanListado> {
@@ -136,7 +217,7 @@ export async function crearPlan(input: PlanInput): Promise<PlanListado> {
       calorias_diarias: input.caloriasDiarias,
       descripcion: input.descripcion?.trim() || null,
       id_nutricionista: input.idNutricionista ?? null,
-      comidas: [],
+      comidas: (input.comidas ?? []).map(aComidaApi),
     },
   });
   return aPlanListado(datos);
@@ -151,6 +232,8 @@ export async function actualizarPlan(idDieta: number, input: PlanInput): Promise
       calorias_diarias: input.caloriasDiarias,
       descripcion: input.descripcion?.trim() || null,
       id_nutricionista: input.idNutricionista ?? null,
+      // Sin la clave cuando no vienen: el backend lo lee como "no tocar".
+      ...(input.comidas ? { comidas: input.comidas.map(aComidaApi) } : {}),
     },
   });
   return aPlanListado(datos);

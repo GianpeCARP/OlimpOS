@@ -1236,12 +1236,25 @@ class AsignacionRutinaOut(BaseModel):
 # =============================================================================
 
 class ComidaCrear(BaseModel):
-    # El plato SIEMPRE sale del catálogo (Comida.id_catalogo_comida es
-    # obligatorio): ya no se manda descripción/calorías sueltas, se elige un
-    # Catalogo_Comida y de ahí salen nombre y calorías.
+    """
+    Una comida del plan: un plato del CATÁLOGO (de ahí salen nombre y
+    calorías) o, si el catálogo no lo tiene, TEXTO LIBRE. Al menos una de las
+    dos: es el CHECK chk_comida_plato de la base. El texto libre existe porque
+    el catálogo del gimnasio suele arrancar vacío y armar un plan no puede
+    esperar a que alguien cargue cada plato.
+    """
     dia: int | None = Field(default=None, ge=1, le=7)
     momento: str | None = Field(default=None, max_length=30)
-    id_catalogo_comida: int
+    id_catalogo_comida: int | None = None
+    descripcion: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def _plato_o_texto(self):
+        self.descripcion = (self.descripcion or "").strip() or None
+        if self.id_catalogo_comida is None and self.descripcion is None:
+            raise PydanticCustomError(
+                "comida_vacia", "Cada comida necesita un plato del catálogo o una descripción.")
+        return self
 
 
 class ComidaOut(BaseModel):
@@ -1283,6 +1296,17 @@ class DietaEditarRequest(BaseModel):
     calorias_diarias: int | None = None
     descripcion: str | None = None
     id_nutricionista: int | None = None
+    # None = las comidas no se tocan. Una lista (aunque sea vacía) REEMPLAZA
+    # todas: el formulario manda el plan entero como quedó. Espejo de
+    # RutinaEditarRequest.ejercicios.
+    comidas: list[ComidaCrear] | None = None
+
+
+class CatalogoComidaCrear(BaseModel):
+    """Un plato nuevo para el catálogo. El nombre es UNIQUE en la base."""
+    nombre: str = Field(min_length=1, max_length=120)
+    descripcion: str | None = None
+    calorias: int | None = Field(default=None, ge=0, le=5000)
 
 
 class ProfesionalOpcion(BaseModel):
@@ -1309,6 +1333,9 @@ class DietaOut(BaseModel):
     activo: bool
     asignados: int = 0
     comidas: list[ComidaOut] = []
+    # Si quien pide puede editarla, darla de baja y asignarla. False para un
+    # Nutricionista mirando el plan de un colega. Espejo de RutinaOut.
+    puede_editar: bool = True
 
 
 class AsignarDietaRequest(BaseModel):

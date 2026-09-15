@@ -27,10 +27,14 @@ const CONFIG_POR_DEFECTO = { icono: Minus, color: colors.textMuted };
 
 interface PlanDetailModalProps {
   plan: PlanListado;
-  /** False para roles con acceso de sólo lectura: se ve el plan, sin "Editar". */
+  /**
+   * Gestionar ESTE plan: la acción y que el backend diga que es editable (un
+   * Nutricionista ve los planes de sus colegas pero no los toca).
+   */
   puedeGestionar: boolean;
   onClose: () => void;
   onEditar: () => void;
+  onAsignar: () => void;
 }
 
 function agruparPorDia(comidas: ComidaListada[]): Map<number, ComidaListada[]> {
@@ -51,6 +55,7 @@ export function PlanDetailModal({
   puedeGestionar,
   onClose,
   onEditar,
+  onAsignar,
 }: PlanDetailModalProps) {
   // Mismo fallback defensivo que PlanCard: objetivo es texto libre en el
   // esquema, un valor fuera del mapa no puede tumbar el modal.
@@ -133,7 +138,12 @@ export function PlanDetailModal({
                           {comida.momento && (
                             <p className="font-body text-xs text-text-muted">{comida.momento}</p>
                           )}
-                          <p className="font-body text-sm text-text-main">{comida.descripcion}</p>
+                          {/* El nombre es el plato del catálogo o el texto
+                              libre; la descripción, la del plato si tiene. */}
+                          <p className="font-body text-sm text-text-main">{comida.nombre}</p>
+                          {comida.descripcion && (
+                            <p className="font-body text-xs text-text-muted">{comida.descripcion}</p>
+                          )}
                         </div>
                         {comida.calorias !== undefined && (
                           <span className="shrink-0 font-mono text-xs text-text-secondary">
@@ -156,7 +166,18 @@ export function PlanDetailModal({
           >
             Cerrar
           </button>
-          {puedeGestionar && <PrimaryButton label="Editar" onClick={onEditar} />}
+          {puedeGestionar && (
+            <>
+              <button
+                type="button"
+                onClick={onAsignar}
+                className="shrink-0 rounded-md border border-border-idle px-4 py-2 font-body text-sm whitespace-nowrap text-text-secondary hover:bg-surface-hover hover:text-text-main"
+              >
+                Asignar
+              </button>
+              <PrimaryButton label="Editar" onClick={onEditar} />
+            </>
+          )}
         </div>
       </div>
     </div>

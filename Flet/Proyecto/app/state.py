@@ -521,9 +521,26 @@ class AppState:
                 "id_nutricionista": d.get("id_nutricionista"),
                 "nutricionista": d.get("nutricionista") or "—",
                 "activo": d.get("activo", True),
+                # Lo decide el backend: un Nutricionista ve los planes de sus
+                # colegas pero no los edita, ni los da de baja, ni los asigna.
+                "puede_editar": d.get("puede_editar", True),
             }
             for d in datos
         ]
+
+    def get_platos(self) -> list[dict]:
+        """Catálogo de platos: de acá salen nombre y calorías de cada comida."""
+        datos = self._datos(api_client.obtener_catalogo_comidas(), [])
+        return [{"id": p["id_catalogo_comida"], "nombre": p["nombre"],
+                 "calorias": p.get("calorias"), "descripcion": p.get("descripcion") or ""}
+                for p in datos]
+
+    def crear_plato(self, datos: dict) -> dict:
+        return self._resultado(api_client.crear_plato(datos), "Plato agregado al catálogo.")
+
+    def editar_usuario(self, id_usuario: int, username: str, email: str | None) -> dict:
+        return self._resultado(api_client.editar_usuario(id_usuario, username, email),
+                                "Cuenta actualizada.")
 
     def get_comidas_dieta(self, id_dieta: int) -> list[dict] | None:
         """
@@ -536,6 +553,7 @@ class AppState:
             return None
         return [
             {"dia": c.get("dia"), "momento": c.get("momento") or "",
+             "id_catalogo_comida": c.get("id_catalogo_comida"),
              "nombre": c.get("nombre") or "", "descripcion": c.get("descripcion") or "",
              "calorias": c.get("calorias")}
             for c in d.get("comidas", [])
@@ -1110,6 +1128,7 @@ class AppState:
             {
                 "id": u["id_usuario"],
                 "usuario": u["username"],
+                "email": u.get("email") or "",
                 "nombre": u.get("nombre_completo", "—"),
                 "dni": u.get("dni", "—"),
                 "roles": u.get("roles", []),

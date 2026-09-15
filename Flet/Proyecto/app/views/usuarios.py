@@ -5,7 +5,7 @@ import flet as ft
 from app import permisos
 from app.config import Colors, NAV_ITEMS, Routes, alpha
 from app.state import app_state
-from app.components.ui import (build_topbar, status_badge, primary_button,
+from app.components.ui import (build_topbar, status_badge, primary_button, input_field,
                                 show_snack, open_dialog, close_dialog)
 
 # rol → (etiqueta, color, fondo translúcido, ícono)
@@ -209,6 +209,15 @@ class UsuariosView:
 
         acciones = []
 
+        # Editar usuario y email: fuera de la cuenta propia y de la de un Dueño
+        # para un rol inferior (UsuarioRow.tsx: puedeEditarOCambiarEstado).
+        if puede_gestionar and not es_cuenta_protegida and not es_cuenta_propia:
+            acciones.append(
+                ft.IconButton(ft.Icons.EDIT_ROUNDED, icon_color=Colors.INFO,
+                              icon_size=18, tooltip="Editar",
+                              on_click=lambda e, x=u: self._editar(x))
+            )
+
         if puede_gestionar and not es_cuenta_protegida:
             acciones.append(
                 ft.IconButton(ft.Icons.KEY_ROUNDED, icon_color=Colors.WARNING,
@@ -396,6 +405,51 @@ class UsuariosView:
 
         close_dialog(self.page, dlg)
         self._mostrar_credenciales("Cuenta creada", resultado)
+
+    def _editar(self, u: dict):
+        """
+        Cambia el nombre de usuario y el email (UsuarioFormModal.tsx en edición).
+
+        NO cambia el rol: se deriva de las tablas donde está la persona, así
+        que "cambiarlo" acá sería mentir. Para eso se edita su ficha en Personal.
+        """
+        usuario_tf = input_field("Usuario", "nombre.apellido", icon=ft.Icons.PERSON_ROUNDED,
+                                 value=u.get("usuario", ""))
+        email_tf = input_field("Email", "correo@ejemplo.com", icon=ft.Icons.EMAIL_OUTLINED,
+                               value=u.get("email", ""))
+
+        def guardar(e=None):
+            username = (usuario_tf.value or "").strip()
+            if not username:
+                show_snack(self.page, "El usuario no puede quedar vacío.", Colors.STATUS_DANGER)
+                return
+            resultado = app_state.editar_usuario(u["id"], username,
+                                                 (email_tf.value or "").strip() or None)
+            if not resultado["ok"]:
+                show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+                return
+            close_dialog(self.page, dlg)
+            show_snack(self.page, resultado["mensaje"], Colors.SUCCESS)
+            self.router.navigate(Routes.USUARIOS)
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f"Editar cuenta de {u.get('nombre', '')}", color=Colors.TEXT_PRIMARY,
+                          weight=ft.FontWeight.BOLD),
+            bgcolor=Colors.BG_CARD,
+            content=ft.Container(width=420, content=ft.Column([
+                usuario_tf, email_tf,
+                ft.Text("El rol no se cambia acá: sale de la ficha de la persona.",
+                        color=Colors.TEXT_MUTED, size=11),
+            ], spacing=12, tight=True)),
+            actions=[
+                ft.TextButton("Cancelar", style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                              on_click=lambda e: close_dialog(self.page, dlg)),
+                ft.TextButton("Guardar", style=ft.ButtonStyle(color=Colors.ACCENT), on_click=guardar),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        open_dialog(self.page, dlg)
 
     def _reset_password(self, u: dict):
         """

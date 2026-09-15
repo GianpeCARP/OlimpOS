@@ -7,14 +7,17 @@ import {
   listarPlanes,
   darDeBajaPlan,
   activarPlan,
+  asignarPlanASocio,
   type PlanListado,
 } from '../../services/nutricionService';
 import { useUiStore } from '../../store/uiStore';
 import { usePuedeAccion } from '../../hooks/usePermisos';
 import { formatearNumero } from '../../utils/format';
+import { AsignarASocioModal } from '../socios/AsignarASocioModal';
 import { PlanCard } from './PlanCard';
 import { PlanDetailModal } from './PlanDetailModal';
 import { PlanFormModal } from './PlanFormModal';
+import { PlatoFormModal } from './PlatoFormModal';
 
 // Equivalente de NutricionView (estructura_nutricion.md): topbar con
 // conteo + resumen calórico (4 _cal_stat, acá reusando el StatCard del
@@ -63,6 +66,14 @@ export function NutricionView() {
 
   const [formModal, setFormModal] = useState<{ plan: PlanListado | null } | null>(null);
   const [detalle, setDetalle] = useState<PlanListado | null>(null);
+  const [asignando, setAsignando] = useState<PlanListado | null>(null);
+  const [nuevoPlato, setNuevoPlato] = useState(false);
+
+  // Gestionar ESTE plan: la acción y que el backend diga que es editable.
+  const gestionable = useCallback(
+    (plan: PlanListado) => puedeGestionar && plan.puedeEditar,
+    [puedeGestionar],
+  );
 
   useEffect(() => {
     let cancelado = false;
@@ -145,16 +156,25 @@ export function NutricionView() {
         subtitle={planes ? `${planes.length} planes nutricionales` : undefined}
         actions={
           puedeGestionar ? (
-            <PrimaryButton
-              label="Nuevo Plan"
-              icon={Plus}
-              onClick={() => setFormModal({ plan: null })}
-            />
+            <div className="flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setNuevoPlato(true)}
+                className="flex shrink-0 items-center gap-1.5 rounded-md border border-border-idle px-3 py-2 font-body text-sm whitespace-nowrap text-text-secondary hover:bg-surface-hover hover:text-text-main"
+              >
+                <Plus size={16} /> Plato
+              </button>
+              <PrimaryButton
+                label="Nuevo Plan"
+                icon={Plus}
+                onClick={() => setFormModal({ plan: null })}
+              />
+            </div>
           ) : undefined
         }
       />
 
-      <div className="space-y-4 p-8">
+      <div className="space-y-4 p-4 md:p-8">
         {error && (
           <SectionCard>
             <p className="mb-4 font-body text-sm text-status-danger">{error}</p>
@@ -245,7 +265,7 @@ export function NutricionView() {
                   <PlanCard
                     key={plan.idDieta}
                     plan={plan}
-                    puedeGestionar={puedeGestionar}
+                    puedeGestionar={gestionable(plan)}
                     onVerPlan={() => setDetalle(plan)}
                     onDarDeBaja={() => pedirBaja(plan)}
                     onActivar={() => activar(plan)}
@@ -268,14 +288,32 @@ export function NutricionView() {
       {detalle && (
         <PlanDetailModal
           plan={detalle}
-          puedeGestionar={puedeGestionar}
+          puedeGestionar={gestionable(detalle)}
           onClose={() => setDetalle(null)}
           onEditar={() => {
             setFormModal({ plan: detalle });
             setDetalle(null);
           }}
+          onAsignar={() => {
+            setAsignando(detalle);
+            setDetalle(null);
+          }}
         />
       )}
+
+      {asignando && (
+        <AsignarASocioModal
+          titulo="Asignar plan nutricional"
+          subtitulo={asignando.nombre}
+          aviso="Si el socio ya sigue otro plan, se lo finaliza y queda en su historial."
+          mensajeExito={(s) => `"${asignando.nombre}" asignado a ${s.nombreCompleto}`}
+          onAsignar={(s) => asignarPlanASocio(asignando.idDieta, s.idSocio)}
+          onClose={() => setAsignando(null)}
+          onAsignada={recargar}
+        />
+      )}
+
+      {nuevoPlato && <PlatoFormModal onClose={() => setNuevoPlato(false)} />}
     </div>
   );
 }

@@ -34,12 +34,13 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import (
-    AsignacionDieta, CatalogoComida, Comida, Dieta, Empleado, Nutricionista, Socio,
+    AsignacionDieta, CatalogoComida, Comida, Dieta, Empleado, Nutricionista, RegistroComida,
+    Socio,
 )
 from permisos import Acceso, Accion, Seccion
 from schemas import (
-    AsignacionDietaOut, AsignarDietaRequest, CatalogoComidaOut, ComidaOut,
-    DietaCrear, DietaEditarRequest, DietaOut,
+    AsignacionDietaOut, AsignarDietaRequest, CatalogoComidaCrear, CatalogoComidaOut,
+    ComidaOut, DietaCrear, DietaEditarRequest, DietaOut,
 )
 from security import Sesion, requiere_accion, requiere_seccion
 
@@ -108,6 +109,42 @@ def _resolver_nutricionista(db: Session, sesion: Sesion, id_pedido: int | None) 
             detail="Ese nutricionista está dado de baja. Elegí uno activo.",
         )
     return nutri
+
+
+def _puede_editar(propio: Nutricionista | None, dieta: Dieta) -> bool:
+    """
+    Un Nutricionista sólo toca SUS planes; el Dueño y el Recepcionista, todos.
+    Espejo de _puede_editar en rutinas.py.
+    """
+    return propio is None or dieta.id_nutricionista == propio.id_nutricionista
+
+
+def _exigir_editable(db: Session, sesion: Sesion, dieta: Dieta) -> None:
+    if not _puede_editar(_nutricionista_de_sesion(db, sesion), dieta):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Ese plan es de otro nutricionista: podés verlo, no modificarlo.",
+        )
+
+
+def _agregar_comidas(db: Session, id_dieta: int, items) -> None:
+    """
+    Valida TODOS los platos del catálogo antes de insertar ninguno (si el
+    tercero no existe no tiene que quedar medio plan cargado) y después
+    inserta. Una comida lleva plato del catálogo o texto libre (ComidaCrear).
+    """
+    for c in items:
+        if c.id_catalogo_comida is not None and db.get(CatalogoComida, c.id_catalogo_comida) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                detail=f"El plato con id {c.id_catalogo_comida} no existe.")
+    for c in items:
+        db.add(Comida(
+            id_dieta=id_dieta,
+            dia=c.dia,
+            momento=(c.momento or "").strip() or None,
+            id_catalogo_comida=c.id_catalogo_comida,
+            descripcion=None if c.id_catalogo_comida is not None else c.descripcion,
+        ))
 
 
 def _a_comida_out(c) -> ComidaOut:
@@ -189,6 +226,33 @@ def listar_catalogo_comidas(
     return [CatalogoComidaOut.model_validate(p) for p in platos]
 
 
+@router.post("/catalogo-comidas", response_model=CatalogoComidaOut,
+             status_code=status.HTTP_201_CREATED)
+def crear_plato(
+    datos: CatalogoComidaCrear,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.GESTION_DIETAS)),
+):
+    """
+    Agrega un plato al catálogo. Antes no había forma de cargarlo desde
+    ninguna app, y el catálogo es de donde salen nombre y calorías de cada
+    comida de un plan.
+
+    El nombre es UNIQUE: se chequea a mano para dar un mensaje claro en vez del
+    error de restricción (mismo criterio que crear_ejercicio).
+    """
+    nombre = datos.nombre.strip()
+    if db.query(CatalogoComida).filter(CatalogoComida.nombre.ilike(nombre)).first():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=f"Ya existe un plato llamado '{nombre}'.")
+    plato = CatalogoComida(nombre=nombre, descripcion=(datos.descripcion or "").strip() or None,
+                           calorias=datos.calorias, activo=True)
+    db.add(plato)
+    db.commit()
+    db.refresh(plato)
+    return CatalogoComidaOut.model_validate(plato)
+
+
 @router.get("", response_model=list[DietaOut])
 def listar_dietas(
     db: Session = Depends(get_db),
@@ -207,7 +271,13 @@ def listar_dietas(
         .order_by(Dieta.id_dieta.desc())
         .all()
     )
-    return [_a_dieta_out(d, con_comidas=False) for d in dietas]
+    propio = _nutricionista_de_sesion(db, sesion)
+    salida = []
+    for d in dietas:
+        out = _a_dieta_out(d, con_comidas=False)
+        out.puede_editar = _puede_editar(propio, d)
+        salida.append(out)
+    return salida
 
 
 @router.get("/{id_dieta}", response_model=DietaOut)
@@ -218,7 +288,9 @@ def obtener_dieta(
 ):
     """El detalle trae las comidas ordenadas por día y momento del día."""
     dieta = _dieta_del_staff(db, id_dieta)
-    return _a_dieta_out(dieta)
+    out = _a_dieta_out(dieta)
+    out.puede_editar = _puede_editar(_nutricionista_de_sesion(db, sesion), dieta)
+    return out
 
 
 @router.post("", response_model=DietaOut, status_code=status.HTTP_201_CREATED)
@@ -247,13 +319,7 @@ def crear_dieta(
     db.add(dieta)
     db.flush()
 
-    for c in datos.comidas:
-        db.add(Comida(
-            id_dieta=dieta.id_dieta,
-            dia=c.dia,
-            momento=c.momento,
-            id_catalogo_comida=c.id_catalogo_comida,
-        ))
+    _agregar_comidas(db, dieta.id_dieta, datos.comidas)
 
     db.commit()
     db.refresh(dieta)
@@ -283,6 +349,7 @@ def asignar_dieta(
     igual que una inexistente. Es del socio y de nadie más.
     """
     dieta = _dieta_del_staff(db, id_dieta)
+    _exigir_editable(db, sesion, dieta)
 
     socio = db.get(Socio, datos.id_socio)
     if socio is None:
@@ -397,8 +464,16 @@ def editar_dieta(
     db: Session = Depends(get_db),
     sesion: Sesion = Depends(requiere_accion(Accion.GESTION_DIETAS)),
 ):
-    """Edita los datos de la dieta. Las comidas se manejan aparte."""
+    """
+    Edita la dieta y, si vienen, REEMPLAZA sus comidas.
+
+    Reemplazar la lista entera es lo que hace el formulario: se reacomoda el
+    plan y se guarda cómo quedó. Nada apunta a Comida (Registro_Comida lleva el
+    texto de lo comido, no una FK obligatoria al plan), así que borrar y volver
+    a insertar no rompe historial. Espejo de editar_rutina.
+    """
     dieta = _dieta_del_staff(db, id_dieta)
+    _exigir_editable(db, sesion, dieta)
 
     if datos.id_nutricionista is not None and datos.id_nutricionista != dieta.id_nutricionista:
         nutri = _resolver_nutricionista(db, sesion, datos.id_nutricionista)
@@ -409,8 +484,23 @@ def editar_dieta(
     dieta.calorias_diarias = datos.calorias_diarias
     dieta.descripcion = datos.descripcion
 
+    if datos.comidas is not None:
+        # Registro_Comida.id_comida apunta a Comida (opcional, sin regla ON
+        # DELETE): lo que un socio registró contra una comida del plan viejo
+        # conserva su texto y sus macros, sólo pierde el vínculo. Sin esto,
+        # borrar las comidas fallaría por la FK apenas alguien hubiera
+        # registrado algo.
+        ids_viejas = [c.id_comida for c in dieta.comidas]
+        if ids_viejas:
+            db.query(RegistroComida).filter(RegistroComida.id_comida.in_(ids_viejas)) \
+                .update({RegistroComida.id_comida: None}, synchronize_session=False)
+        db.query(Comida).filter(Comida.id_dieta == dieta.id_dieta).delete(synchronize_session=False)
+        db.flush()
+        _agregar_comidas(db, dieta.id_dieta, datos.comidas)
+
     db.commit()
     db.refresh(dieta)
+    db.expire(dieta, ["comidas"])
     return _a_dieta_out(dieta)
 
 
@@ -426,6 +516,7 @@ def dar_de_baja_dieta(
     asignaciones nuevas.
     """
     dieta = _dieta_del_staff(db, id_dieta)
+    _exigir_editable(db, sesion, dieta)
     if not dieta.activo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Esa dieta ya estaba desactivada.")
@@ -443,6 +534,7 @@ def reactivar_dieta(
     sesion: Sesion = Depends(requiere_accion(Accion.GESTION_DIETAS)),
 ):
     dieta = _dieta_del_staff(db, id_dieta)
+    _exigir_editable(db, sesion, dieta)
     if dieta.activo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Esa dieta ya estaba activa.")

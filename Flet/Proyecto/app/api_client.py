@@ -536,6 +536,18 @@ def editar_dieta(id_dieta: int, datos: dict) -> dict:
     return _put(f"/nutricion/{id_dieta}", datos)
 
 
+def obtener_catalogo_comidas() -> dict:
+    return _get("/nutricion/catalogo-comidas")
+
+
+def crear_plato(datos: dict) -> dict:
+    return _post("/nutricion/catalogo-comidas", datos)
+
+
+def editar_usuario(id_usuario: int, username: str, email: str | None) -> dict:
+    return _put(f"/usuarios/{id_usuario}", {"username": username, "email": email})
+
+
 def baja_dieta(id_dieta: int) -> dict:
     return _post(f"/nutricion/{id_dieta}/baja")
 
