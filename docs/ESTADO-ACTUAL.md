@@ -1,6 +1,6 @@
 # OlimpOS — Estado actual y próximos pasos
 
-**Última actualización: 2026-09-14.** Este archivo es el "arranque rápido": lo
+**Última actualización: 2026-09-15.** Este archivo es el "arranque rápido": lo
 que está hecho HOY, lo que falta, y las decisiones que no se deducen del código.
 Es el equivalente versionado de la memoria de Claude Code (que es local a cada
 máquina y NO viaja con el repo). Si arrancás en otra computadora, leé esto +
@@ -78,6 +78,36 @@ Todo esto está commiteado y pusheado en `desarrollo` (commits `e724865` y `388e
   **sin librería** (decisión del proyecto: 40kB no se justifican).
 - Backend: `GET /portal/mi-rutina/registro-ejercicio`.
 
+### 5. Videos de técnica (commits `921064a`, `3f81ee7`)
+- El entrenador carga el **link de YouTube** del canal del gimnasio al crear un ejercicio
+  (PWA "+ Ejercicio" y Flet "Nuevo Ejercicio"). Nunca toca el servidor.
+- `backend/demonio_videos.py` (yt-dlp + ffmpeg) baja cada link que no tenga archivo a
+  `VIDEOS_DIR` (vacío = `/videos` en la raíz), y descarta links de otro canal
+  (`VIDEOS_CANAL_YOUTUBE`, hoy `@JulienLEPRETRE` para probar). Se arranca con
+  `backend/iniciar_demonio_videos.cmd` (acceso directo en `shell:startup`); log en `backend/logs/`.
+- El archivo se llama `<id de youtube>.mp4`: "ya bajado" = el archivo existe, sin columnas nuevas.
+  El backend sirve la carpeta en `/videos` y agrega `video_local` a los ejercicios (None hasta
+  que el demonio lo baja). Los navegadores no reproducen ftp://: por eso va por HTTP.
+- Socio: botón **"Ver técnica"** en Mi rutina, en el circuito y en el catálogo.
+- Pendiente para el final: videos institucionales en la tele (mismo demonio, otra carpeta).
+
+### 6. Rutinas completas del personal (PWA y Flet)
+- Alta/edición **con ejercicios del catálogo por día** (series, reps, peso, descanso,
+  observaciones, orden), detalle con la planilla, asignar a un socio, baja/reactivación.
+  `PUT /rutinas/{id}` con `ejercicios` REEMPLAZA la planilla (nada apunta a Rutina_Ejercicio).
+- Editor compartido en la PWA: `views/rutinas/EditorEjercicios.tsx` + `planillaEjercicios.ts`,
+  que usan también `ArmarMiRutina` (socio) — varios días, peso, y "Rehacer" precargado.
+- Socio: "Ejercicios del gimnasio" (`CatalogoEjercicios.tsx`), el catálogo para mirar suelto.
+- "Comenzar entrenamiento" (circuito) **sólo en celular**, igual que el contador.
+
+### 7. Permisos: la PWA es la referencia, Flet se iguala
+- Un **Entrenador sólo toca SUS rutinas** (`puede_editar` en `RutinaOut`; 403 si no).
+- El Entrenador **no asigna entrenadores** a socios: lo deciden Dueño y Recepcionista
+  (UI oculta en las dos apps; el backend además le impide tocar asignaciones ajenas).
+- Flet estaba con permisos "dados vuelta" (botones de gestión para roles de lectura) en Socios y
+  Nutrición; se igualó a la PWA. Nutrición en Flet sumó editar/baja/reactivación y comidas reales.
+- Quién usa qué: el Entrenador y el socio usan la **PWA**; Flet corre en la PC de **recepción**.
+
 ---
 
 ## Modelo de datos: "registros" vs "planes" (importante, no se ve en el código)
@@ -126,6 +156,8 @@ entrenamiento y nutrición que va en el system prompt (estándar sólido vs. mat
 y dónde persistir el consentimiento.
 
 ### Otros pendientes
+- **Recepción en Flet** — repasar Recepción/Cobros/Asistencia contra la PWA con cada rol (es lo
+  que más importa en Flet).
 - **#4 overlay del contador** (sacar líneas verdes) — cuando el tracking esté redondo.
 - **Mercado Pago** — falta token, secreto del webhook y URL pública (ver `backend/BITACORA.md` §13).
 - **Endurecimiento de seguridad** — ver `docs/vulnerabilidades a arreglar.md`.
@@ -167,3 +199,6 @@ Comandos completos en `CLAUDE.md`. Lo esencial:
   `pruebas/vaciar_base.py` (sin `--si` sólo informa). Credenciales demo: todas `Demo2026!`.
 - **Casi todos los bugs aparecen CORRIENDO, no leyendo.** `tsc`/`oxlint`/`compileall`
   no bastan; hay que ejecutar la vista/endpoint con datos reales.
+- **Flet: `pruebas_vistas.py` tampoco alcanza para los diálogos.** Un `ft.Row(wrap=True)` con
+  `TextField` adentro no se dibuja en Flet 0.84 y deja un bloque GRIS enorme; sólo se vio
+  abriéndolo en el navegador (`ft.AppView.WEB_BROWSER`; con `view=None` no sirve HTTP).
