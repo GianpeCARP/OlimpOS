@@ -89,7 +89,12 @@ CARGA_DE_ROLES = (
 
 
 def _a_usuario_out(usuario: Usuario) -> UsuarioAdminOut:
+    # "Bloqueado" en pantalla cubre los dos casos: el bloqueo manual (columna)
+    # y la traba temporal por intentos fallidos (limite_intentos.py). Si la
+    # traba no se viera, nadie sabría que hay algo que desbloquear.
+    import limite_intentos
     persona = usuario.persona
+    bloqueado = bool(usuario.bloqueado) or limite_intentos.cuenta_trabada(usuario.username)
     return UsuarioAdminOut(
         id_usuario=usuario.id_usuario,
         id_persona=usuario.id_persona,
@@ -99,7 +104,7 @@ def _a_usuario_out(usuario: Usuario) -> UsuarioAdminOut:
         email=persona.email,
         roles=roles_de_persona(persona),
         activo=bool(usuario.activo),
-        bloqueado=bool(usuario.bloqueado),
+        bloqueado=bloqueado,
         debe_cambiar_password=bool(usuario.debe_cambiar_password),
         ultimo_acceso=usuario.ultimo_acceso,
     )
@@ -326,6 +331,10 @@ def resetear_password(
     usuario.debe_cambiar_password = True
     usuario.bloqueado = False
     usuario.intentos_fallidos = 0
+    # También la traba temporal por intentos fallidos (limite_intentos.py):
+    # si no, el reseteo parecería no andar durante 15 minutos.
+    import limite_intentos
+    limite_intentos.destrabar(usuario.username)
     db.commit()
 
     envio = enviar_credenciales(
@@ -362,7 +371,9 @@ def desbloquear(
     usuario = _buscar_usuario(db, id_usuario)
     _validar_jerarquia(sesion, usuario)
 
-    if not usuario.bloqueado and (usuario.intentos_fallidos or 0) == 0:
+    import limite_intentos
+    if (not usuario.bloqueado and (usuario.intentos_fallidos or 0) == 0
+            and not limite_intentos.cuenta_trabada(usuario.username)):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Esa cuenta no está bloqueada.",
@@ -370,6 +381,10 @@ def desbloquear(
 
     usuario.bloqueado = False
     usuario.intentos_fallidos = 0
+    # "Desbloquear" también levanta la traba temporal por intentos fallidos
+    # (limite_intentos.py), que es el bloqueo automático desde V-02.
+    import limite_intentos
+    limite_intentos.destrabar(usuario.username)
     db.commit()
     db.refresh(usuario)
     return _a_usuario_out(usuario)
@@ -427,6 +442,8 @@ def alternar_estado(
         # Reactivar y dejarla bloqueada sería reactivarla a medias.
         usuario.bloqueado = False
         usuario.intentos_fallidos = 0
+        import limite_intentos
+        limite_intentos.destrabar(usuario.username)
     db.commit()
     db.refresh(usuario)
     return _a_usuario_out(usuario)

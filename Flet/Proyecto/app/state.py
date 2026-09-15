@@ -120,6 +120,9 @@ class AppState:
             "roles": roles,
             "avatar": (nombre or "U")[0].upper(),
             "id_socio": datos.get("idSocio"),
+            # Para las reglas de FILA propia (nadie se da de baja a sí mismo
+            # en Personal). Espejo de `persona.id_persona` del authStore.
+            "id_persona": (datos.get("persona") or {}).get("id_persona"),
         }
         self.username_pendiente_cambio = None
 
@@ -173,6 +176,11 @@ class AppState:
         if self.current_user:
             return self.current_user.get("name", "Usuario")
         return "Invitado"
+
+    def get_user_id_persona(self) -> int | None:
+        if self.current_user:
+            return self.current_user.get("id_persona")
+        return None
 
     def get_user_roles(self) -> list[str]:
         """Roles de la sesión activa. Lista vacía si no hay sesión."""
@@ -402,6 +410,8 @@ class AppState:
         return [
             {
                 "id": e["id_empleado"],
+                "id_persona": e.get("id_persona"),
+                "activo": bool(e.get("activo")),
                 "nombre": f"{e['nombre']} {e['apellido']}".strip(),
                 "rol": e.get("rol") or "Sin asignar",
                 "turno": e.get("turno_laboral") or "—",
@@ -1040,6 +1050,14 @@ class AppState:
     def get_nutricionistas(self) -> list[dict]:
         """Espejo del anterior, para el formulario de dietas."""
         return self._datos(api_client.obtener_nutricionistas(), [])
+
+    def baja_empleado(self, id_empleado: int, motivo: str | None = None) -> dict:
+        return self._resultado(api_client.baja_empleado(id_empleado, motivo),
+                                "Empleado dado de baja.")
+
+    def reactivar_empleado(self, id_empleado: int) -> dict:
+        return self._resultado(api_client.reactivar_empleado(id_empleado),
+                                "Empleado reactivado.")
 
     def editar_empleado(self, id_empleado: int, datos: dict) -> dict:
         return self._resultado(api_client.editar_empleado(id_empleado, datos),

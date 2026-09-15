@@ -61,13 +61,17 @@ cambio, desde backend/ con el venv:
     .venv/Scripts/python.exe -c "from auth import hashear_password; from database import SessionLocal; from sqlalchemy import text; db=SessionLocal(); db.execute(text('UPDATE \"Usuario\" SET password_hash=:h, debe_cambiar_password=false, bloqueado=false, intentos_fallidos=0 WHERE username=:u'), {'h': hashear_password('dueno 1234'), 'u':'dueno'}); db.commit(); db.close()"
 
 
-OJO 2 — a los 5 intentos fallidos la cuenta se BLOQUEA
-------------------------------------------------------
-MAX_INTENTOS_FALLIDOS = 5 en routers/auth_router.py. Una cuenta bloqueada
-devuelve el MISMO mensaje que una contraseña mal ("Usuario o contraseña
-incorrectos"), a propósito, para no revelar el estado de una cuenta ajena — así
-que desde afuera no hay forma de distinguir "me equivoqué" de "ya está
-bloqueada". Si sospechás que pasó, mirá la fila:
+OJO 2 — a los 5 intentos fallidos la cuenta se TRABA 15 MINUTOS
+---------------------------------------------------------------
+Desde el 2026-09-15 (V-02 de docs/vulnerabilidades a arreglar.md): 5 fallos
+traban la cuenta 15 minutos EN MEMORIA (limite_intentos.py), y 20 fallos desde
+la misma IP en 10 minutos dan 429. Reiniciar el backend limpia las dos cosas.
+"Desbloquear" en Usuarios también la destraba. La columna `bloqueado` de la
+base ya NO la toca el login: queda sólo para el bloqueo manual.
+
+Una cuenta trabada devuelve el MISMO mensaje que una contraseña mal ("Usuario o
+contraseña incorrectos"), a propósito, para no revelar el estado de una cuenta
+ajena. Si sospechás un bloqueo manual, mirá la fila:
 
     SELECT username, bloqueado, intentos_fallidos FROM "Usuario";
 

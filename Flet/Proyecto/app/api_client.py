@@ -464,6 +464,14 @@ def alta_empleado(datos: dict) -> dict:
     return _post("/personal", datos)
 
 
+def baja_empleado(id_empleado: int, motivo: str | None = None) -> dict:
+    return _post(f"/personal/{id_empleado}/baja", {"motivo": motivo})
+
+
+def reactivar_empleado(id_empleado: int) -> dict:
+    return _post(f"/personal/{id_empleado}/reactivar")
+
+
 # =============================================================================
 # RUTINAS
 # =============================================================================

@@ -19,9 +19,12 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+import mercadopago as mp
 from csrf import middleware_csrf
 from sqlalchemy import text
 from database import Base, SessionLocal, calentar_pool, engine
@@ -97,6 +100,14 @@ def _latido():
             pass
 
 
+_DOCS_PUBLICOS = os.getenv("DOCS_PUBLICOS", "true").strip().lower() in ("1", "true", "si", "sí")
+
+# HSTS sólo cuando la sesión ya viaja por HTTPS (COOKIE_SECURE=true): mandarlo
+# sobre HTTP no sirve y, en un navegador que lo recuerde, rompería el
+# desarrollo en localhost.
+_HTTPS = os.getenv("COOKIE_SECURE", "false").strip().lower() == "true"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -150,6 +161,13 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
+    # V-01: con el modo simulado, cualquier socio puede darse por pagada la
+    # cuota. Existe para desarrollar sin Mercado Pago; que nadie lo deje
+    # prendido sin enterarse.
+    if mp.modo_simulado():
+        print("  AVISO: MP_MODO_SIMULADO activo — los socios pueden acreditarse")
+        print("         pagos sin pagar. NUNCA en producción.")
+
     print("=" * 68 + "\n")
 
     yield
@@ -168,6 +186,12 @@ app = FastAPI(
     ),
     version="0.1.0",
     lifespan=lifespan,
+    # /docs, /redoc y /openapi.json exponen el mapa entero de la API a
+    # cualquiera. En desarrollo sirven (y las verificaciones cuentan endpoints
+    # con /openapi.json); en producción, DOCS_PUBLICOS=false.
+    docs_url="/docs" if _DOCS_PUBLICOS else None,
+    redoc_url="/redoc" if _DOCS_PUBLICOS else None,
+    openapi_url="/openapi.json" if _DOCS_PUBLICOS else None,
 )
 
 app.add_middleware(
@@ -190,6 +214,50 @@ app.add_middleware(
 # middlewares se apilan en orden inverso). Es el orden que se quiere: rechazar
 # un pedido sin token CSRF antes de que llegue a tocar la base.
 app.middleware("http")(middleware_csrf)
+
+
+@app.exception_handler(RequestValidationError)
+async def errores_de_validacion(request, exc: RequestValidationError):
+    """
+    Los 422 devuelven sólo dónde y qué falló, SIN el valor recibido.
+
+    V-05: FastAPI copia en la respuesta el `input` que no validó. Con
+    `Infinity` o `NaN` (que el parser JSON acepta) esa copia no se puede
+    serializar y el 422 correcto terminaba en un 500. De paso, no se le
+    devuelve al cliente lo que mandó (una contraseña que no cumplía la regla,
+    por ejemplo). Las dos apps sólo leen `msg`.
+    """
+    errores = [{"loc": list(e.get("loc", ())), "msg": e.get("msg", ""), "type": e.get("type", "")}
+               for e in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": errores})
+
+
+@app.middleware("http")
+async def cabeceras_de_seguridad(request, call_next):
+    """
+    Cabeceras de seguridad en TODAS las respuestas (antes no había ninguna).
+
+    Va último en el código, así que envuelve a los demás middlewares y también
+    marca los preflight de CORS y los rechazos del CSRF.
+
+    La CSP es `default-src 'none'` porque la API sólo devuelve JSON y videos:
+    no hay HTML propio que necesite cargar nada. /docs y /redoc quedan afuera
+    porque Swagger trae sus scripts de un CDN (y en producción se apagan).
+
+    `Server: uvicorn` no se puede sacar desde acá (lo agrega uvicorn después):
+    en producción se arranca con `--no-server-header`.
+    """
+    respuesta = await call_next(request)
+    h = respuesta.headers
+    h.setdefault("X-Content-Type-Options", "nosniff")
+    h.setdefault("X-Frame-Options", "DENY")
+    h.setdefault("Referrer-Policy", "no-referrer")
+    h.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if not request.url.path.startswith(("/docs", "/redoc")):
+        h.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+    if _HTTPS:
+        h.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return respuesta
 
 
 # =============================================================================

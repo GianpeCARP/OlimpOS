@@ -17,6 +17,33 @@ corriendo en `127.0.0.1:8000`, base en estado *demo*).
 
 ---
 
+## Estado al 2026-09-15 (arreglos aplicados y verificados)
+
+Verificado corriendo contra el backend (desarrollo y uno levantado como producción):
+
+| # | Estado | Qué se hizo |
+|---|---|---|
+| V-01 | ✅ Resuelta | La ruta `/simular` sólo se REGISTRA si el backend arranca con `MP_MODO_SIMULADO` activo (sin token real). En producción no existe (404). Aviso en consola al arrancar si está prendido. |
+| V-02 | ✅ Resuelta | `limite_intentos.py`: 5 fallos traban la cuenta **15 min** (no bloqueo permanente; `Usuario.bloqueado` queda para el bloqueo manual) + tope de 20 fallos por IP en 10 min → **429**. "Desbloquear" y "Resetear" también levantan la traba, y la traba se ve como "Bloqueado" en Usuarios. |
+| V-03 | ✅ Resuelta | bcrypt contra un hash de relleno cuando el usuario no existe/está trabado. Medido: ratio 2,3x → 1,1x. |
+| V-04 | ✅ Resuelta | `/cambiar-password` usa el mismo freno por IP y la misma traba. |
+| V-05 | ✅ Resuelta | `monto_manual` con `allow_inf_nan=False`, y los 422 ya no devuelven el `input` (su serialización con Infinity/NaN era el 500). |
+| V-06 | ✅ Resuelta | `monto_manual` con `ge=1`. |
+| V-07 | ✅ Ya no aplica | El descuento de monto fijo se eliminó; el porcentual está acotado 0–100. |
+| V-08 | ⏸ Decisión de diseño | JWT sin estado de 8 h. Revocar = desactivar la cuenta. Sin cambios. |
+| V-09 | ✅ Resuelta | Contraseña nueva: letras **y** números, fuera de una lista de comunes, máx. 72 bytes. |
+| V-10 | ⏸ Decisión de diseño | Entrenador/Nutricionista leen a todos los socios. Revisar a escala. |
+| V-11 | ⏸ Endurecimiento pendiente | El transporte del token lo sigue eligiendo `X-Client-Type`. |
+
+Infraestructura hecha en código: cabeceras de seguridad en todas las respuestas
+(`nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy`,
+CSP `default-src 'none'`, HSTS cuando `COOKIE_SECURE=true`) y `/docs` +
+`/openapi.json` apagables con `DOCS_PUBLICOS=false`. Para producción queda:
+`DOCS_PUBLICOS=false`, `COOKIE_SECURE=true`, `MP_MODO_SIMULADO=false`, uvicorn
+con `--no-server-header`, y HTTPS delante.
+
+---
+
 ## Resumen ejecutivo
 
 | # | Severidad | Hallazgo | Verificación |

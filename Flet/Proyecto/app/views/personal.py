@@ -7,8 +7,9 @@
 
 import flet as ft
 from app.config import Colors, Routes, alpha
+from app.permisos import Accion
 from app.state import app_state
-from app.components.ui import (build_topbar, status_badge, primary_button,
+from app.components.ui import (build_topbar, confirm_dialog, status_badge, primary_button,
                                 input_field, show_snack, open_dialog, close_dialog)
 
 # Mapa turno → (color de texto, color de fondo translúcido)
@@ -45,6 +46,11 @@ class PersonalView:
     def __init__(self, page: ft.Page, router):
         self.page   = page
         self.router = router
+        # Espejo de PersonalView.tsx: el Recepcionista tiene la sección en
+        # LECTURA — ve a todos (necesita saber quién trabaja hoy) pero no
+        # edita ni da de alta/baja. Eso es del Dueño.
+        self.puede_editar = app_state.puede_editar(Routes.PERSONAL)
+        self.puede_alta_baja = app_state.puede(Accion.ALTA_BAJA_PERSONAL)
 
     def build(self) -> ft.Column:
         """Construye la vista con topbar y grilla de tarjetas de personal."""
@@ -56,7 +62,7 @@ class PersonalView:
             actions=[
                 primary_button("Agregar Empleado", ft.Icons.BADGE_ROUNDED,
                                on_click=self._open_form),
-            ]
+            ] if self.puede_alta_baja else []
         )
 
         # ResponsiveRow adapta la cantidad de columnas al ancho de la ventana:
@@ -87,6 +93,33 @@ class PersonalView:
         turno_c, turno_bg = TURNO_COLORS.get(p["turno"], (Colors.TEXT_SECONDARY, Colors.BG_INPUT))
         rol_icon  = ROL_ICONS.get(p["rol"], ft.Icons.PERSON_ROUNDED)
 
+        # Regla de FILA: nadie se da de baja a sí mismo aunque tenga el permiso
+        # (se dejaría afuera de un click). Misma regla que PersonalView.tsx.
+        puede_baja = (self.puede_alta_baja
+                      and p.get("id_persona") != app_state.get_user_id_persona())
+        estado_accion = []
+        if puede_baja:
+            estado_accion.append(ft.IconButton(
+                ft.Icons.PERSON_OFF_ROUNDED if p["activo"] else ft.Icons.RESTART_ALT_ROUNDED,
+                icon_color=Colors.TEXT_MUTED, icon_size=16,
+                tooltip="Dar de baja" if p["activo"] else "Reactivar",
+                on_click=lambda e, x=p: self._cambiar_estado(x),
+            ))
+
+        # "Contactar" abre el cliente de mail; sin mail cargado queda apagado.
+        email = p.get("email") or ""
+        contactar = ft.Container(
+            content=ft.Row([
+                ft.Icon(ft.Icons.EMAIL_OUTLINED, color=Colors.TEXT_SECONDARY, size=14),
+                ft.Text("Contactar", color=Colors.TEXT_SECONDARY, size=12),
+            ], spacing=4),
+            bgcolor=Colors.BG_SIDEBAR, border_radius=8,
+            padding=ft.Padding.symmetric(horizontal=10, vertical=6),
+            on_click=(lambda e, m=email: self.page.launch_url(f"mailto:{m}")) if email else None,
+            tooltip=f"Escribir a {email}" if email else "Sin email cargado",
+            opacity=1 if email else 0.4,
+        )
+
         return ft.Container(
             # col define el ancho responsivo de la tarjeta en el ResponsiveRow
             col={"xs": 12, "sm": 6, "md": 4, "lg": 3},
@@ -101,7 +134,8 @@ class PersonalView:
                     ),
                     ft.Container(expand=True),
                     status_badge(p["estado"]),  # Badge Activo/Inactivo
-                ]),
+                    *estado_accion,
+                ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 ft.Container(height=12),
                 # Nombre del empleado
                 ft.Text(p["nombre"], color=Colors.TEXT_PRIMARY, size=15,
@@ -124,9 +158,11 @@ class PersonalView:
                     padding=ft.Padding.symmetric(horizontal=10, vertical=5),
                 ),
                 ft.Container(height=16),
-                # Botones de acción: Editar y Contactar
+                # Botones de acción: Editar (sólo con acceso TOTAL) y Contactar.
+                # Con lectura queda únicamente Contactar: el Recepcionista
+                # necesita poder escribirle a un compañero, no editarle la ficha.
                 ft.Row([
-                    ft.Container(
+                    *([ft.Container(
                         content=ft.Row([
                             ft.Icon(ft.Icons.EDIT_ROUNDED, color=Colors.INFO, size=14),
                             ft.Text("Editar", color=Colors.INFO, size=12),
@@ -135,15 +171,8 @@ class PersonalView:
                         on_click=lambda e, x=p: self._open_form(e, x),
                         bgcolor=alpha(Colors.PRIMARY_VOLT, 0.10), border_radius=8,
                         padding=ft.Padding.symmetric(horizontal=10, vertical=6),
-                    ),
-                    ft.Container(
-                        content=ft.Row([
-                            ft.Icon(ft.Icons.EMAIL_OUTLINED, color=Colors.TEXT_SECONDARY, size=14),
-                            ft.Text("Contactar", color=Colors.TEXT_SECONDARY, size=12),
-                        ], spacing=4),
-                        bgcolor=Colors.BG_SIDEBAR, border_radius=8,
-                        padding=ft.Padding.symmetric(horizontal=10, vertical=6),
-                    ),
+                    )] if self.puede_editar else []),
+                    contactar,
                 ], spacing=8),
             ], spacing=4),
             bgcolor=Colors.BG_CARD,
@@ -281,6 +310,26 @@ class PersonalView:
         )
 
         open_dialog(self.page, dlg)
+
+    def _cambiar_estado(self, p: dict):
+        """Baja con confirmación; reactivar sin, porque es reversible."""
+        def aplicar(resultado: dict):
+            if not resultado["ok"]:
+                show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+                return
+            show_snack(self.page, resultado["mensaje"], Colors.SUCCESS)
+            self.router.navigate(Routes.PERSONAL)
+
+        if not p["activo"]:
+            aplicar(app_state.reactivar_empleado(p["id"]))
+            return
+        open_dialog(self.page, confirm_dialog(
+            self.page, f"¿Dar de baja a {p['nombre']}?",
+            "Deja de figurar como activo y su cuenta de acceso se desactiva. "
+            "Se puede reactivar.",
+            on_confirm=lambda: aplicar(app_state.baja_empleado(p["id"])),
+            texto_confirmar="Dar de baja",
+        ))
 
     @staticmethod
     def _texto(ref) -> str:

@@ -18,7 +18,10 @@ frontends.
 from datetime import date, datetime, time  # noqa: F401  (los usan los *Out)
 from enum import Enum
 
+import re
+
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic_core import PydanticCustomError
 
 from videos import id_youtube, video_local
 
@@ -35,6 +38,16 @@ class LoginRequest(BaseModel):
     password: str
 
 
+# Las más usadas que pasarían "letras y números". No pretende ser exhaustiva:
+# corta lo primero que prueba cualquiera.
+_PASSWORDS_COMUNES = {
+    "password1", "password123", "passw0rd", "contraseña1", "contrasena1",
+    "qwerty123", "abc12345", "abcd1234", "admin123", "admin1234", "usuario1",
+    "gimnasio1", "gimnasio123", "olimpos1", "olimpos123", "12345678a",
+    "a12345678", "iloveyou1", "welcome1", "letmein1", "1q2w3e4r", "q1w2e3r4",
+}
+
+
 class CambiarPasswordRequest(BaseModel):
     username: str
     password_actual: str
@@ -43,6 +56,28 @@ class CambiarPasswordRequest(BaseModel):
     # error lo arma FastAPI solo. 8 caracteres es lo que ya exige la PWA
     # (LARGO_MINIMO_PASSWORD en authService.ts).
     password_nueva: str = Field(min_length=8)
+
+    @field_validator("password_nueva")
+    @classmethod
+    def _password_razonable(cls, v: str) -> str:
+        """
+        V-09: sólo "8 caracteres" aceptaba `12345678` o `password`.
+
+        Letras Y números, fuera de la lista de las más usadas, y hasta 72 bytes
+        (bcrypt ignora lo que sigue: dos claves con los mismos 72 primeros
+        bytes serían la misma). PydanticCustomError y no ValueError para que el
+        mensaje llegue tal cual a las dos apps, sin el "Value error, " delante.
+        """
+        if not re.search(r"[^\W\d_]", v) or not re.search(r"\d", v):
+            raise PydanticCustomError(
+                "password_debil", "La contraseña tiene que tener letras y números.")
+        if v.strip().lower() in _PASSWORDS_COMUNES:
+            raise PydanticCustomError(
+                "password_comun", "Esa contraseña es de las más usadas. Elegí otra.")
+        if len(v.encode("utf-8")) > 72:
+            raise PydanticCustomError(
+                "password_larga", "La contraseña no puede superar los 72 caracteres.")
+        return v
 
 
 # =============================================================================
@@ -477,7 +512,10 @@ class CobrarRequest(BaseModel):
     id_socio: int
     id_tipo_membresia: int
     metodo: MetodoPago
-    monto_manual: float | None = Field(default=None, gt=0)
+    # ge=1 y allow_inf_nan=False: con gt=0 pasaban Infinity/NaN (500 al
+    # escribir en Postgres, V-05) y 0.0001, que redondeado quedaba un cobro de
+    # $0,00 con la membresía activada (V-06).
+    monto_manual: float | None = Field(default=None, ge=1, allow_inf_nan=False)
     numero_comprobante: str | None = None
     # Si el socio arrastra deudas, este cobro las salda además de renovar.
     saldar_deudas: bool = True

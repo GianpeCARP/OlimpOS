@@ -17,15 +17,18 @@ va a borrar y estas reglas tienen que sobrevivir del lado del servidor:
 
   - Un ÚNICO mensaje de error para usuario inexistente, inactivo, bloqueado o
     contraseña incorrecta. Distinguirlos le confirmaría a un atacante qué
-    usuarios existen.
-  - Cinco intentos fallidos y la cuenta se bloquea.
+    usuarios existen. Y el mismo TIEMPO: ver _HASH_DE_RELLENO.
+  - Cinco intentos fallidos y la cuenta queda trabada 15 minutos, más un tope
+    de fallos por IP. Ver limite_intentos.py (V-02/V-03/V-04 de
+    docs/vulnerabilidades a arreglar.md).
 """
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
+import limite_intentos as limite
 from auth import crear_token_acceso, hashear_password, verificar_password
 from cookies import borrar_cookies_sesion, setear_cookies_sesion
 from csrf import generar_token_csrf
@@ -57,28 +60,56 @@ def _rechazar() -> HTTPException:
     )
 
 
-def _registrar_intento_fallido(db: Session, usuario: Usuario) -> None:
+# V-03: el mensaje era único pero el TIEMPO delataba qué usuarios existen —
+# bcrypt (~200 ms) sólo corría si la cuenta existía. Con un usuario inexistente
+# se verifica igual contra este hash, así las dos respuestas tardan lo mismo.
+_HASH_DE_RELLENO = hashear_password("relleno-para-igualar-tiempos")
+
+
+def _ip(request: Request) -> str:
+    # La del socket y no X-Forwarded-For, que lo escribe el cliente. Ver
+    # limite_intentos.py.
+    return request.client.host if request.client else "desconocida"
+
+
+def _frenar_si_excede(ip: str) -> None:
+    if limite.ip_excedida(ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Demasiados intentos fallidos. Esperá unos minutos y volvé a intentar.",
+        )
+
+
+def _registrar_intento_fallido(db: Session, usuario: Usuario, ip: str) -> None:
     """
-    Suma un intento fallido y bloquea la cuenta al llegar al tope.
+    Suma un intento fallido y, al llegar al tope, traba la cuenta 15 minutos.
+
+    Antes la BLOQUEABA para siempre (`bloqueado=true`), y eso era el DoS de
+    V-02: cinco contraseñas mal y el único Dueño quedaba afuera hasta que
+    alguien tocara la base. Ahora se traba un rato y el contador vuelve a cero.
+    `Usuario.bloqueado` queda para el bloqueo que decide una persona.
 
     El contador se guarda con commit aunque la request termine en 401: si se
-    perdiera al hacer rollback, el bloqueo nunca llegaría a dispararse y la
-    cuenta quedaría abierta a fuerza bruta.
-
-    Desbloquear todavía es manual (el router de usuarios no existe):
-        UPDATE "Usuario" SET bloqueado=false, intentos_fallidos=0
-        WHERE username='...';
+    perdiera al hacer rollback, el freno nunca llegaría a dispararse.
     """
+    limite.registrar_fallo_ip(ip)
     usuario.intentos_fallidos = (usuario.intentos_fallidos or 0) + 1
     if usuario.intentos_fallidos >= MAX_INTENTOS_FALLIDOS:
-        usuario.bloqueado = True
+        limite.trabar_cuenta(usuario.username)
+        usuario.intentos_fallidos = 0
     db.commit()
+
+
+def _cuenta_no_disponible(usuario: Usuario | None, username: str) -> bool:
+    return (usuario is None or not usuario.activo or usuario.bloqueado
+            or limite.cuenta_trabada(username))
 
 
 @router.post("/login", response_model=LoginResponse)
 def login(
     datos: LoginRequest,
     respuesta: Response,
+    request: Request,
     db: Session = Depends(get_db),
     x_client_type: str | None = Header(default=None),
 ):
@@ -117,13 +148,18 @@ def login(
             detail="Completá usuario y contraseña",
         )
 
+    ip = _ip(request)
+    _frenar_si_excede(ip)
+
     usuario = db.query(Usuario).filter(Usuario.username == username).first()
 
-    if usuario is None or not usuario.activo or usuario.bloqueado:
+    if _cuenta_no_disponible(usuario, username):
+        verificar_password(datos.password, _HASH_DE_RELLENO)  # mismo tiempo (V-03)
+        limite.registrar_fallo_ip(ip)
         raise _rechazar()
 
     if not verificar_password(datos.password, usuario.password_hash):
-        _registrar_intento_fallido(db, usuario)
+        _registrar_intento_fallido(db, usuario, ip)
         raise _rechazar()
 
     # --- Contraseña correcta ------------------------------------------------
@@ -241,7 +277,8 @@ def sesion_actual(sesion: Sesion = Depends(obtener_sesion)):
 
 
 @router.post("/cambiar-password", response_model=MensajeResponse)
-def cambiar_password(datos: CambiarPasswordRequest, db: Session = Depends(get_db)):
+def cambiar_password(datos: CambiarPasswordRequest, request: Request,
+                     db: Session = Depends(get_db)):
     """
     Define una contraseña nueva, validando siempre la actual.
 
@@ -255,16 +292,21 @@ def cambiar_password(datos: CambiarPasswordRequest, db: Session = Depends(get_db
     login normal y quede probada.
     """
     username = datos.username.strip()
+    ip = _ip(request)
+    _frenar_si_excede(ip)
     usuario = db.query(Usuario).filter(Usuario.username == username).first()
 
     # Mismo trato que en el login: no se distingue entre cuenta inexistente y
-    # contraseña equivocada. Este endpoint es público, así que si respondiera
-    # distinto se convertiría en un detector de usuarios válidos.
-    if usuario is None or not usuario.activo or usuario.bloqueado:
+    # contraseña equivocada, ni por el mensaje ni por el tiempo. Este endpoint
+    # es público, así que si respondiera distinto se convertiría en un
+    # detector de usuarios válidos.
+    if _cuenta_no_disponible(usuario, username):
+        verificar_password(datos.password_actual, _HASH_DE_RELLENO)
+        limite.registrar_fallo_ip(ip)
         raise _rechazar()
 
     if not verificar_password(datos.password_actual, usuario.password_hash):
-        _registrar_intento_fallido(db, usuario)
+        _registrar_intento_fallido(db, usuario, ip)
         raise _rechazar()
 
     if verificar_password(datos.password_nueva, usuario.password_hash):

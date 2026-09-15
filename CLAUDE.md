@@ -345,11 +345,13 @@ Las contraseñas de esas cuentas —y de la del dueño— viven en
 `backend/CONTRASEÑAS PARA TESTEO Y ACTUALIZADAS.txt`. **Anotá ahí toda cuenta
 nueva**: el alta devuelve la contraseña temporal UNA sola vez.
 
-> A los **5 intentos fallidos la cuenta se bloquea**, y el mensaje es idéntico
-> al de una contraseña equivocada (a propósito, para no revelar el estado de una
-> cuenta ajena). Desde afuera no se distingue, así que si el login falla y estás
-> seguro de la clave, mirá la fila:
-> `SELECT username, bloqueado, intentos_fallidos FROM "Usuario";`
+> A los **5 intentos fallidos la cuenta queda trabada 15 minutos** (en memoria,
+> `backend/limite_intentos.py`), y **20 fallos desde la misma IP en 10 minutos
+> dan 429** — ojo al correr pruebas de login en ráfaga: todo llega desde
+> 127.0.0.1. Reiniciar el backend limpia las dos cosas; "Desbloquear" en
+> Usuarios destraba la cuenta. El mensaje es idéntico al de una contraseña
+> equivocada (a propósito). La columna `bloqueado` ya sólo la usa el bloqueo
+> manual: `SELECT username, bloqueado, intentos_fallidos FROM "Usuario";`
 
 > **Casi todos los bugs de este proyecto aparecieron CORRIENDO, no leyendo.**
 > `python -m compileall` compila pero no ejecuta: un import faltante pasa el

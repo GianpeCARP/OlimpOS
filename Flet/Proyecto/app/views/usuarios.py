@@ -84,10 +84,11 @@ class UsuariosView:
         topbar = build_topbar(
             "Usuarios",
             "Gestión de accesos al sistema",
+            # Espejo de UsuariosView.tsx: crear cuentas pide gestionUsuarios.
             actions=[
                 primary_button("Nueva Cuenta", ft.Icons.PERSON_ADD_ROUNDED,
                                on_click=self._open_form),
-            ]
+            ] if app_state.puede(permisos.Accion.GESTION_USUARIOS) else []
         )
 
         # ── Banner de advertencia ────────────────────────────────────────────
@@ -202,9 +203,13 @@ class UsuariosView:
         es_cuenta_propia = (u.get("usuario") == app_state.get_user_username()
                             and not app_state.puede_editar_duenos())
 
+        # Sin la acción gestionUsuarios la fila es de sólo lectura, sin ningún
+        # botón (UsuarioRow.tsx: puedeGestionar).
+        puede_gestionar = app_state.puede(permisos.Accion.GESTION_USUARIOS)
+
         acciones = []
 
-        if not es_cuenta_protegida:
+        if puede_gestionar and not es_cuenta_protegida:
             acciones.append(
                 ft.IconButton(ft.Icons.KEY_ROUNDED, icon_color=Colors.WARNING,
                               icon_size=18, tooltip="Resetear contraseña",
@@ -216,14 +221,14 @@ class UsuariosView:
         # hace nada, y tenerlo siempre a la vista invita a apretarlo pensando
         # que "arregla" un problema distinto (una cuenta desactivada, por
         # ejemplo, que se arregla con el botón de al lado).
-        if bloqueado and not es_cuenta_protegida and not es_cuenta_propia:
+        if puede_gestionar and bloqueado and not es_cuenta_protegida and not es_cuenta_propia:
             acciones.append(
                 ft.IconButton(ft.Icons.LOCK_OPEN_ROUNDED, icon_color=Colors.INFO,
                               icon_size=18, tooltip="Desbloquear",
                               on_click=lambda e, x=u: self._desbloquear(x))
             )
 
-        if not es_cuenta_protegida and not es_cuenta_propia:
+        if puede_gestionar and not es_cuenta_protegida and not es_cuenta_propia:
             acciones.append(
                 ft.IconButton(
                     ft.Icons.BLOCK_ROUNDED if activo else ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED,
@@ -237,8 +242,8 @@ class UsuariosView:
         # Sin botones queda una celda vacía y eso se lee como un error de la
         # app. Se dice por qué, que es la diferencia entre "no se puede" y
         # "algo se rompió".
-        if not acciones:
-            motivo = ("Sólo un dueño" if es_cuenta_protegida else "Tu propia cuenta")
+        if not acciones and puede_gestionar:
+            motivo =("Sólo un dueño" if es_cuenta_protegida else "Tu propia cuenta")
             acciones.append(
                 ft.Text(motivo, color=Colors.TEXT_MUTED, size=11,
                         tooltip=("Sólo un dueño puede operar sobre la cuenta de "

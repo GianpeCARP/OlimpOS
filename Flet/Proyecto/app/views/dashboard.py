@@ -12,6 +12,7 @@
 
 import flet as ft
 from app.config import Colors, Fonts, Radius, Routes, alpha
+from app.permisos import Accion
 from app.state import app_state
 from app.components.ui import (build_topbar, stat_card, section_card,
                                status_badge, primary_button, divider_row)
@@ -26,8 +27,8 @@ ANCHO_ACCESOS = 240
 # tocar esta lista y nada más.
 #
 # `requiere_ingresos` marca la de facturación: el Recepcionista ve el dashboard
-# "parcial" (todas menos esa). Hoy no se filtra porque los permisos entran con
-# la API — queda declarado para que el filtro sea una línea cuando llegue.
+# "parcial" (todas menos esa), igual que DashboardView.tsx. Se filtra con la
+# acción verIngresos en build().
 TARJETAS = [
     {"clave": "socios_activos", "titulo": "Socios activos",  "icono": ft.Icons.GROUP_ROUNDED,
      "color": Colors.PRIMARY_VOLT,  "comparacion": "vs mes anterior", "formato": "numero"},
@@ -74,18 +75,22 @@ class DashboardView:
         # get_socios_recientes en state.py.
         socios    = app_state.get_socios_recientes()[:4]
 
+        # Atajo al alta de socios: sólo con la acción (DashboardView.tsx).
         topbar = build_topbar(
             "Dashboard",
             f"Hola, {app_state.get_user_name()}",
             actions=[
                 primary_button("Nuevo socio", ft.Icons.PERSON_ADD_ROUNDED,
                                on_click=lambda e: self.router.navigate(Routes.SOCIOS)),
-            ],
+            ] if app_state.puede(Accion.ALTA_BAJA_SOCIOS) else [],
         )
 
         # ── 1. Métricas ──────────────────────────────────────────────────────
+        ver_ingresos = app_state.puede(Accion.VER_INGRESOS)
         tarjetas = []
         for t in TARJETAS:
+            if t.get("requiere_ingresos") and not ver_ingresos:
+                continue
             m = stats[t["clave"]]
             tarjetas.append(
                 stat_card(
@@ -127,7 +132,10 @@ class DashboardView:
                 ft.Text("Accesos rápidos", color=Colors.TEXT_MAIN, size=18,
                         weight=ft.FontWeight.W_600, font_family=Fonts.TITLE),
                 ft.Container(height=6),
-                *[self._acceso(a) for a in ACCESOS_RAPIDOS],
+                # Un atajo a una sección que el rol no puede abrir sólo lo
+                # llevaría a un rechazo: se filtran como en la PWA.
+                *[self._acceso(a) for a in ACCESOS_RAPIDOS
+                  if app_state.puede_ver(a["ruta"])],
             ], spacing=2),
             bgcolor=Colors.SURFACE_CARD,
             border_radius=Radius.MD,

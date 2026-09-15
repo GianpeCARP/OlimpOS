@@ -336,7 +336,6 @@ async def webhook_mercadopago(
     return MensajeResponse(mensaje=resultado)
 
 
-@router.post("/portal/mi-cuota/pagar/{id_pago}/simular", response_model=MensajeResponse)
 def simular_acreditacion(
     id_pago: int,
     aprobado: bool = True,
@@ -371,3 +370,13 @@ def simular_acreditacion(
         monto_mp=float(pago.monto),
     )
     return MensajeResponse(mensaje=f"[SIMULADO] {resultado}")
+
+
+# V-01 (docs/vulnerabilidades a arreglar.md): con este atajo un socio se
+# acreditaba su propio pago sin pagar. Ahora la ruta SÓLO SE REGISTRA si el
+# backend arranca en modo simulado: en un despliegue normal no existe (404 de
+# FastAPI, ni siquiera figura en /docs), en vez de existir y apagarse por una
+# bandera leída en cada pedido. El chequeo de adentro queda como segunda capa.
+if mp.modo_simulado():
+    router.post("/portal/mi-cuota/pagar/{id_pago}/simular",
+                response_model=MensajeResponse)(simular_acreditacion)
