@@ -524,6 +524,18 @@ def asignar_dieta(id_dieta: int, id_socio: int) -> dict:
     return _post(f"/nutricion/{id_dieta}/asignar", {"id_socio": id_socio})
 
 
+def editar_dieta(id_dieta: int, datos: dict) -> dict:
+    return _put(f"/nutricion/{id_dieta}", datos)
+
+
+def baja_dieta(id_dieta: int) -> dict:
+    return _post(f"/nutricion/{id_dieta}/baja")
+
+
+def reactivar_dieta(id_dieta: int) -> dict:
+    return _post(f"/nutricion/{id_dieta}/reactivar")
+
+
 # =============================================================================
 # COBROS
 # =============================================================================

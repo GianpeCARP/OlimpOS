@@ -394,14 +394,19 @@ export function MiRutinaView() {
                       llega hasta acá ya sabe qué le toca hoy. Enterrarlo al
                       final obligaría a scrollear siete ejercicios para
                       empezar. */}
-                  <button
-                    type="button"
-                    onClick={() => setEntrenando(dia)}
-                    className="mb-4 flex w-full items-center justify-center gap-2 rounded-lg bg-primary-volt py-3.5 font-body text-base font-semibold whitespace-nowrap text-surface-base active:opacity-90"
-                  >
-                    <Play size={18} />
-                    Comenzar entrenamiento
-                  </button>
+                  {/* Sólo en el celular: el circuito es para usarlo parado en el
+                      gimnasio con el teléfono en la mano. En la compu se mira
+                      la rutina, no se entrena. Mismo criterio que el contador. */}
+                  {puedeContar && (
+                    <button
+                      type="button"
+                      onClick={() => setEntrenando(dia)}
+                      className="mb-4 flex w-full items-center justify-center gap-2 rounded-lg bg-primary-volt py-3.5 font-body text-base font-semibold whitespace-nowrap text-surface-base active:opacity-90"
+                    >
+                      <Play size={18} />
+                      Comenzar entrenamiento
+                    </button>
+                  )}
 
                   <div className="flex flex-col divide-y divide-border-idle">
                     {dia.ejercicios.map((ejercicio) => (

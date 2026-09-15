@@ -378,12 +378,12 @@ class RutinasView:
             items.remove(it)
             render()
 
-        def campo(it: dict, etiqueta: str, clave: str, ancho=None) -> ft.TextField:
+        def campo(it: dict, etiqueta: str, clave: str, expand=None) -> ft.TextField:
             def cambio(e, it=it, clave=clave):
                 # Sin re-render: se guarda el valor y el foco no se pierde.
                 it[clave] = e.control.value or ""
             return ft.TextField(
-                label=etiqueta, value=it[clave], width=ancho, expand=ancho is None,
+                label=etiqueta, value=it[clave], expand=expand,
                 dense=True, text_size=13, color=Colors.TEXT_MAIN,
                 label_style=ft.TextStyle(color=Colors.TEXT_MUTED, size=12),
                 bgcolor=Colors.BG_CARD, border_color=Colors.BORDER,
@@ -412,13 +412,17 @@ class RutinasView:
                                       icon_color=Colors.STATUS_DANGER, tooltip="Quitar",
                                       on_click=lambda e, it=it: quitar(it)),
                     ], spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    # Sin wrap=True: una Row que envuelve con TextFields adentro
+                    # no se dibuja en Flet 0.84 y quedaba un bloque GRIS enorme
+                    # en lugar de los campos (se vio corriéndolo en el
+                    # navegador). Los cuatro se reparten el ancho con expand.
                     ft.Row([
-                        campo(it, "Series", "series", 90),
-                        campo(it, "Reps", "repeticiones", 100),
-                        campo(it, "Peso (kg)", "peso", 100),
-                        campo(it, "Descanso (s)", "descanso", 120),
-                    ], spacing=6, wrap=True),
-                    ft.Row([campo(it, "Observaciones", "observaciones")]),
+                        campo(it, "Series", "series", 1),
+                        campo(it, "Reps", "repeticiones", 1),
+                        campo(it, "Peso (kg)", "peso", 1),
+                        campo(it, "Descanso (s)", "descanso", 1),
+                    ], spacing=6),
+                    campo(it, "Observaciones", "observaciones"),
                 ], spacing=6, tight=True),
                 bgcolor=Colors.BG_INPUT,
                 border=ft.Border.all(1, Colors.BORDER),

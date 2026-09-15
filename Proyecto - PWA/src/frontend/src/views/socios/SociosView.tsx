@@ -11,6 +11,7 @@ import {
 } from '../../services/sociosService';
 import { useUiStore } from '../../store/uiStore';
 import { useAccesoSeccion, usePuedeAccion } from '../../hooks/usePermisos';
+import { useAuthStore } from '../../store/authStore';
 import { EntrenadoresModal } from './EntrenadoresModal';
 import { PatologiasModal } from './PatologiasModal';
 import { SocioFormModal } from './SocioFormModal';
@@ -76,11 +77,15 @@ export function SociosView() {
   // docstring de routers/patologias.py.
   const puedeVerHistorialMedico = usePuedeAccion('verHistorialMedico');
   // Asignar un entrenador pide `gestionRutinas` y NO `altaBajaSocios`: no es
-  // un dato administrativo del socio, es una decisión de entrenamiento. Con
-  // esa acción la tienen el Dueño, el Recepcionista y el propio Entrenador,
-  // que es quien toma un cliente nuevo. Ver el bloque ENTRENADOR A CARGO de
-  // sociosService.
-  const puedeGestionarRutinas = usePuedeAccion('gestionRutinas');
+  // un dato administrativo del socio, es una decisión de entrenamiento.
+  //
+  // Pero al ENTRENADOR no se le ofrece: quién entrena a quién lo deciden el
+  // Dueño y el Recepcionista. Él abre el modal y ve los entrenadores del
+  // socio, sin asignar ni finalizar. (El backend además le impide tocar
+  // asignaciones que no sean suyas.)
+  const roles = useAuthStore((s) => s.roles);
+  const puedeAsignarEntrenadores =
+    usePuedeAccion('gestionRutinas') && (roles.includes('dueno') || roles.includes('recepcionista'));
 
   const [socios, setSocios] = useState<SocioListado[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -341,7 +346,7 @@ export function SociosView() {
       {entrenadores && (
         <EntrenadoresModal
           socio={entrenadores}
-          puedeGestionar={puedeGestionarRutinas}
+          puedeGestionar={puedeAsignarEntrenadores}
           onClose={() => setEntrenadores(null)}
         />
       )}

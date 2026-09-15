@@ -4,7 +4,7 @@
 
 import flet as ft
 from app.config import Colors, Radius, Routes  # Paleta, radios y rutas
-from app.permisos import Accion                # Para el guard del historial médico
+from app.permisos import Accion                # Qué botones se dibujan (espejo de SociosView.tsx)
 from app.state import app_state               # Estado global con los datos de socios
 # Componentes reutilizables del sistema de diseño
 from app.components.ui import (build_topbar, status_badge, primary_button,
@@ -40,10 +40,13 @@ class SociosView:
         topbar = build_topbar(
             "Socios",
             f"{len(socios)} socios registrados",
+            # Espejo de SociosView.tsx: el alta pide la acción altaBajaSocios.
+            # Entrenador y Nutricionista ven la grilla (necesitan saber a quién
+            # le asignan algo) pero sin ningún botón de gestión.
             actions=[
                 primary_button("Nuevo Socio", ft.Icons.PERSON_ADD_ROUNDED,
-                               on_click=self._open_form),  # Abre el modal de creación
-            ]
+                               on_click=self._open_form),
+            ] if app_state.puede(Accion.ALTA_BAJA_SOCIOS) else []
         )
 
         # ── Barra de búsqueda + chips de filtro ──────────────────────────────
@@ -246,8 +249,11 @@ class SociosView:
                 ft.Container(content=status_badge(s["estado"]), expand=2, alignment=ft.Alignment.CENTER_LEFT),
                 ft.Text(s["vence"], color=Colors.TEXT_SECONDARY, size=13, expand=2),
                 ft.Row([
-                    ft.IconButton(ft.Icons.EDIT_ROUNDED, icon_color=Colors.INFO, icon_size=18, tooltip="Editar",
-                                  on_click=lambda e, x=s: self._open_form(e, x)),
+                    # Editar exige acceso TOTAL a la sección (SocioTableRow.tsx).
+                    *([ft.IconButton(ft.Icons.EDIT_ROUNDED, icon_color=Colors.INFO, icon_size=18,
+                                     tooltip="Editar",
+                                     on_click=lambda e, x=s: self._open_form(e, x))]
+                      if app_state.puede_editar(Routes.SOCIOS) else []),
                     ft.IconButton(ft.Icons.FITNESS_CENTER_ROUNDED, icon_color=Colors.PRIMARY_VOLT,
                                   icon_size=18, tooltip="Entrenadores a cargo",
                                   on_click=lambda e, x=s: self._entrenadores(x)),
@@ -265,13 +271,15 @@ class SociosView:
                     # es LÓGICA —la fila queda, con su historial de pagos y
                     # asistencias— y se puede deshacer. Un socio dado de baja
                     # muestra el botón de volver a activarlo, no uno de borrar.
-                    (ft.IconButton(ft.Icons.PERSON_OFF_ROUNDED, icon_color=Colors.DANGER,
-                                   icon_size=18, tooltip="Dar de baja",
-                                   on_click=lambda e, x=s: self._confirmar_baja(x))
-                     if s["estado"] != "Dado de baja" else
-                     ft.IconButton(ft.Icons.PERSON_ADD_ALT_1_ROUNDED, icon_color=Colors.SUCCESS,
-                                   icon_size=18, tooltip="Reactivar",
-                                   on_click=lambda e, x=s: self._reactivar(x))),
+                    # Sólo con la acción altaBajaSocios.
+                    *([ft.IconButton(ft.Icons.PERSON_OFF_ROUNDED, icon_color=Colors.DANGER,
+                                     icon_size=18, tooltip="Dar de baja",
+                                     on_click=lambda e, x=s: self._confirmar_baja(x))
+                       if s["estado"] != "Dado de baja" else
+                       ft.IconButton(ft.Icons.PERSON_ADD_ALT_1_ROUNDED, icon_color=Colors.SUCCESS,
+                                     icon_size=18, tooltip="Reactivar",
+                                     on_click=lambda e, x=s: self._reactivar(x))]
+                      if app_state.puede(Accion.ALTA_BAJA_SOCIOS) else []),
                 ], expand=3),
             ]),
             padding=ft.Padding.symmetric(horizontal=20, vertical=12),
@@ -573,7 +581,14 @@ class SociosView:
         entrenaba en marzo.
         """
         asignaciones = app_state.get_entrenadores_de_socio(socio["id"])
-        disponibles = app_state.get_entrenadores()
+
+        # Asignar y finalizar sólo el Dueño y el Recepcionista. El Entrenador
+        # tiene gestionRutinas pero quién entrena a quién no lo decide él: ve
+        # la lista sin controles. Espejo de SociosView.tsx.
+        roles = app_state.get_user_roles()
+        puede_gestionar = (app_state.puede(Accion.GESTION_RUTINAS)
+                           and ("dueno" in roles or "recepcionista" in roles))
+        disponibles = app_state.get_entrenadores() if puede_gestionar else []
 
         # Los que ya están a cargo no se vuelven a ofrecer: el backend lo
         # rechaza con un 409 y hacerle elegir algo que va a fallar es hacerle
@@ -611,7 +626,7 @@ class SociosView:
                     ft.Icons.CLOSE_ROUNDED, icon_color=Colors.TEXT_MUTED, icon_size=16,
                     tooltip="Terminar la relación (queda en el historial)",
                     on_click=lambda e, i=a["id"]: finalizar(i),
-                )] if a["activa"] else [
+                )] if a["activa"] and puede_gestionar else [] if a["activa"] else [
                     ft.Text("finalizada", color=Colors.TEXT_MUTED, size=11)
                 ]),
             ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER))
@@ -629,7 +644,9 @@ class SociosView:
             ft.Container(height=12),
         ]
 
-        if elegibles:
+        if not puede_gestionar:
+            pass
+        elif elegibles:
             contenido += [
                 ft.Divider(height=1, color=Colors.BORDER),
                 ft.Container(height=12),

@@ -507,9 +507,38 @@ class AppState:
                 "calorias": d.get("calorias_diarias") or 0,
                 "objetivo": d.get("objetivo") or "—",
                 "asignados": d.get("asignados", 0),
+                "descripcion": d.get("descripcion") or "",
+                "id_nutricionista": d.get("id_nutricionista"),
+                "nutricionista": d.get("nutricionista") or "—",
+                "activo": d.get("activo", True),
             }
             for d in datos
         ]
+
+    def get_comidas_dieta(self, id_dieta: int) -> list[dict] | None:
+        """
+        Las comidas reales del plan, ya ordenadas por día y momento (el orden lo
+        pone el backend: alfabético pondría Almuerzo antes que Desayuno).
+        None si no se pudo traer.
+        """
+        d = self._datos(api_client.obtener_dieta(id_dieta), None)
+        if d is None:
+            return None
+        return [
+            {"dia": c.get("dia"), "momento": c.get("momento") or "",
+             "nombre": c.get("nombre") or "", "descripcion": c.get("descripcion") or "",
+             "calorias": c.get("calorias")}
+            for c in d.get("comidas", [])
+        ]
+
+    def editar_dieta(self, id_dieta: int, datos: dict) -> dict:
+        return self._resultado(api_client.editar_dieta(id_dieta, datos), "Plan actualizado.")
+
+    def baja_dieta(self, id_dieta: int) -> dict:
+        return self._resultado(api_client.baja_dieta(id_dieta), "Plan dado de baja.")
+
+    def reactivar_dieta(self, id_dieta: int) -> dict:
+        return self._resultado(api_client.reactivar_dieta(id_dieta), "Plan reactivado.")
 
     # ── Dashboard ─────────────────────────────────────────────────────────────
 
