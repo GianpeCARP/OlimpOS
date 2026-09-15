@@ -259,6 +259,17 @@ for nombre, grupo, maquina in ejercicios_base:
         ids_ejercicios[nombre] = r["id_ejercicio"]
 print(f"   {len(ids_ejercicios)} ejercicios en el catalogo")
 
+# Uno CON video, para ver "Ver técnica". El link es de un short del canal de
+# prueba (@JulienLEPRETRE): si backend/demonio_videos.py está corriendo lo baja
+# solo, y si el archivo ya estaba en /videos el botón aparece al instante.
+s, r = pedir("POST", "/rutinas/ejercicios", {
+    "nombre": "Sentadilla", "grupo_muscular": "Piernas", "requiere_maquina": False,
+    "descripcion": "Pies al ancho de hombros, espalda neutra, bajar hasta paralelo.",
+    "url_video": "https://www.youtube.com/watch?v=dsCuiccYNGs"}, tok=STAFF)
+if s == 201:
+    ids_ejercicios["Sentadilla"] = r["id_ejercicio"]
+    print("   + 'Sentadilla' con video de técnica")
+
 # El dueno no es entrenador, asi que Rutina.id_entrenador —que es NOT NULL—
 # hay que mandarlo explicito. Para el, elegir el entrenador a cargo no es
 # suplantar a nadie: es delegar. Lo explica RutinaCrear en schemas.py.
@@ -270,6 +281,7 @@ plan = [
     ("Prensa 45",            1, 2, 3, "12",   80.0, 30, None),
     ("Peso muerto rumano",   1, 3, 3, "10-12", 30.0, 45,
      "Espalda recta. Si sentis tiron lumbar, bajá el peso."),
+    ("Sentadilla",           1, 4, 3, "10",   None, 45, None),
     ("Press banca",          2, 1, 4, "8",    35.0, 45, None),
     ("Aperturas con mancuernas", 2, 2, 3, "12", 10.0, 30, None),
     ("Remo con barra",       2, 3, 3, "10",   30.0, 40, None),
@@ -361,6 +373,94 @@ if plan_mensual and "Juan" in ids_socios and "Verano 2026" in ids_promos:
     else:
         print(f"   {s}  {cobro.get('detail')}")
 
+# --- Actividades ------------------------------------------------------------
+# Sin esto Cobros no tiene abonos ni clases sueltas que cobrar y Recepción no
+# tiene turnos que mostrar. Los horarios de HOY caen en las próximas horas a
+# propósito: el panel del mostrador sólo muestra lo que empieza dentro de 6 h.
+print("\n8. Actividades, planes, horarios y turnos")
+from datetime import datetime  # noqa: E402
+
+actividades_demo = [
+    ("Yoga", "Clase guiada de 60 minutos. Traer mat.", 15, [
+        ("8 clases al mes", "POR_MES", 8, 18000),
+        ("2 por semana", "POR_SEMANA", 2, 6000),
+        ("Clase suelta", "CLASE_SUELTA", 1, 3500),
+    ]),
+    ("Funcional", "Circuito de alta intensidad en grupo.", 20, [
+        ("12 clases al mes", "POR_MES", 12, 22000),
+        ("Clase suelta", "CLASE_SUELTA", 1, 4000),
+    ]),
+]
+ids_act, planes_act = {}, {}
+for nombre, desc, cupo, planes_def in actividades_demo:
+    s, r = pedir("POST", "/actividades", {
+        "nombre": nombre, "descripcion": desc, "cupo_default": cupo,
+        "minutos_tolerancia": 15, "horas_anticipacion_cancelacion": 2}, tok=STAFF)
+    if s != 201:
+        print(f"   {s}  {nombre}: {r.get('detail')}")
+        continue
+    ids_act[nombre] = r["id_actividad"]
+    for pnombre, tipo, cantidad, precio in planes_def:
+        s2, p = pedir("POST", f"/actividades/{r['id_actividad']}/planes", {
+            "nombre": pnombre, "tipo_limite": tipo, "cantidad": cantidad,
+            "precio": precio}, tok=STAFF)
+        if s2 == 201:
+            planes_act[(nombre, pnombre)] = p["id_plan_actividad"]
+    print(f"   {nombre}: {len(planes_def)} planes")
+
+ahora = datetime.now()
+hoy_iso = HOY.isoweekday()
+hora_1 = f"{min(ahora.hour + 1, 22):02d}:00"
+hora_2 = f"{min(ahora.hour + 3, 23):02d}:00"
+horarios_demo = [
+    ("Yoga", hoy_iso, hora_1, 15),          # hoy, para el panel de Recepción
+    ("Funcional", hoy_iso, hora_2, 20),     # hoy, más tarde
+    ("Yoga", 1, "19:00", 15), ("Yoga", 3, "19:00", 15),
+    ("Funcional", 2, "08:00", 20), ("Funcional", 4, "08:00", 20),
+]
+for nombre, dia, hora, cupo in horarios_demo:
+    if nombre not in ids_act:
+        continue
+    s, r = pedir("POST", "/actividades/horarios", {
+        "id_actividad": ids_act[nombre], "id_sede": 1, "dia_semana": dia,
+        "hora": hora, "cupo": cupo}, tok=STAFF)
+    if s not in (201, 409):
+        print(f"   {s}  horario {nombre} {dia} {hora}: {r.get('detail')}")
+print(f"   {len(horarios_demo)} horarios (hoy a las {hora_1} y {hora_2})")
+
+s, turnos_hoy = pedir("GET", f"/actividades/turnos?desde={HOY.isoformat()}&hasta={HOY.isoformat()}",
+                      tok=STAFF)
+turnos_hoy = turnos_hoy if isinstance(turnos_hoy, list) else []
+
+
+def turno_de_hoy(actividad):
+    return next((t for t in turnos_hoy if t.get("id_actividad") == ids_act.get(actividad)), None)
+
+
+# Juan (con membresía, del paso 7) compra un abono de Yoga y se anota hoy.
+if "Juan" in ids_socios and ("Yoga", "8 clases al mes") in planes_act:
+    s, r = pedir("POST", f"/actividades/planes/{planes_act[('Yoga', '8 clases al mes')]}/comprar",
+                 {"id_socio": ids_socios["Juan"], "metodo": "EFECTIVO"}, tok=STAFF)
+    print(f"   Juan compra 'Yoga 8 clases al mes': {s}")
+    t = turno_de_hoy("Yoga")
+    if s == 201 and t:
+        s2, r2 = pedir("POST", f"/actividades/turnos/{t['id_turno']}/reservar",
+                       {"id_socio": ids_socios["Juan"]}, tok=STAFF)
+        print(f"   Juan anotado en Yoga de hoy: {s2}")
+
+# Lucía paga la membresía y una clase suelta de Funcional para hoy.
+if "Lucia" in ids_socios and plan_mensual:
+    s, _ = pedir("POST", "/cobros", {"id_socio": ids_socios["Lucia"],
+                                     "id_tipo_membresia": plan_mensual["id_tipo_membresia"],
+                                     "metodo": "DEBITO"}, tok=STAFF)
+    print(f"   Lucia paga la membresía: {s}")
+    t = turno_de_hoy("Funcional")
+    if s == 201 and t:
+        s2, r2 = pedir("POST", f"/actividades/turnos/{t['id_turno']}/clase-suelta",
+                       {"id_socio": ids_socios["Lucia"], "metodo": "EFECTIVO"}, tok=STAFF)
+        print(f"   Lucia clase suelta de Funcional hoy: {s2}"
+              + ("" if s2 == 201 else f" {r2.get('detail') if isinstance(r2, dict) else r2}"))
+
 # --- Resumen ----------------------------------------------------------------
 print("\n" + "=" * 74)
 print("CUENTAS (anotalas en CONTRASEÑAS PARA TESTEO Y ACTUALIZADAS.txt)")
@@ -384,7 +484,10 @@ print("            fecha y dada de baja. Con rita.lopez el botón NO aparece,")
 print("            pero SÍ el desplegable de promociones al cobrar.")
 print("  Cobros -> elegí a Juan y una promoción: aparece el renglón con las")
 print("            tres cifras (lista, final y cuánto ahorra).")
-print("  Portal -> Mi rutina -> 'Comenzar entrenamiento': el CIRCUITO, a")
-print("            pantalla completa. Los descansos son de 30-45s para no")
-print("            tener que esperar mientras se prueba.")
+print("  Portal -> Mi rutina -> 'Comenzar entrenamiento' (sólo en celular): el")
+print("            CIRCUITO, a pantalla completa. Descansos de 30-45s.")
+print("  Mi rutina -> Día 1 -> 'Sentadilla' -> 'Ver técnica' (video).")
+print("  Recepción -> dos turnos de hoy (Yoga con Juan anotado, Funcional con")
+print("            Lucía por clase suelta).")
+print("  Cobros -> Actividades: abonos y clase suelta de Yoga y Funcional.")
 print("=" * 74)
