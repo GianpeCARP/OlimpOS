@@ -365,6 +365,11 @@ class TipoBaja(str, Enum):
 class BajaRequest(BaseModel):
     tipo: TipoBaja = TipoBaja.VOLUNTARIA
     motivo: str | None = None
+    # True = dar de baja YA aunque tenga la cuota paga (una expulsión, por
+    # ejemplo): pierde los días que le quedaban. Por defecto la baja respeta el
+    # período pago y queda programada (bajas.py). Sólo existe para el personal:
+    # la baja que pide el socio desde la app siempre respeta lo que pagó.
+    inmediata: bool = False
 
 
 class SocioOut(BaseModel):

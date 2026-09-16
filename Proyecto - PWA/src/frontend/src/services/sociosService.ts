@@ -394,10 +394,21 @@ export async function actualizarSocio(
 //
 // 'ADMINISTRATIVA' porque acá la inicia el staff, no el socio.
 
-export async function darDeBajaSocio(idSocio: number, motivo?: string): Promise<SocioListado> {
+/**
+ * `inmediata` = cortar HOY aunque tenga la cuota paga (pierde los días que le
+ * quedaban). Sin eso, con la cuota paga la baja queda programada al vencimiento.
+ */
+export async function darDeBajaSocio(
+  idSocio: number,
+  opciones: { inmediata?: boolean; motivo?: string } = {},
+): Promise<SocioListado> {
   const datos = await pedir<SocioApi>(`/socios/${idSocio}/baja`, {
     metodo: 'POST',
-    cuerpo: { tipo: 'ADMINISTRATIVA', motivo: motivo?.trim() || null },
+    cuerpo: {
+      tipo: 'ADMINISTRATIVA',
+      motivo: opciones.motivo?.trim() || null,
+      inmediata: opciones.inmediata ?? false,
+    },
   });
   return aSocioListado(datos);
 }

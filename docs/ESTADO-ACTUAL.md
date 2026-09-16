@@ -57,8 +57,9 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   día siguiente al vencimiento, se ve "Baja el dd/mm" en la grilla de Socios y en Mi
   cuota, y se puede anular. Probado a nivel base (programar, bloqueo de renovación y
   aplicación al llegar la fecha) en una transacción descartada; falta en pantalla.
-  **No hay forma de dar de baja YA a alguien con la cuota paga** (una expulsión): si
-  hace falta, sumar un "dar de baja ahora" en el diálogo del personal.
+  El personal también puede **dar de baja ahora** (al vencer o ahora en el modal de la
+  PWA, casilla en Flet; con una baja programada, la adelanta). Probado llamando al
+  endpoint en una transacción descartada.
 - **Teléfonos con código de país** en los 6 campos de la PWA y los 4 de Flet (alta y
   edición de socio y empleado, contacto de emergencia, agregar teléfono, Mi perfil).
   En Flet, editar un empleado ya precarga el teléfono (antes guardar lo borraba).

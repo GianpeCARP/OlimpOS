@@ -587,7 +587,8 @@ def dar_de_baja(
 
     SI TIENE UN PERÍODO PAGO EN CURSO, la baja queda PROGRAMADA para el día
     siguiente al vencimiento (bajas.py): hasta entonces sigue activo y no
-    pierde los días que pagó. Sin período en curso es inmediata: se desactiva
+    pierde los días que pagó — salvo que se pida `inmediata` (una expulsión),
+    que corta hoy y adelanta una baja ya programada. Sin período en curso es inmediata: se desactiva
     la ficha y la cuenta de acceso (el agujero de la auditoría del 2026-08-03:
     un socio dado de baja seguía pudiendo entrar a la app).
     """
@@ -597,22 +598,37 @@ def dar_de_baja(
     if not socio.activo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail=f"{socio.persona.nombre_completo} ya estaba dado de baja.")
+    hoy = date.today()
     ya = baja_pendiente(db, socio.id_socio)
-    if ya is not None:
+    if ya is not None and not datos.inmediata:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(f"{socio.persona.nombre_completo} ya tiene la baja programada para el "
                     f"{ya.fecha_baja.strftime('%d/%m/%Y')}."))
 
-    fecha = fecha_de_baja(db, socio.id_socio)
-    programada = fecha > date.today()
-    db.add(Baja(
-        id_socio=socio.id_socio,
-        fecha_baja=fecha,
-        tipo=datos.tipo.value,
-        motivo=datos.motivo,
-        pendiente=programada,
-    ))
+    if datos.inmediata:
+        # "Dar de baja ahora": corta hoy aunque tenga la cuota paga. Si ya había
+        # una baja programada, es la misma baja adelantada: se reusa la fila en
+        # vez de dejar dos registros para una sola salida.
+        programada = False
+        if ya is not None:
+            ya.fecha_baja = hoy
+            ya.pendiente = False
+            ya.tipo = datos.tipo.value
+            ya.motivo = datos.motivo or ya.motivo
+        else:
+            db.add(Baja(id_socio=socio.id_socio, fecha_baja=hoy, tipo=datos.tipo.value,
+                        motivo=datos.motivo, pendiente=False))
+    else:
+        fecha = fecha_de_baja(db, socio.id_socio)
+        programada = fecha > hoy
+        db.add(Baja(
+            id_socio=socio.id_socio,
+            fecha_baja=fecha,
+            tipo=datos.tipo.value,
+            motivo=datos.motivo,
+            pendiente=programada,
+        ))
     if not programada:
         db.flush()
         from turnos import promover_de_lista_de_espera

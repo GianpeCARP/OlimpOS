@@ -20,6 +20,7 @@ import { PatologiasModal } from './PatologiasModal';
 import { SocioFormModal } from './SocioFormModal';
 import { SocioTableRow } from './SocioTableRow';
 import { SortableHeader } from './SortableHeader';
+import { BajaSocioModal } from './BajaSocioModal';
 import { EmergenciaModal } from './EmergenciaModal';
 import { TelefonosModal } from './TelefonosModal';
 
@@ -67,7 +68,6 @@ function Skeleton({ className }: { className: string }) {
 
 export function SociosView() {
   const showSnack = useUiStore((s) => s.showSnack);
-  const confirmDialog = useUiStore((s) => s.confirmDialog);
 
   // Dos permisos distintos y no uno: Entrenador/Nutricionista tienen la
   // sección en LECTURA (necesitan saber a quién le asignan una rutina o
@@ -115,6 +115,7 @@ export function SociosView() {
   const [entrenadores, setEntrenadores] = useState<SocioListado | null>(null);
   const [telefonos, setTelefonos] = useState<SocioListado | null>(null);
   const [emergencia, setEmergencia] = useState<SocioListado | null>(null);
+  const [baja, setBaja] = useState<SocioListado | null>(null);
 
   useEffect(() => {
     let cancelado = false;
@@ -178,35 +179,31 @@ export function SociosView() {
     );
   }, []);
 
-  const pedirBaja = useCallback(
-    (socio: SocioListado) => {
-      confirmDialog(
-        `¿Dar de baja a ${socio.nombreCompleto}?`,
-        'Si tiene la cuota paga, la baja corre desde el día siguiente al vencimiento y hasta entonces sigue entrenando: no pierde los días que pagó. Si no, es inmediata y pierde el acceso a la app.',
-        () => {
-          darDeBajaSocio(socio.idSocio)
-            .then((actualizado) => {
-              // Forma impersonal: el participio en masculino fijo le erraba
-              // al género de la mitad de los socios (mismo criterio que
-              // PersonalView).
-              showSnack(
-                actualizado.bajaProgramada
-                  ? `La baja de ${socio.nombreCompleto} queda para el ${formatearFecha(parsearFecha(actualizado.bajaProgramada))}`
-                  : `Se dio de baja a ${socio.nombreCompleto}`,
-                colors.statusOk,
-              );
-              recargar();
-            })
-            .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger));
-        },
-      );
+  // La baja pasa por BajaSocioModal y no por el confirmDialog genérico: con la
+  // cuota paga hay que elegir CUÁNDO (al vencer, o ahora perdiendo los días).
+  const confirmarBaja = useCallback(
+    (socio: SocioListado, inmediata: boolean) => {
+      setBaja(null);
+      darDeBajaSocio(socio.idSocio, { inmediata })
+        .then((actualizado) => {
+          // Forma impersonal: el participio en masculino fijo le erraba
+          // al género de la mitad de los socios (mismo criterio que
+          // PersonalView).
+          showSnack(
+            actualizado.bajaProgramada
+              ? `La baja de ${socio.nombreCompleto} queda para el ${formatearFecha(parsearFecha(actualizado.bajaProgramada))}`
+              : `Se dio de baja a ${socio.nombreCompleto}`,
+            colors.statusOk,
+          );
+          recargar();
+        })
+        .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger));
     },
-    [confirmDialog, showSnack, recargar],
+    [showSnack, recargar],
   );
 
-  // Sin diálogo de confirmación: reactivar es una acción de bajo riesgo y
-  // reversible (siempre se puede volver a dar de baja), a diferencia de
-  // pedirBaja.
+  // Anular una baja programada tampoco pide confirmación: no borra nada que
+  // haya ocurrido, y siempre se puede volver a programar.
   const anularBaja = useCallback(
     (socio: SocioListado) => {
       anularBajaSocio(socio.idSocio)
@@ -219,6 +216,8 @@ export function SociosView() {
     [showSnack, recargar],
   );
 
+  // Sin diálogo de confirmación: reactivar es una acción de bajo riesgo y
+  // reversible (siempre se puede volver a dar de baja), a diferencia de la baja.
   const activar = useCallback(
     (socio: SocioListado) => {
       reactivarSocio(socio.idSocio)
@@ -338,7 +337,7 @@ export function SociosView() {
                           onEntrenadores={() => setEntrenadores(socio)}
                           onTelefonos={() => setTelefonos(socio)}
                           onEmergencia={() => setEmergencia(socio)}
-                          onDarDeBaja={() => pedirBaja(socio)}
+                          onDarDeBaja={() => setBaja(socio)}
                           onActivar={() => activar(socio)}
                           onAnularBaja={() => anularBaja(socio)}
                           onHistorialMedico={() => setHistorial(socio)}
@@ -374,6 +373,14 @@ export function SociosView() {
           va a mostrar la próxima vez que se abra. Sin recargar, editar al
           socio después reenviaría el número viejo. */}
       {emergencia && <EmergenciaModal socio={emergencia} onClose={() => setEmergencia(null)} />}
+
+      {baja && (
+        <BajaSocioModal
+          socio={baja}
+          onClose={() => setBaja(null)}
+          onConfirmar={(inmediata) => confirmarBaja(baja, inmediata)}
+        />
+      )}
 
       {telefonos && (
         <TelefonosModal

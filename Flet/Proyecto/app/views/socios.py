@@ -304,7 +304,12 @@ class SociosView:
                     # Sólo con la acción altaBajaSocios.
                     *([ft.IconButton(ft.Icons.UNDO_ROUNDED, icon_color=Colors.STATUS_WARN,
                                      icon_size=18, tooltip="Anular la baja programada",
-                                     on_click=lambda e, x=s: self._anular_baja(x))
+                                     on_click=lambda e, x=s: self._anular_baja(x))]
+                      if s["baja_programada"] and app_state.puede(Accion.ALTA_BAJA_SOCIOS)
+                      else []),
+                    *([ft.IconButton(ft.Icons.PERSON_OFF_ROUNDED, icon_color=Colors.DANGER,
+                                     icon_size=18, tooltip="Dar de baja ahora",
+                                     on_click=lambda e, x=s: self._confirmar_baja(x))
                        if s["baja_programada"] else
                        ft.IconButton(ft.Icons.PERSON_OFF_ROUNDED, icon_color=Colors.DANGER,
                                      icon_size=18, tooltip="Dar de baja",
@@ -688,6 +693,12 @@ class SociosView:
         """
         tipo_ref   = ft.Ref[ft.Dropdown]()
         motivo_ref = ft.Ref[ft.TextField]()
+        ahora_ref  = ft.Ref[ft.Checkbox]()
+        # Con la cuota paga hay que elegir CUÁNDO (gemelo de BajaSocioModal.tsx):
+        # por defecto al vencer; "ahora" corta hoy y pierde los días que le
+        # quedaban. Con la baja ya programada, esto sólo sirve para adelantarla.
+        ya_programada = bool(socio["baja_programada"])
+        con_cuota_paga = socio["estado"] in ("Activo", "Por vencer", "En pausa", "Suspendido")
 
         dlg = ft.AlertDialog(
             modal=True,
@@ -723,6 +734,20 @@ class SociosView:
                     ft.Container(height=12),
                     input_field("Motivo (opcional)", "Ej: se mudó de ciudad",
                                 ref=motivo_ref, multiline=True),
+                    *([ft.Container(height=12),
+                       ft.Checkbox(
+                           ref=ahora_ref,
+                           label="Dar de baja AHORA: pierde los días de cuota que le "
+                                 "quedaban, sin devolución",
+                           value=ya_programada, disabled=ya_programada,
+                           label_style=ft.TextStyle(color=Colors.STATUS_DANGER, size=12),
+                       ),
+                       ft.Text(f"Tiene la baja programada para el {socio['baja_programada']}: "
+                               "esto la adelanta a hoy." if ya_programada else
+                               "Sin marcar, la baja corre desde el día siguiente al "
+                               "vencimiento y hasta entonces sigue entrenando.",
+                               color=Colors.TEXT_MUTED, size=11)]
+                      if con_cuota_paga or ya_programada else []),
                 ], spacing=0, tight=True),
             ),
             actions=[
@@ -732,17 +757,18 @@ class SociosView:
                 ft.TextButton("Dar de baja",
                               style=ft.ButtonStyle(color=Colors.DANGER),
                               on_click=lambda e: self._ejecutar_baja(
-                                  dlg, socio, tipo_ref, motivo_ref)),
+                                  dlg, socio, tipo_ref, motivo_ref, ahora_ref)),
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )
         open_dialog(self.page, dlg)
 
-    def _ejecutar_baja(self, dlg, socio, tipo_ref, motivo_ref):
+    def _ejecutar_baja(self, dlg, socio, tipo_ref, motivo_ref, ahora_ref):
         resultado = app_state.dar_de_baja_socio(
             socio["id"],
             tipo_ref.current.value if tipo_ref.current else "VOLUNTARIA",
             self._texto(motivo_ref) or None,
+            inmediata=bool(ahora_ref.current and ahora_ref.current.value),
         )
         if not resultado["ok"]:
             show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)

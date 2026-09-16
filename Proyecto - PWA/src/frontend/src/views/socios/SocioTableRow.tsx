@@ -154,14 +154,26 @@ export function SocioTableRow({
               dar de baja a un socio activo, RotateCcw para reactivar uno ya
               dado de baja — antes solo existía el camino de ida. */}
           {!puedeAltaBaja ? null : socio.bajaProgramada ? (
-            <button
-              type="button"
-              onClick={onAnularBaja}
-              title="Anular la baja programada"
-              className="rounded-md p-2 text-status-warn hover:bg-surface-card hover:text-status-ok"
-            >
-              <Undo2 size={16} />
-            </button>
+            // Baja programada: se puede anular, o adelantar a hoy (el modal de
+            // baja sólo ofrece "ahora" en ese caso).
+            <>
+              <button
+                type="button"
+                onClick={onAnularBaja}
+                title="Anular la baja programada"
+                className="rounded-md p-2 text-status-warn hover:bg-surface-card hover:text-status-ok"
+              >
+                <Undo2 size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={onDarDeBaja}
+                title="Dar de baja ahora"
+                className="rounded-md p-2 text-text-muted hover:bg-surface-card hover:text-status-danger"
+              >
+                <UserX size={16} />
+              </button>
+            </>
           ) : yaDeBaja ? (
             <button
               type="button"

@@ -1098,9 +1098,10 @@ class AppState:
         }
 
     def dar_de_baja_socio(self, id_socio: int, tipo: str = "VOLUNTARIA",
-                           motivo: str | None = None) -> dict:
-        return self._resultado(api_client.dar_de_baja_socio(id_socio, tipo, motivo),
-                                "Socio dado de baja.")
+                           motivo: str | None = None, inmediata: bool = False) -> dict:
+        return self._resultado(
+            api_client.dar_de_baja_socio(id_socio, tipo, motivo, inmediata),
+            "Socio dado de baja.")
 
     def reactivar_socio(self, id_socio: int) -> dict:
         return self._resultado(api_client.reactivar_socio(id_socio), "Socio reactivado.")

@@ -433,8 +433,10 @@ def editar_socio(id_socio: int, datos: dict) -> dict:
     return _put(f"/socios/{id_socio}", datos)
 
 
-def dar_de_baja_socio(id_socio: int, tipo: str = "VOLUNTARIA", motivo: str | None = None) -> dict:
-    return _post(f"/socios/{id_socio}/baja", {"tipo": tipo, "motivo": motivo})
+def dar_de_baja_socio(id_socio: int, tipo: str = "VOLUNTARIA", motivo: str | None = None,
+                      inmediata: bool = False) -> dict:
+    return _post(f"/socios/{id_socio}/baja",
+                 {"tipo": tipo, "motivo": motivo, "inmediata": inmediata})
 
 
 def reactivar_socio(id_socio: int) -> dict:

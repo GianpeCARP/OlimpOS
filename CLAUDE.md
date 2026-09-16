@@ -194,7 +194,8 @@ D:\OlimpOs\
 - **La baja de un socio no le quita los días pagos** (`backend/bajas.py`). Con cuota
   vigente queda PROGRAMADA (`Baja.pendiente`) para el día siguiente al vencimiento y
   hasta entonces sigue activo; se puede anular mientras tanto, y con la baja pendiente
-  no se renueva. Sin cuota vigente es inmediata. Se aplica sola al arrancar el backend,
+  no se renueva. Sin cuota vigente es inmediata. El personal puede elegir "dar de baja ahora"
+  (`inmediata`, para una expulsión): corta hoy, pierde los días y adelanta una programada. Se aplica sola al arrancar el backend,
   una vez por día desde el latido y al leer socios. La voluntaria deja viva la cuenta
   de acceso; la de mora o administrativa la desactiva.
 - **Bajas lógicas y reversibles.** Dar de baja un empleado lo desasigna de sus
