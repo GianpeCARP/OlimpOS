@@ -85,20 +85,24 @@ _JERARQUIA = {Acceso.NINGUNO: 0, Acceso.LECTURA: 1, Acceso.TOTAL: 2}
 
 class Rol:
     """
-    Los cinco roles que devuelve el backend en el login.
+    Los seis roles que devuelve el backend en el login.
 
     NO son una columna de Usuario: el backend los deriva de en cuál de las
     tablas de rol está la Persona (Dueno, Socio, Entrenador, ...) y los firma
     dentro del token. Los valores tienen que coincidir exactamente con los de
     models.Rol del backend y con RolUsuario de config.ts.
 
-    Profesor no está: da clases, no usa el sistema.
+    El Profesor entró en la lista el 2026-09-16. Antes no iniciaba sesión;
+    ahora sí, pero SÓLO en la PWA, donde tiene "Mis clases". En esta app no
+    tiene nada que hacer —sus diez secciones quedan en NINGUNO— y por eso
+    ROLES_CON_ACCESO lo deja afuera solo y el login le dice que use la web.
     """
     DUENO = "dueno"
     SOCIO = "socio"
     ENTRENADOR = "entrenador"
     NUTRICIONISTA = "nutricionista"
     RECEPCIONISTA = "recepcionista"
+    PROFESOR = "profesor"
 
 
 # =============================================================================
@@ -295,6 +299,16 @@ PERMISOS: dict[str, dict] = {
     # baja— veía el DNI de todos los demás socios, el legajo del personal, y
     # tenía botones para dar de alta y de baja gente.
     Rol.SOCIO: {
+        "secciones": dict(_SIN_ACCESO),
+        "acciones": _todas_en(False),
+    },
+
+    # El Profesor dicta las clases grupales y su pantalla ("Mis clases") vive
+    # en la PWA, no acá: esta app es la del mostrador. Las diez secciones en
+    # NINGUNO no son un olvido — son la forma de que ROLES_CON_ACCESO lo
+    # excluya y el login lo mande a la web en vez de dejarlo entrar a un
+    # sidebar vacío. Mismo tratamiento que el Socio, y por el mismo motivo.
+    Rol.PROFESOR: {
         "secciones": dict(_SIN_ACCESO),
         "acciones": _todas_en(False),
     },

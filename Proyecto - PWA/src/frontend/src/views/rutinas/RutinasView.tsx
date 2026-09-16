@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Dumbbell, Plus } from 'lucide-react';
 import { FilterChip, PrimaryButton, SectionCard, Topbar } from '../../components/ui';
-import { colors, NivelRutina, type NivelRutinaValue } from '../../config';
+import { colors } from '../../config';
 import { mensajeDeError } from '../../services/api';
 import {
   listarRutinas,
@@ -10,6 +10,11 @@ import {
   type RutinaListado,
 } from '../../services/rutinasService';
 import { useUiStore } from '../../store/uiStore';
+// El catálogo de ejercicios ya existía, pero sólo lo abría el socio. Se reusa
+// tal cual: no tiene nada propio del portal —lista los ejercicios del gimnasio
+// con su descripción y su video— y el entrenador necesita exactamente eso
+// antes de cargar uno nuevo.
+import { CatalogoEjercicios } from '../socio/CatalogoEjercicios';
 import { usePuedeAccion } from '../../hooks/usePermisos';
 import { AsignarRutinaModal } from './AsignarRutinaModal';
 import { EjercicioFormModal } from './EjercicioFormModal';
@@ -20,12 +25,22 @@ import { RutinaFormModal } from './RutinaFormModal';
 // Equivalente de RutinasView (estructura_rutinas.md): topbar con conteo +
 // grilla responsiva de tarjetas (1 col mobile, 2 tablet, 3 desktop).
 //
-// Buscador y chips por nivel son un agregado sobre el doc (que no filtraba
+// Buscador y chips de filtro son un agregado sobre el doc (que no filtraba
 // nada), para mantener consistencia con socios y personal — mismos
 // componentes reusados, sin lógica nueva.
+//
+// Los chips filtran por DÍAS POR SEMANA. Antes filtraban por nivel
+// (Principiante/Intermedio/Avanzado) y se retiró: "intermedio" no significa lo
+// mismo para dos entrenadores, así que el filtro no ayudaba a encontrar nada.
+// "3 días" sí — es la pregunta real cuando se busca una rutina para alguien
+// que puede venir tres veces por semana.
 
-type FiltroNivel = NivelRutinaValue | 'Todos';
-const FILTROS: FiltroNivel[] = ['Todos', ...Object.values(NivelRutina)];
+type FiltroDias = number | 'Todos';
+const FILTROS: FiltroDias[] = ['Todos', 1, 2, 3, 4, 5, 6, 7];
+
+function etiquetaFiltro(f: FiltroDias): string {
+  return f === 'Todos' ? 'Todos' : `${f} día${f === 1 ? '' : 's'}`;
+}
 
 function Skeleton({ className }: { className: string }) {
   return <div className={`animate-pulse rounded-md bg-surface-hover ${className}`} />;
@@ -45,12 +60,13 @@ export function RutinasView() {
   const [intento, setIntento] = useState(0);
 
   const [busqueda, setBusqueda] = useState('');
-  const [filtro, setFiltro] = useState<FiltroNivel>('Todos');
+  const [filtro, setFiltro] = useState<FiltroDias>('Todos');
 
   const [formModal, setFormModal] = useState<{ rutina: RutinaListado | null } | null>(null);
   const [detalle, setDetalle] = useState<RutinaListado | null>(null);
   const [asignando, setAsignando] = useState<RutinaListado | null>(null);
   const [nuevoEjercicio, setNuevoEjercicio] = useState(false);
+  const [verCatalogo, setVerCatalogo] = useState(false);
 
   useEffect(() => {
     let cancelado = false;
@@ -78,7 +94,7 @@ export function RutinasView() {
         texto === '' ||
         r.nombre.toLowerCase().includes(texto) ||
         (r.objetivo?.toLowerCase().includes(texto) ?? false);
-      return coincideTexto && (filtro === 'Todos' || r.nivel === filtro);
+      return coincideTexto && (filtro === 'Todos' || r.diasPorSemana === filtro);
     });
   }, [rutinas, busqueda, filtro]);
 
@@ -140,6 +156,17 @@ export function RutinasView() {
         actions={
           puedeGestionar ? (
             <div className="flex flex-wrap justify-end gap-2">
+              {/* Ver el catálogo va ANTES de "+ Ejercicio", y ese orden es el
+                  arreglo: el problema era cargar por segunda vez un ejercicio
+                  que ya estaba, porque la única puerta era el alta. Ahora lo
+                  primero que ofrece la barra es mirar lo que ya hay. */}
+              <button
+                type="button"
+                onClick={() => setVerCatalogo(true)}
+                className="flex shrink-0 items-center gap-1.5 rounded-md border border-border-idle px-3 py-2 font-body text-sm whitespace-nowrap text-text-secondary hover:bg-surface-hover hover:text-text-main"
+              >
+                <Dumbbell size={16} /> Ejercicios
+              </button>
               <button
                 type="button"
                 onClick={() => setNuevoEjercicio(true)}
@@ -190,7 +217,12 @@ export function RutinasView() {
               </div>
               <div className="flex flex-wrap gap-2">
                 {FILTROS.map((f) => (
-                  <FilterChip key={f} label={f} activo={filtro === f} onClick={() => setFiltro(f)} />
+                  <FilterChip
+                    key={String(f)}
+                    label={etiquetaFiltro(f)}
+                    activo={filtro === f}
+                    onClick={() => setFiltro(f)}
+                  />
                 ))}
               </div>
             </div>
@@ -221,6 +253,8 @@ export function RutinasView() {
           </>
         )}
       </div>
+
+      {verCatalogo && <CatalogoEjercicios onCerrar={() => setVerCatalogo(false)} />}
 
       {formModal && (
         <RutinaFormModal

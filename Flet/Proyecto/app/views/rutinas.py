@@ -4,7 +4,7 @@
 # Gemela de views/rutinas/ de la PWA (RutinasView, RutinaFormModal,
 # RutinaDetailModal, AsignarRutinaModal, EjercicioFormModal).
 #
-#   - Tarjetas con nivel, días, entrenador y socios asignados.
+#   - Tarjetas con días, entrenador y socios asignados.
 #   - Detalle con la planilla de ejercicios por día.
 #   - Alta y edición CON ejercicios elegidos del catálogo, por día.
 #   - Asignar la rutina a un socio, y baja/reactivación.
@@ -18,11 +18,12 @@
 import flet as ft
 from app.config import Colors, Radius, Routes
 from app.state import app_state
-from app.components.ui import (build_topbar, confirm_dialog, level_badge, primary_button,
+from app.components.ui import (build_topbar, confirm_dialog, primary_button,
                                 input_field, show_snack, open_dialog, close_dialog,
                                 status_badge)
 
-NIVELES = ["Principiante", "Intermedio", "Avanzado"]
+# Acá estaba NIVELES (Principiante/Intermedio/Avanzado). Se retiró: era una
+# etiqueta ambigua y no servía para filtrar. Ver components/ui.py.
 
 # Tope de socios dibujados en el diálogo de asignar: con cientos, se busca.
 MAX_SOCIOS_LISTA = 50
@@ -97,7 +98,6 @@ class RutinasView:
                         alignment=ft.Alignment.CENTER,
                     ),
                     ft.Container(expand=True),
-                    level_badge(r["nivel"]),
                     *([] if r["activo"] else [status_badge("Inactiva")]),
                 ], spacing=6),
                 ft.Container(height=14),
@@ -139,8 +139,7 @@ class RutinasView:
             return
 
         filas = [
-            ft.Row([level_badge(r["nivel"]),
-                    status_badge("Activa" if detalle["activo"] else "Inactiva")], spacing=6),
+            ft.Row([status_badge("Activa" if detalle["activo"] else "Inactiva")], spacing=6),
             ft.Container(height=12),
             _detail_row("Frecuencia", f"{detalle['dias']} días por semana"),
             _detail_row("Entrenador", detalle["entrenador"]),
@@ -261,11 +260,6 @@ class RutinasView:
         nombre_tf = input_field("Nombre de la rutina", "Ej: Fuerza Total",
                                 icon=ft.Icons.FITNESS_CENTER_ROUNDED,
                                 value=detalle["nombre"] if detalle else "")
-        nivel_dd = _dropdown(
-            "Nivel", [ft.dropdown.Option(n) for n in NIVELES],
-            detalle["nivel"] if detalle and detalle["nivel"] in NIVELES else "Principiante",
-            width=200,
-        )
         dias_tf = input_field("Días por semana", "Entre 1 y 7", width=160,
                               value=str(detalle["dias"]) if detalle else "3")
 
@@ -452,7 +446,6 @@ class RutinasView:
 
             datos = {
                 "nombre": nombre,
-                "nivel": nivel_dd.value,
                 "dias_por_semana": n,
                 "objetivo": (objetivo_tf.value or "").strip() or None,
                 "id_entrenador": int(entrenador_dd.value) if entrenador_dd.value else None,
@@ -479,7 +472,7 @@ class RutinasView:
                 width=640, height=600,
                 content=ft.Column([
                     nombre_tf,
-                    ft.Row([nivel_dd, dias_tf], spacing=12, wrap=True),
+                    dias_tf,
                     entrenador_dd,
                     objetivo_tf,
                     ft.Divider(height=1, color=Colors.BORDER),

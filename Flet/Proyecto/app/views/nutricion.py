@@ -153,6 +153,14 @@ class NutricionView:
                         ft.Text(p["nutricionista"], color=Colors.TEXT_MUTED, size=11),
                     ], spacing=0, tight=True),
                     ft.Container(expand=True),
+                    # "Asignar" también acá, no sólo dentro del detalle.
+                    # Asignar es la acción frecuente —ya se sabe qué plan es— y
+                    # obligaba a abrir el plan, buscar el botón y volver a
+                    # salir. Gemelo de PlanCard.tsx.
+                    *([ft.TextButton("Asignar",
+                                     style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                                     on_click=lambda e, x=p: self._open_asignar(x))]
+                      if self._gestionable(p) else []),
                     ft.TextButton("Ver plan", style=ft.ButtonStyle(color=Colors.ACCENT),
                                   on_click=lambda e, x=p: self._open_detail(x)),
                 ]),

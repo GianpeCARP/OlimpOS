@@ -1,5 +1,5 @@
 import { Ban, Calendar, Dumbbell, RotateCcw, Target, User } from 'lucide-react';
-import { LevelBadge, PrimaryButton, StatusBadge } from '../../components/ui';
+import { PrimaryButton, StatusBadge } from '../../components/ui';
 import { EstadoRutina } from '../../config';
 import type { RutinaListado } from '../../services/rutinasService';
 import { InfoPill } from './InfoPill';
@@ -63,17 +63,9 @@ export function RutinaCard({
         </div>
       </div>
 
-      {/* Nivel en su propia línea, no al lado del nombre: compartir fila
-          con un badge le quitaba ancho al truncate y recortaba nombres que
-          antes entraban enteros. */}
       <h3 className="mt-3 truncate font-heading text-lg font-semibold text-text-main">
         {rutina.nombre}
       </h3>
-      {rutina.nivel && (
-        <div className="mt-1.5">
-          <LevelBadge nivel={rutina.nivel} />
-        </div>
-      )}
 
       <div className="mt-3 flex flex-wrap gap-2">
         {rutina.diasPorSemana !== undefined && (

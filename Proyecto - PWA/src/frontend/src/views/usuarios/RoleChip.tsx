@@ -1,4 +1,4 @@
-import { Apple, Dumbbell, Headset, Shield, User, type LucideIcon } from 'lucide-react';
+import { Apple, CalendarCheck, Dumbbell, Headset, Shield, User, type LucideIcon } from 'lucide-react';
 import { colors, Roles, type RolValue } from '../../config';
 
 // Equivalente de ROLE_CONFIG (estructura_usuarios.md). El doc tenía 4 roles
@@ -14,6 +14,9 @@ const CONFIG_ROL: Record<RolValue, { icono: LucideIcon; color: string }> = {
   [Roles.ENTRENADOR]: { icono: Dumbbell, color: colors.statusOk },
   [Roles.NUTRICIONISTA]: { icono: Apple, color: colors.primaryVolt },
   [Roles.SOCIO]: { icono: User, color: colors.textSecondary },
+  // Mismo ícono que "Mis clases" en el sidebar y que las tarjetas de clase:
+  // el profesor se reconoce por el calendario en las tres pantallas.
+  [Roles.PROFESOR]: { icono: CalendarCheck, color: colors.accentDim },
 };
 
 interface RoleChipProps {

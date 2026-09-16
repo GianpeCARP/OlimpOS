@@ -9,11 +9,13 @@ import {
   resetearPassword,
   darDeBajaUsuario,
   activarUsuario,
+  type ResultadoReseteo,
   type UsuarioListado,
 } from '../../services/usuariosService';
 import { useAuthStore } from '../../store/authStore';
-import { SNACK_PERSISTENTE, useUiStore } from '../../store/uiStore';
+import { useUiStore } from '../../store/uiStore';
 import { usePuedeAccion } from '../../hooks/usePermisos';
+import { PanelCredenciales } from '../../components/PanelCredenciales';
 import { PermisosPanel } from './PermisosPanel';
 import { UsuarioFormModal } from './UsuarioFormModal';
 import { UsuarioRow } from './UsuarioRow';
@@ -52,6 +54,13 @@ export function UsuariosView() {
 
   const [busqueda, setBusqueda] = useState('');
   const [modal, setModal] = useState<{ usuario: UsuarioListado | null } | null>(null);
+  // La contraseña recién reseteada, para entregarla por el mismo panel que usa
+  // el alta de personal. Se guarda junto al usuario porque el endpoint
+  // devuelve las credenciales pero no el mail ni el teléfono a los que
+  // mandárselas: eso sale de la fila que ya estaba en la tabla.
+  const [credenciales, setCredenciales] = useState<
+    { reseteo: ResultadoReseteo; usuario: UsuarioListado } | null
+  >(null);
 
   useEffect(() => {
     let cancelado = false;
@@ -150,17 +159,13 @@ export function UsuariosView() {
         'Se va a generar una contraseña temporal nueva. La actual deja de funcionar.',
         () => {
           resetearPassword(usuario.idUsuario)
-            .then(({ passwordTemporal }) => {
-              // Persistente a propósito: esta contraseña se genera una sola
-              // vez y no queda guardada en ningún lado consultable, así que
-              // si el snack se cierra solo a los 4 segundos la cuenta queda
-              // con una clave que no sabe nadie. Se cierra a mano, después
-              // de anotarla.
-              showSnack(
-                `Nueva contraseña temporal para ${usuario.nombre}: ${passwordTemporal}`,
-                colors.statusOk,
-                SNACK_PERSISTENTE,
-              );
+            .then((reseteo) => {
+              // Antes esto era un snack persistente con la clave adentro, y
+              // dejaba a quien reseteaba copiándola a mano de un cartelito.
+              // Ahora abre el MISMO panel que el alta de personal: muestra
+              // usuario y contraseña, y ofrece mandarlos por mail o WhatsApp
+              // con el mensaje ya escrito.
+              setCredenciales({ reseteo, usuario });
               // El reseteo también destraba al usuario (ver
               // usuariosService.ts). Se recarga la lista porque el endpoint
               // devuelve las credenciales, no la fila actualizada.
@@ -290,6 +295,20 @@ export function UsuariosView() {
           usuario={modal.usuario}
           onClose={() => setModal(null)}
           onGuardado={actualizarEnLista}
+        />
+      )}
+
+      {credenciales && (
+        <PanelCredenciales
+          titulo={`Contraseña reseteada: ${credenciales.usuario.nombre}`}
+          mensaje={credenciales.reseteo.mensaje}
+          username={credenciales.reseteo.username}
+          passwordTemporal={credenciales.reseteo.passwordTemporal}
+          textoCredenciales={credenciales.reseteo.textoCredenciales}
+          emailEnviado={credenciales.reseteo.emailEnviado}
+          email={credenciales.usuario.email ?? ''}
+          telefono={credenciales.usuario.telefono ?? ''}
+          onClose={() => setCredenciales(null)}
         />
       )}
     </div>

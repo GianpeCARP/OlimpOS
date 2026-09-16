@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, BookOpen, Calendar, Camera, Dumbbell, Pencil, Play, PlayCircle, Sparkles, Target, Timer, Trash2, User } from 'lucide-react';
-import { LevelBadge, PrimaryButton, SectionCard, Topbar } from '../../components/ui';
+import { PrimaryButton, SectionCard, Topbar } from '../../components/ui';
 import { colors } from '../../config';
 import { mensajeDeError } from '../../services/api';
 import { eliminarMiRutinaPropia, getMiRutina, type DiaDeRutina, type EjercicioDelDia, type MiRutina } from '../../services/socioService';
@@ -21,7 +21,7 @@ import { VerTecnica } from './VerTecnica';
 // solo botón que modifique nada.
 //
 // Sobre "reutilizá la misma card de rutina del admin": se reutilizan sus
-// PIEZAS (LevelBadge, InfoPill, SectionCard) pero no el componente
+// PIEZAS (InfoPill, SectionCard) pero no el componente
 // RutinaCard entero, y vale la pena decir por qué. RutinaCard muestra
 // "Asignados: N socios" con una barra de ocupación sobre la capacidad de la
 // rutina — es información de gestión del gimnasio, no del socio. A él no le
@@ -315,11 +315,6 @@ export function MiRutinaView() {
                   <h2 className="font-heading text-xl font-semibold text-text-main">
                     {rutina.nombre}
                   </h2>
-                  {rutina.nivel && (
-                    <div className="mt-2">
-                      <LevelBadge nivel={rutina.nivel} />
-                    </div>
-                  )}
                 </div>
                 <Dumbbell size={20} className="shrink-0 text-primary-volt" />
               </div>

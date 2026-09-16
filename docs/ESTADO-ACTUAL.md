@@ -126,6 +126,13 @@ El enum es `EFECTIVO / DEBITO / CREDITO / TRANSFERENCIA / BILLETERA_VIRTUAL`.
 - **Un empleado necesita mail o teléfono** (al menos uno): un empleado al que nadie sabe
   cómo contactar no sirve. Desde el alta se le pueden mandar las credenciales por mail o
   WhatsApp con el mensaje ya escrito, en vez de copiar la contraseña a mano.
+- **El botón de mail abre el redactor de GMAIL, no el programa de correo de la máquina**,
+  y parece un bug si no se sabe. Antes era un `mailto:`, que necesita un cliente de correo
+  asociado en esa PC — y las del gimnasio no lo tienen, así que el botón no hacía nada.
+  (Peor: en la ficha de personal iba con `target="_blank"` y dejaba una pestaña muerta
+  mostrando el "mailto:…".) El precio de la decisión es que ata el botón a Gmail: hay que
+  estar logueado en Google en ese navegador. Vive en `utils/contacto.ts` y su gemelo
+  `app/contacto.py`; WhatsApp no cambió.
 - **Un socio tiene VARIOS teléfonos** (celular, casa, trabajo) con **uno principal**, que
   es el que muestra la ficha y al que se llama primero. La tabla siempre fue así.
 - **Las bajas son lógicas y reversibles** (socios y empleados): la fila queda con su
@@ -301,6 +308,94 @@ Quedaron deliberadamente AFUERA del commit los dos archivos sueltos de la raíz
 - **Sin probar de punta a punta**: el chip del ingreso repetido sólo se ejercitó por el
   camino que no escribe. **Fichar acredita reservas y eso no se revierte borrando la
   asistencia**, así que no se ficharon socios reales; conviene probarlo en pantalla.
+
+---
+
+### 10. El Profesor tiene cuenta y ve sus clases — 2026-09-16, commiteado en `desarrollo`
+
+Antes no la tenía, y estaba escrito en seis lugares como decisión ("da clases, no
+usa el sistema"). El efecto real era que el profesor se enteraba de su horario por
+WhatsApp y, para saber quién se había anotado, tenía que preguntarle al mostrador.
+El endpoint que lista los inscriptos existía desde siempre —su docstring dice "es la
+lista que usa el profesor"— y no lo llamaba ninguna pantalla.
+
+- **No tocó la base.** Cero DDL: el rol se DERIVA del subtipo (`Usuario` no tiene
+  columna de rol, y la tabla `Profesor` ya existía). Todo fue código de aplicación.
+- `Rol.PROFESOR` en `models.py` + `roles_de_persona()`; el alta de `personal.py` ya
+  no lo saltea (se eliminó `ROLES_SIN_SESION`).
+- **`id_profesor` viaja firmado en el JWT**, igual que `id_socio` y por el mismo
+  motivo: `/portal/mis-clases` filtra por él y no acepta ningún id por parámetro,
+  así que un profesor no puede ver las clases de otro.
+- **Es un rol de PANTALLA PROPIA, no de gestión**: las nueve secciones del staff en
+  NINGUNO, y `MIS_CLASES` en LECTURA. Mira su clase; cancelar un turno sigue siendo
+  del gimnasio. En Flet queda sin acceso a propósito — su pantalla vive en la PWA y
+  el login de escritorio lo manda a la web.
+- **Reusa `_a_turno_de_panel`** del panel de recepción en vez de armar otra forma
+  del mismo dato: el profesor ve exactamente lo que ve el mostrador.
+- Frontend: `services/profesorService.ts` + `views/profesor/MisClasesView.tsx`.
+- Verificado: `check_permisos` OK (6 roles × 17 secciones × 11 acciones en las tres
+  copias), `tsc`, `oxlint`, `import main`, `compileall`.
+- **Falta probarlo con un Profesor real**: el escenario de demo no tiene ninguno, así
+  que hay que dar uno de alta y asignarle un horario para verlo en pantalla.
+
+---
+
+### 11. Tanda del 2026-09-16 (segunda lista del dueño) — commiteada en `desarrollo`
+
+Salió de las observaciones nuevas de `A CORREGIR PWA .txt` (Rutinas, Nutrición,
+Actividades, Usuarios). Verificado: `tsc`, `oxlint`, `check_permisos`, `import main`,
+`compileall`, chequeo AST y `pruebas_vistas.py`, todo en verde.
+
+- **El bug de asignar profesores eran DOS cosas distintas**, y conviene separarlas:
+  1. **Argumentos invertidos en la PWA.** `ProfesorAsignacionModal` llamaba
+     `asignarProfesorAActividad(idProfesor, idActividad)` contra una firma
+     `(idActividad, idProfesor)`. Como los dos son `number`, **TypeScript no podía
+     verlo**: la URL salía cruzada y el backend contestaba "el profesor no existe",
+     "X ya está asignado" nombrando a otro, o "no está asignado" al querer sacarlo.
+     Ahora los ids van en un OBJETO (`VinculoProfesorActividad`), así invertirlos es
+     error de compilación. Flet no tenía este bug.
+  2. **Hay DOS empleados "PEPE SAND"** (DNI distintos, alta legítima). Flet comparaba
+     los asignados **por nombre**, así que los dos salían "Asignado". Ahora compara
+     por id. **PENDIENTE**: en pantalla siguen viéndose idénticos — falta mostrar un
+     dato que los distinga (legajo o DNI) en la lista de asignación.
+- **El "PEPE fantasma" de Usuarios no era un dato corrupto**: ninguno de los dos PEPE
+  tenía fila en `Usuario`, porque eran Profesores y hasta esta misma tanda el alta se
+  negaba a crearles cuenta. Con el rol Profesor (sección 10) deja de pasar.
+- **Agujero de offboarding, encontrado de paso y grave**: `Empleado.activo` y
+  `Usuario.activo` son dos banderas y cada panel tocaba la suya. En la base había un
+  empleado **dado de baja con la cuenta ACTIVA** (podía iniciar sesión). Ahora
+  `toggle-estado` de Usuarios **se niega a reactivar** la cuenta de alguien dado de
+  baja y manda a hacerlo desde Personal, que devuelve puesto y acceso juntos.
+- **Dar de baja un empleado ahora lo DESASIGNA** de sus actividades
+  (`Profesor_Actividad`). Los turnos ya programados no se tocan: guardan su propio
+  `id_profesor` y borrarlos dejaría clases sin responsable.
+- **Topes en Actividades**, en backend y en las dos apps: 7 clases/semana, 31/mes, 1
+  para clase suelta, y cupo por turno de 1 a 100. "8 por semana" no es un plan caro,
+  es un plan imposible: el socio lo paga y nunca puede usarlo.
+- **Se retiró el NIVEL de rutina** (Principiante/Intermedio/Avanzado) de las tres
+  capas y se reemplazó el filtro por **días por semana (1 a 7)**, que ya estaba
+  guardado. **NO toca la base**: la columna `Rutina.nivel` queda nullable y sin usar —
+  borrarla sería un cambio de esquema por un dato de presentación.
+- **Rutinas: botón "Ejercicios"** para ver el catálogo antes de cargar uno repetido.
+  Reusa `CatalogoEjercicios`, que ya existía para el socio.
+- **Nutrición**: botón "Asignar" en la tarjeta (antes había que abrir el plan) en las
+  dos apps, y el detalle de la PWA cierra tocando afuera.
+- **Usuarios: resetear contraseña abre el MISMO panel que el alta** (usuario, clave, y
+  botones de mail/WhatsApp/copiar). Antes mostraba la clave en un snack persistente y
+  había que copiarla a mano. El panel se extrajo a `components/PanelCredenciales.tsx`
+  y ahora lo usan las dos pantallas; `UsuarioAdminOut` sumó `telefono` (con su
+  `selectinload`, para no reintroducir el N+1 que documenta `CARGA_DE_ROLES`).
+  **En Flet se había quedado sin replicar** y el dueño lo encontró probando: el diálogo
+  de reseteo sólo tenía "Listo". Ahora tiene los mismos botones que el alta, y
+  `ASUNTO_CREDENCIALES` vive en `app/contacto.py` (una sola copia para alta y reseteo).
+  Ojo al probarlo: las cuentas del demo sin mail ni teléfono (`ana.gomez`,
+  `beto.ruiz`, `rita.lopez`) no muestran botones de envío, y es correcto — no hay a
+  dónde mandar nada.
+
+**Queda pendiente de esta tanda** (necesita decisión del dueño, ver más abajo): los
+datos YA rotos en la base —PATO TORANZO dado de baja sigue asignado a Yoga, y la
+cuenta de `dasda adasa` sigue activa— porque los arreglos de arriba valen para las
+bajas de acá en adelante, no para las que ya ocurrieron.
 
 ---
 

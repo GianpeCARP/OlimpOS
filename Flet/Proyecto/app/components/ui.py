@@ -11,7 +11,7 @@
 #   build_sidebar   ↔ Sidebar.tsx        primary_button ↔ PrimaryButton.tsx
 #   build_topbar    ↔ Topbar.tsx         input_field    ↔ InputField.tsx
 #   stat_card       ↔ StatCard.tsx       section_card   ↔ SectionCard.tsx
-#   status_badge    ↔ StatusBadge.tsx    level_badge    ↔ LevelBadge.tsx
+#   status_badge    ↔ StatusBadge.tsx
 #   filter_chip     ↔ FilterChip.tsx     show_snack     ↔ Snackbar.tsx
 #   confirm_dialog  ↔ ConfirmDialog.tsx
 # =============================================================================
@@ -336,27 +336,11 @@ def status_badge(status: str) -> ft.Container:
     )
 
 
-# =============================================================================
-# LEVEL BADGE
-# =============================================================================
-
-LEVEL_COLORS = {
-    "Principiante": Colors.STATUS_OK,
-    "Intermedio":   Colors.STATUS_WARN,
-    "Avanzado":     Colors.ACCENT_CORAL,
-}
-
-
-def level_badge(nivel: str) -> ft.Container:
-    """Badge de nivel de rutina. Mismo molde que status_badge."""
-    color = LEVEL_COLORS.get(nivel, Colors.TEXT_MUTED)
-    return ft.Container(
-        content=ft.Text(nivel, color=color, size=12,
-                        weight=ft.FontWeight.W_500, font_family=Fonts.BODY),
-        bgcolor=alpha(color, 0.10),
-        border_radius=20,
-        padding=ft.Padding.symmetric(horizontal=12, vertical=4),
-    )
+# Acá vivía level_badge (Principiante/Intermedio/Avanzado). Se retiró el
+# 2026-09-16 junto con su gemelo LevelBadge.tsx: el nivel era una etiqueta
+# ambigua —el "intermedio" de uno es el "avanzado" de otro— y filtrar por ella
+# no servía. Las rutinas se filtran por días por semana, que es un número con
+# significado igual para todos.
 
 
 # =============================================================================

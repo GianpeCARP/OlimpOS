@@ -46,8 +46,15 @@ class Rol:
     ENTRENADOR = "entrenador"
     NUTRICIONISTA = "nutricionista"
     RECEPCIONISTA = "recepcionista"
-    # No existe Rol.PROFESOR a propósito: un Profesor da clases pero no inicia
-    # sesión. Ver el comentario de RolEmpleado.PROFESOR en config.ts.
+    # El Profesor SÍ inicia sesión, desde el 2026-09-16. Antes no, y la nota
+    # vieja lo defendía así: "da clases, no usa el sistema". El resultado real
+    # era que el profesor no tenía dónde ver su horario ni quién se anotó a su
+    # clase — se lo pasaba alguien por WhatsApp o un papel en la pared.
+    #
+    # Es un rol de PANTALLA PROPIA, como el Socio: no entra a ninguna sección
+    # de gestión, sólo a "Mis clases", y ahí ve únicamente los turnos que dicta
+    # él (Turno.id_profesor). No configura el catálogo ni toca a nadie más.
+    PROFESOR = "profesor"
 
 
 # =============================================================================
@@ -290,9 +297,12 @@ class Recepcionista(Base):
 
 class Profesor(Base):
     """
-    Cuarto tipo de empleado, para las Actividades. A diferencia de los otros
-    tres, NO tiene rol de sesión: da clases, no usa el sistema. Por eso
-    roles_de_persona() no devuelve nada para un Profesor "puro".
+    Cuarto tipo de empleado, para las Actividades: dicta las clases grupales
+    con horario fijo (yoga, boxeo).
+
+    Tiene rol de sesión desde el 2026-09-16, pero es un rol de pantalla propia
+    y no de gestión: entra a "Mis clases" y ve los turnos que dicta él. Ver
+    Rol.PROFESOR.
     """
     __tablename__ = "Profesor"
 
@@ -993,9 +1003,10 @@ def roles_de_persona(persona: Persona) -> list[str]:
     login, así que el contrato coincide.
 
     Lista vacía = la persona existe pero no tiene ningún rol que habilite
-    sesión (por ejemplo, un Profesor). El login tiene que rechazarla: una
-    cuenta sin roles no puede ver ninguna sección, y dejarla entrar a un
-    sistema donde no puede hacer nada solo genera confusión.
+    sesión. El login tiene que rechazarla: una cuenta sin roles no puede ver
+    ninguna sección, y dejarla entrar a un sistema donde no puede hacer nada
+    solo genera confusión. (El caso que este comentario daba de ejemplo era el
+    Profesor, que desde el 2026-09-16 SÍ tiene rol — ver Rol.PROFESOR.)
 
     Se llama UNA vez, en el login, y el resultado se firma dentro del JWT.
     Recalcularlo en cada request costaría cinco JOINs por pedido para un dato
@@ -1017,7 +1028,8 @@ def roles_de_persona(persona: Persona) -> list[str]:
             roles.append(Rol.NUTRICIONISTA)
         if empleado.recepcionista is not None:
             roles.append(Rol.RECEPCIONISTA)
-        # empleado.profesor no suma rol: ver el docstring de Profesor.
+        if empleado.profesor is not None:
+            roles.append(Rol.PROFESOR)
 
     return roles
 

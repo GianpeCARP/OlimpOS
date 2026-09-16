@@ -101,6 +101,10 @@ export function ActividadFormModal({ actividad, onClose, onGuardado }: Actividad
               icon={Users}
               type="number"
               min={1}
+              // Mismo tope que el backend (ActividadCrear.cupo_default, le=100).
+              // Ningún gimnasio dicta una clase de 500 personas: un número así
+              // es un dedo de más, no una decisión.
+              max={100}
               name="cupoDefault"
               required
             />

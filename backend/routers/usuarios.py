@@ -85,6 +85,11 @@ CARGA_DE_ROLES = (
     selectinload(Persona.empleado).selectinload(Empleado.entrenador),
     selectinload(Persona.empleado).selectinload(Empleado.nutricionista),
     selectinload(Persona.empleado).selectinload(Empleado.recepcionista),
+    selectinload(Persona.empleado).selectinload(Empleado.profesor),
+    # Los teléfonos entran acá por el mismo motivo que todo lo de arriba: el
+    # panel necesita uno para ofrecer "mandar las credenciales por WhatsApp",
+    # y sin esta línea sería una consulta MÁS por cada fila de la tabla.
+    selectinload(Persona.telefonos),
 )
 
 
@@ -102,6 +107,10 @@ def _a_usuario_out(usuario: Usuario) -> UsuarioAdminOut:
         dni=persona.dni,
         nombre_completo=persona.nombre_completo,
         email=persona.email,
+        # El principal, o el primero que haya. Lo usa el panel para ofrecer
+        # mandar las credenciales por WhatsApp cuando la persona no dejó mail.
+        telefono=next((t.numero for t in persona.telefonos if t.principal),
+                      next((t.numero for t in persona.telefonos), None)),
         roles=roles_de_persona(persona),
         activo=bool(usuario.activo),
         bloqueado=bloqueado,
@@ -437,7 +446,33 @@ def alternar_estado(
                    "sistema sin poder volver a entrar.",
         )
 
-    usuario.activo = (not bool(usuario.activo)) if activo is None else activo
+    destino = (not bool(usuario.activo)) if activo is None else activo
+
+    # NO se reactiva la cuenta de alguien dado de baja como empleado.
+    #
+    # Son dos banderas distintas —`Empleado.activo` y `Usuario.activo`— y cada
+    # panel tocaba la suya sin mirar la otra, así que podían contradecirse. En
+    # la base había un empleado dado de baja CON LA CUENTA ACTIVA: alguien que
+    # ya no trabaja acá y podía seguir entrando con todos los permisos de su
+    # rol. Es justo el agujero de offboarding que la baja dice evitar.
+    #
+    # La baja de personal apaga las dos (ver dar_de_baja_empleado). Lo que
+    # faltaba era este lado: la vuelta se da desde Personal con "Reactivar",
+    # que devuelve el puesto y el acceso juntos — que es el orden correcto,
+    # porque el acceso se justifica en el puesto y no al revés.
+    if destino and not usuario.activo:
+        empleado = usuario.persona.empleado if usuario.persona else None
+        if empleado is not None and not empleado.activo:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"{usuario.persona.nombre_completo} está dado de baja como "
+                    "empleado. Reactivalo desde Personal: ahí se le devuelve el "
+                    "acceso junto con el puesto."
+                ),
+            )
+
+    usuario.activo = destino
     if usuario.activo:
         # Reactivar y dejarla bloqueada sería reactivarla a medias.
         usuario.bloqueado = False

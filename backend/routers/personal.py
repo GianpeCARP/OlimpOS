@@ -41,7 +41,7 @@ from auth import generar_password_temporal, generar_username, hashear_password
 from database import get_db
 from models import (
     Dieta, Empleado, Entrenador, FranjaLaboral, Nutricionista, Persona, Profesor,
-    Recepcionista, Rutina, Sede, Telefono, Usuario,
+    ProfesorActividad, Recepcionista, Rutina, Sede, Telefono, Usuario,
 )
 from notificaciones import enviar_credenciales
 from permisos import Accion, Seccion
@@ -65,10 +65,6 @@ ESPECIALIDADES = {
     RolEmpleado.RECEPCIONISTA: (Recepcionista, ("id_franja_laboral",)),
     RolEmpleado.PROFESOR:      (Profesor,      ("titulo", "especialidad")),
 }
-
-# El único que no habilita el ingreso al sistema.
-ROLES_SIN_SESION = {RolEmpleado.PROFESOR}
-
 
 def _legajo(id_empleado: int) -> str:
     """
@@ -240,17 +236,12 @@ def alta_empleado(
     # --- 4. Cuenta ----------------------------------------------------------
     username = None
     password_temporal = None
-    aviso_sin_cuenta = ""
 
-    if datos.rol in ROLES_SIN_SESION:
-        # Se ignora crear_cuenta en silencio para el rol, pero se avisa en el
-        # mensaje: el operador marcó una casilla y tiene que saber por qué no
-        # pasó nada.
-        aviso_sin_cuenta = (
-            f" Un {datos.rol.value} no inicia sesión en el sistema, "
-            "así que no se le creó cuenta."
-        )
-    elif datos.crear_cuenta:
+    # Los CUATRO roles pueden tener cuenta. Hasta el 2026-09-16 el Profesor
+    # quedaba afuera: acá se ignoraba `crear_cuenta` y se avisaba por qué. El
+    # efecto real era que el profesor no tenía dónde ver su horario ni quién
+    # se anotaba a su clase. Ver Rol.PROFESOR en models.py.
+    if datos.crear_cuenta:
         if persona.usuario is not None:
             username = persona.usuario.username
         else:
@@ -292,7 +283,7 @@ def alta_empleado(
             f"Ya tenía cuenta ('{username}'), se conserva."
         )
     else:
-        mensaje = f"{datos.rol.value} dado de alta (legajo {empleado.legajo})." + aviso_sin_cuenta
+        mensaje = f"{datos.rol.value} dado de alta (legajo {empleado.legajo})."
 
     return EmpleadoAltaResponse(
         id_empleado=empleado.id_empleado,
@@ -558,6 +549,20 @@ def dar_de_baja_empleado(
 
     if empleado.persona.usuario is not None:
         empleado.persona.usuario.activo = False
+
+    # Y se lo saca de las actividades que tenía habilitadas. Sin esto, un
+    # profesor dado de baja seguía figurando como asignado: la lista de
+    # "quiénes pueden dictar Yoga" mostraba a alguien que ya no trabaja acá, y
+    # nada impedía programarle un turno futuro.
+    #
+    # Se borra la habilitación (Profesor_Actividad) y NO los turnos ya
+    # programados: esos guardan su propio id_profesor, y borrarlo dejaría
+    # clases sin responsable. Es exactamente el mismo criterio que
+    # desasignar_profesor en el router de actividades.
+    if empleado.profesor is not None:
+        (db.query(ProfesorActividad)
+         .filter(ProfesorActividad.id_profesor == empleado.profesor.id_profesor)
+         .delete(synchronize_session=False))
 
     db.commit()
     db.refresh(empleado)

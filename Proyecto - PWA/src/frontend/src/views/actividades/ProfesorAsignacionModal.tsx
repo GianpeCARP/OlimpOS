@@ -9,7 +9,6 @@ import {
   type ActividadAdmin,
   type ProfesorAsignable,
 } from '../../services/actividadService';
-import { useAuthStore } from '../../store/authStore';
 import { useUiStore } from '../../store/uiStore';
 
 // Relación profesor↔actividad (especificacion_definitiva_actividades.md,
@@ -28,7 +27,7 @@ function Skeleton({ className }: { className: string }) {
 }
 
 export function ProfesorAsignacionModal({ actividad, onClose, onCambio }: ProfesorAsignacionModalProps) {
-  const idUsuarioActor = useAuthStore((s) => s.usuario?.id_usuario);
+  // Quién hace el cambio no se manda: el backend lo saca de la sesión.
   const showSnack = useUiStore((s) => s.showSnack);
 
   const [profesores, setProfesores] = useState<ProfesorAsignable[] | null>(null);
@@ -52,9 +51,12 @@ export function ProfesorAsignacionModal({ actividad, onClose, onCambio }: Profes
 
   const alternar = (profesor: ProfesorAsignable) => {
     setCambiando(profesor.idProfesor);
+    // Los ids van nombrados: acá estaban invertidos contra la firma del
+    // service y la URL salía cruzada. Ver VinculoProfesorActividad.
+    const vinculo = { idActividad: actividad.idActividad, idProfesor: profesor.idProfesor };
     const accion = profesor.asignado
-      ? desasignarProfesorDeActividad(profesor.idProfesor, actividad.idActividad, idUsuarioActor)
-      : asignarProfesorAActividad(profesor.idProfesor, actividad.idActividad, idUsuarioActor);
+      ? desasignarProfesorDeActividad(vinculo)
+      : asignarProfesorAActividad(vinculo);
 
     accion
       .then(() => {

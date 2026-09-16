@@ -11,10 +11,8 @@ from app.permisos import Accion
 from app.state import app_state
 from app.components.ui import (build_topbar, confirm_dialog, status_badge, primary_button,
                                 input_field, show_snack, open_dialog, close_dialog)
-from app.contacto import limpiar_telefono, link_mail, link_whatsapp
+from app.contacto import ASUNTO_CREDENCIALES, limpiar_telefono, link_mail, link_whatsapp
 
-# Asunto del mail de credenciales. Igual que en EmpleadoFormModal.tsx.
-ASUNTO_CREDENCIALES = "Tus datos de acceso a OlimpOS"
 
 # Mapa turno → (color de texto, color de fondo translúcido)
 #

@@ -16,7 +16,7 @@
 // pantalla hiciera la traversal persona -> socio por su cuenta, alcanzaría con
 // que una sola se olvidara de filtrar".
 
-import type { EstadoSocioValue, NivelRutinaValue } from '../config';
+import type { EstadoSocioValue } from '../config';
 import { pedir } from './api';
 import type {
   ActividadListada,
@@ -164,7 +164,6 @@ export interface DiaDeRutina {
 export interface MiRutina {
   idRutina: number;
   nombre: string;
-  nivel?: NivelRutinaValue;
   objetivo?: string;
   diasPorSemana?: number;
   entrenador: string;
@@ -180,7 +179,6 @@ export interface MiRutina {
 interface RutinaApi {
   id_rutina: number;
   nombre: string;
-  nivel: string | null;
   objetivo: string | null;
   dias_por_semana: number | null;
   entrenador: string;
@@ -245,7 +243,6 @@ function mapearMiRutina(r: RutinaApi): MiRutina {
   return {
     idRutina: r.id_rutina,
     nombre: r.nombre,
-    nivel: (r.nivel ?? undefined) as NivelRutinaValue | undefined,
     objetivo: r.objetivo ?? undefined,
     diasPorSemana: r.dias_por_semana ?? undefined,
     entrenador: r.entrenador,
@@ -321,7 +318,6 @@ export interface EjercicioParaRutina {
 export interface MiRutinaPropiaNueva {
   nombre: string;
   objetivo?: string;
-  nivel?: string;
   diasPorSemana?: number;
   ejercicios: EjercicioParaRutina[];
 }
@@ -339,7 +335,6 @@ export async function crearMiRutinaPropia(datos: MiRutinaPropiaNueva): Promise<M
     cuerpo: {
       nombre: datos.nombre.trim(),
       objetivo: datos.objetivo?.trim() || null,
-      nivel: datos.nivel?.trim() || null,
       dias_por_semana: datos.diasPorSemana ?? null,
       ejercicios: datos.ejercicios.map((e) => ({
         id_ejercicio: e.idEjercicio,

@@ -9,7 +9,7 @@
 // Entrenador -> Empleado -> Persona. Antes eso lo hacía este archivo con
 // nombrePorEmpleado, que leía de mockDb.
 
-import type { NivelRutinaValue, EstadoRutinaValue } from '../config';
+import type { EstadoRutinaValue } from '../config';
 import { EstadoRutina } from '../config';
 import { pedir } from './api';
 import type { EjercicioCatalogo } from './socioService';
@@ -28,7 +28,6 @@ const CAPACIDAD_MAXIMA_RUTINA = 20;
 export interface RutinaListado {
   idRutina: number;
   nombre: string;
-  nivel?: NivelRutinaValue;
   objetivo?: string;
   diasPorSemana?: number;
   asignados: number;
@@ -69,7 +68,6 @@ interface RutinaApi {
   entrenador: string;
   nombre: string;
   objetivo: string | null;
-  nivel: string | null;
   dias_por_semana: number | null;
   fecha_creacion: string | null;
   activo: boolean;
@@ -95,7 +93,6 @@ function aRutinaListado(r: RutinaApi): RutinaListado {
   return {
     idRutina: r.id_rutina,
     nombre: r.nombre,
-    nivel: (r.nivel ?? undefined) as NivelRutinaValue | undefined,
     objetivo: r.objetivo ?? undefined,
     diasPorSemana: r.dias_por_semana ?? undefined,
     asignados: r.asignados,
@@ -217,7 +214,6 @@ export async function listarEntrenadoresActivos(): Promise<EntrenadorOpcion[]> {
 
 export interface RutinaInput {
   nombre: string;
-  nivel: NivelRutinaValue;
   diasPorSemana: number;
   objetivo?: string;
   /**
@@ -266,7 +262,6 @@ export async function crearRutina(input: RutinaInput): Promise<RutinaListado> {
     metodo: 'POST',
     cuerpo: {
       nombre: input.nombre.trim(),
-      nivel: input.nivel,
       dias_por_semana: input.diasPorSemana,
       objetivo: input.objetivo?.trim() || null,
       id_entrenador: input.idEntrenador ?? null,
@@ -284,7 +279,6 @@ export async function actualizarRutina(
     metodo: 'PUT',
     cuerpo: {
       nombre: input.nombre.trim(),
-      nivel: input.nivel,
       dias_por_semana: input.diasPorSemana,
       objetivo: input.objetivo?.trim() || null,
       id_entrenador: input.idEntrenador ?? null,

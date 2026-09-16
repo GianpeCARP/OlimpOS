@@ -1,7 +1,7 @@
 import { useEffect, useState, type SubmitEvent } from 'react';
 import { X } from 'lucide-react';
 import { InputField, PrimaryButton, SelectField, type SelectOption } from '../../components/ui';
-import { colors, NivelRutina, type NivelRutinaValue } from '../../config';
+import { colors } from '../../config';
 import { mensajeDeError } from '../../services/api';
 import type { EjercicioCatalogo } from '../../services/socioService';
 import {
@@ -34,14 +34,8 @@ interface RutinaFormModalProps {
   onGuardado: (rutina: RutinaListado) => void;
 }
 
-const OPCIONES_NIVEL: SelectOption[] = Object.values(NivelRutina).map((nivel) => ({
-  value: nivel,
-  label: nivel,
-}));
-
 export function RutinaFormModal({ rutina, onClose, onGuardado }: RutinaFormModalProps) {
   const [nombre, setNombre] = useState(rutina?.nombre ?? '');
-  const [nivel, setNivel] = useState<NivelRutinaValue>(rutina?.nivel ?? NivelRutina.PRINCIPIANTE);
   const [diasPorSemana, setDiasPorSemana] = useState(String(rutina?.diasPorSemana ?? 3));
   const [objetivo, setObjetivo] = useState(rutina?.objetivo ?? '');
   const [idEntrenador, setIdEntrenador] = useState(rutina ? String(rutina.idEntrenador) : '');
@@ -139,7 +133,6 @@ export function RutinaFormModal({ rutina, onClose, onGuardado }: RutinaFormModal
     try {
       const input = {
         nombre,
-        nivel,
         diasPorSemana: dias,
         objetivo,
         idEntrenador: Number(idEntrenador),
@@ -186,14 +179,6 @@ export function RutinaFormModal({ rutina, onClose, onGuardado }: RutinaFormModal
             <div className="sm:col-span-2">
               <InputField label="Nombre" value={nombre} onChange={setNombre} name="nombre" required />
             </div>
-            <SelectField
-              label="Nivel"
-              value={nivel}
-              onChange={(v) => setNivel(v as NivelRutinaValue)}
-              options={OPCIONES_NIVEL}
-              name="nivel"
-              required
-            />
             <InputField
               label="Días por semana"
               value={diasPorSemana}

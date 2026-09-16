@@ -136,6 +136,14 @@ export const Routes = {
   MI_DIETA: 'mi-dieta',
   MI_CUOTA: 'mi-cuota',
   MIS_TURNOS: 'mis-turnos',
+
+  // --- Pantalla propia del profesor ---
+  //
+  // Mismo criterio que las "mi-" de arriba: muestra los turnos de UNA
+  // persona, los que dicta ella. NO es ACTIVIDADES filtrado — esa es el ABM
+  // del catálogo (precios, cupos) y el profesor no tiene nada que decidir
+  // ahí. Ver el comentario de Roles.PROFESOR.
+  MIS_CLASES: 'mis-clases',
 } as const;
 
 export type RouteValue = (typeof Routes)[keyof typeof Routes];
@@ -169,6 +177,12 @@ export const Roles = {
   RECEPCIONISTA: 'recepcionista',
   ENTRENADOR: 'entrenador',
   NUTRICIONISTA: 'nutricionista',
+  // El Profesor inicia sesión desde el 2026-09-16. Antes no: el comentario de
+  // RolEmpleado.PROFESOR más abajo decía "da clases, no inicia sesión", y el
+  // resultado era que no tenía dónde ver su horario ni quién se anotó a su
+  // clase. Es un rol de PANTALLA PROPIA, como el Socio: cero gestión, sólo
+  // "Mis clases".
+  PROFESOR: 'profesor',
 } as const;
 
 export type RolValue = (typeof Roles)[keyof typeof Roles];
@@ -182,6 +196,7 @@ export const RolLabel: Record<RolValue, string> = {
   [Roles.RECEPCIONISTA]: 'Recepcionista',
   [Roles.ENTRENADOR]: 'Entrenador',
   [Roles.NUTRICIONISTA]: 'Nutricionista',
+  [Roles.PROFESOR]: 'Profesor',
 };
 
 // =========================================================================
@@ -277,6 +292,10 @@ const SIN_ACCESO_A_PORTAL_SOCIO = {
   [Routes.MI_DIETA]: Acceso.NINGUNO,
   [Routes.MI_CUOTA]: Acceso.NINGUNO,
   [Routes.MIS_TURNOS]: Acceso.NINGUNO,
+  // "Mis clases" es del profesor, no del socio, pero se apaga en el mismo
+  // lugar por el mismo motivo: es una pantalla PERSONAL, y ningún rol de
+  // staff tiene por qué abrir la de otro.
+  [Routes.MIS_CLASES]: Acceso.NINGUNO,
 } as const;
 
 /** Espejo del anterior: el socio no entra a NINGUNA pantalla de gestión. */
@@ -455,6 +474,43 @@ export const PERMISOS: Record<RolValue, PermisosRol> = {
       [Routes.MI_DIETA]: Acceso.TOTAL,
       [Routes.MI_CUOTA]: Acceso.TOTAL,
       [Routes.MIS_TURNOS]: Acceso.TOTAL,
+      // La clase la ve desde MIS_TURNOS, que es la suya. MIS_CLASES es la
+      // pantalla del que la DICTA.
+      [Routes.MIS_CLASES]: Acceso.NINGUNO,
+    },
+    acciones: {
+      altaBajaSocios: false,
+      altaBajaPersonal: false,
+      gestionRutinas: false,
+      gestionDietas: false,
+      gestionUsuarios: false,
+      verIngresos: false,
+      cobrarPagos: false,
+      gestionPromociones: false,
+      gestionDeudas: false,
+      gestionTurnos: false,
+      verHistorialMedico: false,
+    },
+  },
+
+  // El Profesor dicta las clases grupales. NO es un rol de gestión: no entra
+  // a ninguna de las nueve secciones del staff, ni siquiera a ACTIVIDADES —
+  // el catálogo (qué actividades existen, sus precios y cupos) es
+  // configuración del Dueño y el profesor no decide nada ahí.
+  //
+  // Lo único suyo es "Mis clases": los turnos que dicta ÉL, con quién se
+  // anotó a cada uno. En LECTURA y no TOTAL a propósito — mira su clase, no
+  // la edita: cancelar un turno sigue siendo decisión de quien maneja el
+  // gimnasio.
+  //
+  // Acciones todas en false, igual que el Socio y por el mismo motivo: son
+  // acciones sobre el gimnasio, y mirar la propia clase no es un permiso
+  // sobre terceros.
+  [Roles.PROFESOR]: {
+    secciones: {
+      ...SIN_ACCESO_A_ADMIN,
+      ...SIN_ACCESO_A_PORTAL_SOCIO,
+      [Routes.MIS_CLASES]: Acceso.LECTURA,
     },
     acciones: {
       altaBajaSocios: false,
@@ -505,9 +561,17 @@ export const SECCIONES_SOCIO: SeccionPrivada[] = [
  * accesoASeccion; el panel de permisos usa SECCIONES_ADMIN, que es un
  * subconjunto.
  */
+/**
+ * La única sección del profesor. Va aparte y no dentro de SECCIONES_SOCIO
+ * porque no es del socio: si estuviera ahí, el panel de permisos y el
+ * sidebar la tratarían como una pantalla más del portal.
+ */
+export const SECCIONES_PROFESOR: SeccionPrivada[] = [Routes.MIS_CLASES];
+
 export const SECCIONES_PRIVADAS: SeccionPrivada[] = [
   ...SECCIONES_ADMIN,
   ...SECCIONES_SOCIO,
+  ...SECCIONES_PROFESOR,
 ];
 
 function esSeccionPrivada(route: RouteValue): route is SeccionPrivada {
@@ -666,16 +730,14 @@ export const EstadoEmpleado = {
 
 export type EstadoEmpleadoValue = (typeof EstadoEmpleado)[keyof typeof EstadoEmpleado];
 
-// Niveles de rutina (estructura_rutinas.md: dropdown Principiante/
-// Intermedio/Avanzado). Rutina.nivel es un varchar(20) libre en el esquema
-// — estos son los tres valores que el formulario deja elegir.
-export const NivelRutina = {
-  PRINCIPIANTE: 'Principiante',
-  INTERMEDIO: 'Intermedio',
-  AVANZADO: 'Avanzado',
-} as const;
-
-export type NivelRutinaValue = (typeof NivelRutina)[keyof typeof NivelRutina];
+// Acá vivía NivelRutina (Principiante/Intermedio/Avanzado). Se retiró el
+// 2026-09-16: era una etiqueta ambigua —el "intermedio" de uno es el
+// "avanzado" de otro— y filtrar por ella no le servía a nadie. Las rutinas se
+// filtran por DÍAS POR SEMANA, que es un número con el mismo significado para
+// todos y que ya estaba guardado (Rutina.dias_por_semana).
+//
+// La columna `Rutina.nivel` sigue existiendo en la base, nullable y sin usar:
+// borrarla sería un cambio de esquema por un dato de presentación.
 
 // Estado de una rutina. Binario a diferencia de EstadoSocio/EstadoEmpleado
 // — Rutina.activo es el único campo de baja que tiene en el esquema, no
@@ -826,11 +888,27 @@ export const SOCIO_NAV_ITEMS: NavItem[] = [
  * decisión: si divergen, el login manda a alguien a una ruta que su sidebar
  * no muestra.
  */
+/**
+ * El sidebar del profesor: una sola entrada. Lista propia y no un filtro de
+ * NAV_ITEMS por el mismo motivo que la del socio — no comparten ninguna
+ * entrada, y la etiqueta va en primera persona ("Mis clases", no "Clases")
+ * para que se lea que lo que muestra es suyo.
+ */
+export const PROFESOR_NAV_ITEMS: NavItem[] = [
+  { label: 'Mis clases', icon: CalendarCheck, route: Routes.MIS_CLASES },
+];
+
 export function navItemsPara(roles: string[]): NavItem[] {
-  return roles.includes(Roles.SOCIO) ? SOCIO_NAV_ITEMS : NAV_ITEMS;
+  if (roles.includes(Roles.SOCIO)) return SOCIO_NAV_ITEMS;
+  // El profesor va ANTES que el staff, pero DESPUÉS del socio: los roles se
+  // acumulan, y alguien que dicta clases y además entrena en el gimnasio es
+  // socio primero. Un profesor que además fuera recepcionista cae en el
+  // sidebar de gestión, que es el que le sirve — tiene secciones de verdad.
+  if (roles.includes(Roles.PROFESOR) && roles.length === 1) return PROFESOR_NAV_ITEMS;
+  return NAV_ITEMS;
 }
 
-const TODOS_LOS_NAV_ITEMS = [...NAV_ITEMS, ...SOCIO_NAV_ITEMS];
+const TODOS_LOS_NAV_ITEMS = [...NAV_ITEMS, ...SOCIO_NAV_ITEMS, ...PROFESOR_NAV_ITEMS];
 
 /** Etiqueta de una sección, para mostrarla en el panel de permisos. */
 export function etiquetaSeccion(seccion: SeccionPrivada): string {

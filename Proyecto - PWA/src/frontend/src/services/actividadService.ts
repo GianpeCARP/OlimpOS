@@ -423,10 +423,23 @@ export async function getProfesoresDeActividad(
   }));
 }
 
+/**
+ * Los dos ids van en un OBJETO y no como dos parámetros sueltos, a propósito.
+ *
+ * Estaban sueltos y el modal los pasaba al revés —`(idProfesor, idActividad)`
+ * contra una firma `(idActividad, idProfesor)`—, así que la URL salía con los
+ * ids cruzados. Como los dos son `number`, TypeScript no podía verlo: compilaba
+ * perfecto y fallaba en producción con mensajes desconcertantes ("el profesor
+ * no existe", "X ya está asignado" nombrando a otro, "no está asignado" al
+ * querer sacarlo). Con un objeto, invertirlos es un error de compilación.
+ */
+interface VinculoProfesorActividad {
+  idActividad: number;
+  idProfesor: number;
+}
+
 export async function asignarProfesorAActividad(
-  idActividad: number,
-  idProfesor: number,
-  _idUsuarioActor?: number,
+  { idActividad, idProfesor }: VinculoProfesorActividad,
 ): Promise<void> {
   await pedir<ProfesorApi>(`/actividades/${idActividad}/profesores/${idProfesor}`, {
     metodo: 'POST',
@@ -434,9 +447,7 @@ export async function asignarProfesorAActividad(
 }
 
 export async function desasignarProfesorDeActividad(
-  idActividad: number,
-  idProfesor: number,
-  _idUsuarioActor?: number,
+  { idActividad, idProfesor }: VinculoProfesorActividad,
 ): Promise<void> {
   await pedir<void>(`/actividades/${idActividad}/profesores/${idProfesor}`, {
     metodo: 'DELETE',

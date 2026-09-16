@@ -267,6 +267,7 @@ export function NutricionView() {
                     plan={plan}
                     puedeGestionar={gestionable(plan)}
                     onVerPlan={() => setDetalle(plan)}
+                    onAsignar={() => setAsignando(plan)}
                     onDarDeBaja={() => pedirBaja(plan)}
                     onActivar={() => activar(plan)}
                   />

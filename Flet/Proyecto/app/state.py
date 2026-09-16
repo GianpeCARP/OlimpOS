@@ -461,7 +461,6 @@ class AppState:
             {
                 "id": r["id_rutina"],
                 "nombre": r["nombre"],
-                "nivel": r.get("nivel") or "Sin nivel",
                 "dias": r.get("dias_por_semana") or 0,
                 "duracion": r.get("objetivo") or "—",
                 "asignados": r.get("asignados", 0),
@@ -484,7 +483,6 @@ class AppState:
         return {
             "id": r["id_rutina"],
             "nombre": r["nombre"],
-            "nivel": r.get("nivel") or "",
             "dias": r.get("dias_por_semana") or 1,
             "objetivo": r.get("objetivo") or "",
             "id_entrenador": r.get("id_entrenador"),
@@ -776,7 +774,15 @@ class AppState:
                     (pl["precio"] for pl in a.get("planes", [])
                      if pl.get("tipo_limite") == "CLASE_SUELTA"), 0),
                 "horas_cancelacion": a.get("horas_anticipacion_cancelacion", 0),
-                "profesores": [p.get("nombre", "?") for p in profesores],
+                # Con ID y nombre, no sólo el nombre: dos profesores pueden
+                # llamarse igual —pasa de verdad, hay dos "PEPE SAND" con DNI
+                # distinto— y comparar por nombre hacía que asignar a uno
+                # marcara al otro como asignado. El id es lo único que los
+                # distingue.
+                "profesores": [
+                    {"id": p["id_profesor"], "nombre": p.get("nombre", "?")}
+                    for p in profesores
+                ],
                 "planes": [
                     {
                         "id": p["id_plan_actividad"],
@@ -1194,6 +1200,9 @@ class AppState:
                 "id": u["id_usuario"],
                 "usuario": u["username"],
                 "email": u.get("email") or "",
+                # Para ofrecer las credenciales por WhatsApp al resetear la
+                # contraseña de alguien que no dejó mail.
+                "telefono": u.get("telefono") or "",
                 "nombre": u.get("nombre_completo", "—"),
                 "dni": u.get("dni", "—"),
                 "roles": u.get("roles", []),
@@ -1233,7 +1242,11 @@ class AppState:
             return {"ok": False, "mensaje": respuesta.get("error", "No se pudo resetear.")}
         d = respuesta["data"]
         return {"ok": True, "mensaje": d.get("mensaje", ""),
-                "usuario": d.get("username"), "password_temporal": d.get("password_temporal")}
+                "usuario": d.get("username"), "password_temporal": d.get("password_temporal"),
+                # El mensaje ya armado por el backend, el mismo que manda por
+                # mail: la vista lo usa para los botones de envío.
+                "texto_credenciales": d.get("texto_credenciales"),
+                "email_enviado": d.get("email_enviado", False)}
 
     def desbloquear_usuario(self, id_usuario: int) -> dict:
         return self._resultado(api_client.desbloquear_usuario(id_usuario), "Cuenta desbloqueada.")

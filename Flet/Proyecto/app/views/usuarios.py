@@ -7,6 +7,7 @@ from app.config import Colors, NAV_ITEMS, Routes, alpha
 from app.state import app_state
 from app.components.ui import (build_topbar, status_badge, primary_button, input_field,
                                 show_snack, open_dialog, close_dialog)
+from app.contacto import ASUNTO_CREDENCIALES, link_mail, link_whatsapp
 
 # rol → (etiqueta, color, fondo translúcido, ícono)
 #
@@ -493,7 +494,11 @@ class UsuariosView:
             show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
             return
         close_dialog(self.page, dlg)
-        self._mostrar_credenciales("Contraseña reseteada", resultado)
+        # El mail y el teléfono salen de la fila de la tabla: el endpoint de
+        # reseteo devuelve las credenciales, no a dónde mandarlas.
+        self._mostrar_credenciales("Contraseña reseteada", resultado,
+                                   email=u.get("email", ""),
+                                   telefono=u.get("telefono", ""))
 
     def _desbloquear(self, u: dict):
         resultado = app_state.desbloquear_usuario(u["id"])
@@ -518,14 +523,42 @@ class UsuariosView:
         if resultado["ok"]:
             self.router.navigate(Routes.USUARIOS)
 
-    def _mostrar_credenciales(self, titulo: str, resultado: dict):
+    def _mostrar_credenciales(self, titulo: str, resultado: dict,
+                              email: str = "", telefono: str = ""):
         """
-        Muestra usuario y contraseña temporal.
+        Muestra usuario y contraseña temporal, y ofrece MANDARLAS.
 
         Va en un diálogo con botón y no en un snack que se va solo: en la base
         queda únicamente el hash, así que esta es la única vez que la
         contraseña existe legible. Si se pierde, hay que resetearla de nuevo.
+
+        Los botones de envío son los mismos que el alta de personal
+        (personal.py): abren el mail o el WhatsApp con el mensaje ya escrito.
+        Antes el reseteo sólo mostraba la clave y había que pasarla a mano.
+        Gemelo de PanelCredenciales.tsx.
         """
+        texto = resultado.get("texto_credenciales") or (
+            f"Usuario: {resultado.get('usuario', '—')} — "
+            f"Contraseña temporal: {resultado.get('password_temporal', '—')}")
+
+        # El mail primero cuando existe; si sólo dejó teléfono, WhatsApp es la
+        # única vía. Misma regla que el alta y que el botón "Contactar".
+        envios = []
+        if email:
+            envios.append(ft.TextButton(
+                "Enviar por mail",
+                style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                on_click=lambda e: self.page.launch_url(
+                    link_mail(email, ASUNTO_CREDENCIALES, texto)),
+            ))
+        if telefono:
+            envios.append(ft.TextButton(
+                "Enviar por WhatsApp",
+                style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                on_click=lambda e: self.page.launch_url(
+                    link_whatsapp(telefono, texto)),
+            ))
+
         dlg = ft.AlertDialog(
             modal=True,
             title=ft.Text(titulo, color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
@@ -549,6 +582,7 @@ class UsuariosView:
                 ], spacing=0, tight=True),
             ),
             actions=[
+                *envios,
                 ft.TextButton("Listo",
                               style=ft.ButtonStyle(color=Colors.ACCENT),
                               on_click=lambda e: (close_dialog(self.page, dlg),

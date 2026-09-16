@@ -150,6 +150,7 @@ def crear_token_acceso(
     username: str,
     roles: list[str],
     id_socio: int | None = None,
+    id_profesor: int | None = None,
 ) -> str:
     """
     Firma un JWT con la identidad y los roles de la sesión.
@@ -178,6 +179,12 @@ def crear_token_acceso(
         "username": username,
         "roles": roles,
         "id_socio": id_socio,
+        # Mismo criterio que id_socio, y por el mismo motivo: "Mis clases"
+        # filtra por Turno.id_profesor, y si cada endpoint resolviera la
+        # traversal persona -> empleado -> profesor por su cuenta, alcanzaría
+        # con que uno se olvidara de filtrar para que un profesor viera las
+        # clases de otro. Firmado acá, el cliente no lo puede alterar.
+        "id_profesor": id_profesor,
         "iat": ahora,
         "exp": ahora + timedelta(minutes=EXPIRACION_MINUTOS),
     }

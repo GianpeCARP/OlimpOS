@@ -203,7 +203,6 @@ def _a_rutina_out(rutina: Rutina, con_ejercicios: bool = True) -> RutinaOut:
         entrenador="Rutina propia" if es_propia else _nombre_entrenador(rutina.entrenador),
         nombre=rutina.nombre,
         objetivo=rutina.objetivo,
-        nivel=rutina.nivel,
         dias_por_semana=rutina.dias_por_semana,
         fecha_creacion=rutina.fecha_creacion,
         activo=bool(rutina.activo),
@@ -346,7 +345,6 @@ def crear_rutina(
         id_entrenador=entrenador.id_entrenador,
         nombre=datos.nombre.strip(),
         objetivo=datos.objetivo,
-        nivel=datos.nivel,
         dias_por_semana=datos.dias_por_semana,
         activo=True,
     )
@@ -523,7 +521,6 @@ def editar_rutina(
 
     rutina.nombre = datos.nombre.strip()
     rutina.objetivo = datos.objetivo
-    rutina.nivel = datos.nivel
     rutina.dias_por_semana = datos.dias_por_semana
 
     if datos.ejercicios is not None:

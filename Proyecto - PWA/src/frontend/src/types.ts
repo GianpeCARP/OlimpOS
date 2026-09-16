@@ -141,7 +141,6 @@ export interface Rutina {
   id_entrenador: number; // FK -> Entrenador, not null
   nombre: string; // varchar(100), not null
   objetivo?: string; // varchar(100)
-  nivel?: string; // varchar(20)
   dias_por_semana?: number;
   fecha_creacion: string; // date, default now()
   activo: boolean; // default true

@@ -192,6 +192,14 @@ def login(
     socio = db.query(Socio).filter(Socio.id_persona == persona.id_persona).first()
     id_socio = socio.id_socio if socio else None
 
+    # Lo mismo para el profesor: "Mis clases" filtra por este id, así que va
+    # firmado en el token y no se resuelve en cada endpoint. Se navega desde
+    # la persona porque Profesor cuelga de Empleado, no de Persona.
+    empleado = persona.empleado
+    id_profesor = (empleado.profesor.id_profesor
+                   if empleado is not None and empleado.profesor is not None
+                   else None)
+
     usuario.intentos_fallidos = 0
     usuario.ultimo_acceso = datetime.now(timezone.utc)
     db.commit()
@@ -202,6 +210,7 @@ def login(
         username=usuario.username,
         roles=roles,
         id_socio=id_socio,
+        id_profesor=id_profesor,
     )
 
     es_escritorio = (x_client_type or "").strip().lower() == CLIENTE_ESCRITORIO

@@ -21,6 +21,7 @@ interface PlanCardProps {
   /** False para roles con acceso de sólo lectura (p. ej. Entrenador). */
   puedeGestionar: boolean;
   onVerPlan: () => void;
+  onAsignar: () => void;
   onDarDeBaja: () => void;
   onActivar: () => void;
 }
@@ -29,6 +30,7 @@ export function PlanCard({
   plan,
   puedeGestionar,
   onVerPlan,
+  onAsignar,
   onDarDeBaja,
   onActivar,
 }: PlanCardProps) {
@@ -38,7 +40,7 @@ export function PlanCard({
   // renombre). Con el ternario solo, un objetivo fuera del mapa devolvía
   // undefined y el destructuring reventaba la tarjeta entera con un
   // TypeError. Ahora cae al ícono neutro, que es lo que ya hacen
-  // StatusBadge y LevelBadge con sus propios mapas.
+  // StatusBadge con su propio mapa.
   const { icono: Icono, color } =
     (plan.objetivo && CONFIG_OBJETIVO[plan.objetivo]) || CONFIG_POR_DEFECTO;
   const yaInactivo = plan.estado === EstadoDieta.INACTIVA;
@@ -103,8 +105,24 @@ export function PlanCard({
         <p className="mt-1 font-body text-xs text-text-muted">{plan.nutricionista}</p>
       </div>
 
-      <div className="mt-4">
-        <PrimaryButton label="Ver plan" onClick={onVerPlan} width="100%" />
+      {/* "Asignar" también acá, no sólo dentro del detalle. Asignar es la
+          acción frecuente —ya se sabe qué plan es— y tener que abrir el plan,
+          buscar el botón abajo y volver a salir era un rodeo por algo que se
+          decide mirando la tarjeta. "Ver plan" queda para cuando de verdad hay
+          que revisar las comidas. */}
+      <div className="mt-4 flex gap-2">
+        <div className="flex-1">
+          <PrimaryButton label="Ver plan" onClick={onVerPlan} width="100%" />
+        </div>
+        {puedeGestionar && (
+          <button
+            type="button"
+            onClick={onAsignar}
+            className="flex-1 shrink-0 rounded-md border border-border-idle px-4 py-2 font-body text-sm whitespace-nowrap text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-main"
+          >
+            Asignar
+          </button>
+        )}
       </div>
     </div>
   );

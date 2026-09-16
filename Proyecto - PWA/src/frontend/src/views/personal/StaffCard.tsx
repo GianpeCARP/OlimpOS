@@ -178,6 +178,10 @@ export function StaffCard({
         {contacto ? (
           <a
             href={contacto.href}
+            // Los dos destinos son páginas —wa.me y el redactor de Gmail—, así
+            // que los dos van en pestaña nueva y el panel no se pierde. Ojo: el
+            // mail NO es un mailto: (ver linkMail en utils/contacto.ts); con un
+            // mailto: esta pestaña quedaba en blanco y no pasaba nada.
             target="_blank"
             rel="noreferrer"
             title={contacto.titulo}

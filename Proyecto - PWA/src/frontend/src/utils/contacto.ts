@@ -43,12 +43,33 @@ export function linkWhatsapp(telefono: string, mensaje?: string): string {
   return `https://wa.me/${numero}${texto}`;
 }
 
-/** Link de mail con asunto y cuerpo ya cargados. */
+/**
+ * Base del redactor de Gmail en el navegador. `view=cm` es el modo redacción y
+ * `fs=1` lo abre en ventana completa en vez del recuadro chico de la esquina.
+ */
+const GMAIL_REDACTAR = 'https://mail.google.com/mail/?view=cm&fs=1';
+
+/**
+ * Link para escribirle un mail a alguien, con asunto y cuerpo ya cargados.
+ *
+ * Va al REDACTOR DE GMAIL, no a un `mailto:`, y es a propósito. Un `mailto:`
+ * necesita que la máquina tenga un programa de correo asociado, y las PC del
+ * gimnasio no lo tienen: el botón no hacía absolutamente nada. (Antes, encima,
+ * el link iba con target="_blank" y quedaba una pestaña muerta mostrando el
+ * "mailto:…", que fue como se descubrió todo esto.)
+ *
+ * El precio es que ata el botón a Gmail: quien lo use tiene que estar logueado
+ * en Google en ese navegador, y con varias cuentas se abre en la que esté
+ * activa. Es el canje que se eligió — un botón que anda siempre contra uno que
+ * no andaba nunca.
+ *
+ * Como ahora es una página de verdad, este link SÍ va en pestaña nueva.
+ */
 export function linkMail(email: string, asunto?: string, cuerpo?: string): string {
-  const params: string[] = [];
-  if (asunto) params.push(`subject=${encodeURIComponent(asunto)}`);
+  const params = [`to=${encodeURIComponent(email)}`];
+  if (asunto) params.push(`su=${encodeURIComponent(asunto)}`);
   if (cuerpo) params.push(`body=${encodeURIComponent(cuerpo)}`);
-  return `mailto:${email}${params.length > 0 ? `?${params.join('&')}` : ''}`;
+  return `${GMAIL_REDACTAR}&${params.join('&')}`;
 }
 
 /**

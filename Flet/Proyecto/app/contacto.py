@@ -43,14 +43,32 @@ def link_whatsapp(telefono: str, mensaje: str | None = None) -> str:
     return f"https://wa.me/{numero}{texto}"
 
 
+# Base del redactor de Gmail en el navegador. `view=cm` es el modo redacción y
+# `fs=1` lo abre en ventana completa en vez del recuadro chico de la esquina.
+GMAIL_REDACTAR = "https://mail.google.com/mail/?view=cm&fs=1"
+
+
 def link_mail(email: str, asunto: str | None = None, cuerpo: str | None = None) -> str:
-    """Link de mail con asunto y cuerpo ya cargados."""
-    partes = []
+    """
+    Link para escribirle un mail a alguien, con asunto y cuerpo ya cargados.
+
+    Va al REDACTOR DE GMAIL, no a un `mailto:`, y es a propósito. Un `mailto:`
+    necesita que la máquina tenga un programa de correo asociado, y la PC de
+    recepción no lo tiene: el botón no hacía absolutamente nada.
+
+    El precio es que ata el botón a Gmail: quien lo use tiene que estar
+    logueado en Google en ese navegador. Es el canje que se eligió — un botón
+    que anda siempre contra uno que no andaba nunca.
+
+    `page.launch_url()` con esto abre el navegador por defecto, igual que con
+    cualquier otro https.
+    """
+    partes = [f"to={quote(email or '', safe='')}"]
     if asunto:
-        partes.append(f"subject={quote(asunto)}")
+        partes.append(f"su={quote(asunto, safe='')}")
     if cuerpo:
-        partes.append(f"body={quote(cuerpo)}")
-    return f"mailto:{email}" + (("?" + "&".join(partes)) if partes else "")
+        partes.append(f"body={quote(cuerpo, safe='')}")
+    return GMAIL_REDACTAR + "&" + "&".join(partes)
 
 
 def limpiar_telefono(valor: str) -> str:
@@ -63,3 +81,10 @@ def limpiar_telefono(valor: str) -> str:
     el formulario entero.
     """
     return re.sub(r"[^+()\-\s0-9]", "", valor or "")
+
+
+# Asunto del mail de credenciales. Lo usan el alta de personal Y el reseteo de
+# contraseña en Usuarios: vive acá y no en una de las dos vistas para que no
+# haya dos copias que se desincronicen. Gemelo de ASUNTO_CREDENCIALES en
+# components/PanelCredenciales.tsx de la PWA.
+ASUNTO_CREDENCIALES = "Tus datos de acceso a OlimpOS"

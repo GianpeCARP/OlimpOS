@@ -77,8 +77,19 @@ export function PlanDetailModal({
   const grupos = comidas ? agruparPorDia(comidas) : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-lg border border-border-idle bg-surface-card p-6">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      // Cerrar tocando afuera. El click dentro del panel se frena con
+      // stopPropagation para que no burbujee hasta acá. Sin esto el único
+      // camino de salida era el botón "Cerrar" del pie, que en un plan con
+      // muchas comidas queda lejos: había que scrollear hasta abajo para poder
+      // cerrar algo que sólo se estaba mirando.
+      onClick={onClose}
+    >
+      <div
+        className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-lg border border-border-idle bg-surface-card p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-start justify-between gap-3">
           <div>
             <div

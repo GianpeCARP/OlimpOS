@@ -3,6 +3,13 @@ routers/portal.py
 -----------------
 El portal del socio: las siete pantallas donde ve SUS propios datos.
 
+Y, desde el 2026-09-16, "Mis clases" del PROFESOR. Vive en este router y no en
+/actividades porque se rige por la misma regla que todo lo de acá —ningún
+endpoint acepta un id por parámetro, todos filtran por lo que viene firmado en
+el token—, que es exactamente lo que hace falta para que un profesor no pueda
+mirar las clases de otro. Lo que cambia es de qué id se trata: `id_socio` para
+las siete de abajo, `id_profesor` para esa.
+
 LA REGLA QUE JUSTIFICA QUE ESTO SEA UN ROUTER APARTE
 -----------------------------------------------------
 Ningún endpoint de acá acepta un id de socio por parámetro. Todos usan
@@ -47,11 +54,11 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import (
-    Actividad, AsignacionDieta, AsignacionEntrenador, AsignacionRutina, Asistencia, Baja, Comida, Congelamiento, ContactoEmergencia, Dieta, Ejercicio, InscripcionActividad, Membresia, Pago, Patologia, Persona, RegistroComida, RegistroEjercicio, RegistroSalud, Reserva, Rutina, RutinaEjercicio, Socio, SocioPatologia, Telefono, Turno,
+    Actividad, AsignacionDieta, AsignacionEntrenador, AsignacionRutina, Asistencia, Baja, Comida, Congelamiento, ContactoEmergencia, Dieta, Ejercicio, InscripcionActividad, Membresia, Pago, Patologia, Persona, Profesor, RegistroComida, RegistroEjercicio, RegistroSalud, Reserva, Rutina, RutinaEjercicio, Socio, SocioPatologia, Telefono, Turno,
 )
 from permisos import Seccion
 from schemas import (
-    ActividadOut, AsignacionDietaOut, AsignacionEntrenadorOut, AsignacionRutinaOut, AsignarPatologiaRequest, AsistenciaOut, BajaPropiaRequest, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, CongelamientoOut, CongelarRequest, DietaOut, EjercicioOut, InscripcionOut, MedicionCrear, MedicionOut, MensajeResponse, MiComidaOut, MiCuotaOut, MiDiaDeDietaOut, MiDietaOut, MiDietaPropiaCrear, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRegistroEjercicioOut, MiRutinaOut, MiRutinaPropiaCrear, PagoOut, PatologiaDeSocioOut, PatologiaOut, RegistroComidaCrear, RegistroComidaOut, RegistroEjercicioCrear, RegistroEjercicioOut, ReservaOut, RutinaOut, TurnoDisponibleOut,
+    ActividadOut, AsignacionDietaOut, AsignacionEntrenadorOut, AsignacionRutinaOut, AsignarPatologiaRequest, AsistenciaOut, BajaPropiaRequest, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, CongelamientoOut, CongelarRequest, DietaOut, EjercicioOut, InscripcionOut, MedicionCrear, MedicionOut, MensajeResponse, MiComidaOut, MiCuotaOut, MiDiaDeDietaOut, MiDietaOut, MiDietaPropiaCrear, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRegistroEjercicioOut, MiRutinaOut, MiRutinaPropiaCrear, PagoOut, PatologiaDeSocioOut, PatologiaOut, RegistroComidaCrear, RegistroComidaOut, RegistroEjercicioCrear, RegistroEjercicioOut, ReservaOut, RutinaOut, TurnoDePanel, TurnoDisponibleOut,
 )
 from notificaciones import notificar_promocion_lista_espera
 from turnos import ocupacion, promover_de_lista_de_espera
@@ -59,6 +66,11 @@ from security import Sesion, requiere_seccion
 # El saldo del abono se deriva contando Reserva; la fórmula vive en el router
 # de actividades y se importa para no duplicarla.
 from routers.actividades import clases_restantes_de
+# "Mis clases" del profesor muestra EXACTAMENTE lo mismo que una línea del
+# panel de recepción: el turno con su cupo, sus ocupados y quiénes se anotaron.
+# Se reusa el armador en vez de escribir otro porque dos versiones del mismo
+# dato terminan diciendo cosas distintas el día que una se actualiza sola.
+from routers.recepcion import _a_turno_de_panel
 
 router = APIRouter(prefix="/portal", tags=["Portal del socio"])
 
@@ -90,6 +102,30 @@ def _mi_socio(db: Session, sesion: Sesion) -> Socio:
             detail="Tu ficha de socio ya no está disponible.",
         )
     return socio
+
+
+def _mi_profesor(db: Session, sesion: Sesion) -> Profesor:
+    """
+    El Profesor de la sesión activa. Gemelo de `_mi_socio`, y por los mismos
+    motivos: es la única puerta de entrada a "Mis clases".
+
+    Falla con 403 y no con 404 igual que aquél: no es que el recurso no
+    exista, es que quien pregunta no es profesor. Cae acá cualquier miembro
+    del staff que no dicte clases.
+    """
+    if sesion.id_profesor is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tu cuenta no está asociada a una ficha de profesor.",
+        )
+
+    profesor = db.get(Profesor, sesion.id_profesor)
+    if profesor is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tu ficha de profesor ya no está disponible.",
+        )
+    return profesor
 
 
 def _armar_domicilio(persona) -> str | None:
@@ -143,6 +179,52 @@ def _resumen_membresia(membresia) -> tuple[str, str, date | None]:
 # =============================================================================
 # MI PERFIL
 # =============================================================================
+
+# =============================================================================
+# MIS CLASES — la pantalla del profesor
+# =============================================================================
+
+@router.get("/mis-clases", response_model=list[TurnoDePanel])
+def mis_clases(
+    dias: int = 7,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MIS_CLASES)),
+):
+    """
+    Las clases que dicta este profesor, de la más cercana a la más lejana y
+    cada una con quiénes se anotaron.
+
+    El filtro es `Turno.id_profesor == sesion.id_profesor`, y ese id viene
+    firmado en el token: no hay parámetro que manipular para ver las clases de
+    otro. Es la misma garantía estructural que protege al portal del socio.
+
+    Los inscriptos vienen SIEMPRE. El panel del mostrador colapsa las salas
+    grandes para no tapar las clases chicas, pero eso no se aplica acá por
+    construcción: una sala abierta no tiene profesor, así que nunca entra en
+    esta lista. Y para el profesor la lista de anotados no es un detalle del
+    turno, es la pantalla entera.
+
+    `dias` se acota entre 1 y 31: el default de una semana es lo que el
+    profesor mira de verdad, y pedir un año serían cientos de turnos con sus
+    reservas para una pantalla que se lee de un vistazo.
+    """
+    profesor = _mi_profesor(db, sesion)
+
+    hoy = date.today()
+    hasta = hoy + timedelta(days=max(1, min(dias, 31)))
+    ahora = datetime.now()
+
+    turnos = (
+        db.query(Turno)
+        .filter(Turno.id_profesor == profesor.id_profesor,
+                Turno.fecha >= hoy,
+                Turno.fecha <= hasta)
+        .order_by(Turno.fecha, Turno.hora)
+        .all()
+    )
+
+    return [_a_turno_de_panel(db, t, t.actividad, ahora, True) for t in turnos]
+
 
 @router.get("/mi-perfil", response_model=MiPerfilOut)
 def mi_perfil(

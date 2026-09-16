@@ -24,6 +24,8 @@ export interface UsuarioListado {
   nombre: string;
   username: string;
   email?: string;
+  /** El principal. Para ofrecer las credenciales por WhatsApp si no hay mail. */
+  telefono?: string;
   rol: RolValue;
   rolLabel: string;
   ultimoAcceso?: string;
@@ -41,6 +43,7 @@ interface UsuarioApi {
   dni: string;
   nombre_completo: string;
   email: string | null;
+  telefono: string | null;
   roles: string[];
   activo: boolean;
   bloqueado: boolean;
@@ -74,6 +77,7 @@ function aUsuarioListado(u: UsuarioApi): UsuarioListado {
     nombre: u.nombre_completo,
     username: u.username,
     email: u.email ?? undefined,
+    telefono: u.telefono ?? undefined,
     rol,
     rolLabel: RolLabel[rol] ?? rol,
     ultimoAcceso: u.ultimo_acceso ?? undefined,
@@ -213,6 +217,8 @@ export async function desbloquearUsuario(idUsuario: number): Promise<UsuarioList
 }
 
 export interface ResultadoReseteo {
+  /** Hace falta para mostrarlo en el panel de entrega, igual que en el alta. */
+  username: string;
   passwordTemporal: string;
   mensaje: string;
   emailEnviado: boolean;
@@ -237,6 +243,7 @@ export async function resetearPassword(idUsuario: number): Promise<ResultadoRese
   });
   const c = aCredenciales(datos);
   return {
+    username: c.username,
     passwordTemporal: c.passwordTemporal,
     mensaje: c.mensaje,
     emailEnviado: c.emailEnviado,

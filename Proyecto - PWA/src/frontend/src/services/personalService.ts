@@ -210,8 +210,16 @@ interface AltaEmpleadoApi {
 
 /**
  * Alta de empleado. El backend crea Persona + Empleado + su especialidad en
- * una transacción, y genera las credenciales salvo que el rol sea Profesor
- * —que no inicia sesión—, en cuyo caso lo avisa en el mensaje.
+ * una transacción, y genera las credenciales si se pidió crear cuenta.
+ *
+ * Los CUATRO roles pueden tenerla. Hasta el 2026-09-16 el Profesor quedaba
+ * afuera —"da clases, no usa el sistema"— y el alta ignoraba la casilla
+ * avisándolo en el mensaje; el efecto real era que no tenía dónde ver su
+ * horario ni quién se anotó a su clase. Ahora tiene cuenta y su propia
+ * pantalla ("Mis clases"). Ver Rol.PROFESOR en el backend.
+ *
+ * `username` y `passwordTemporal` siguen siendo opcionales: vienen en null si
+ * no se pidió cuenta.
  */
 export async function crearEmpleado(input: EmpleadoInput): Promise<AltaEmpleadoResultado> {
   const datos = await pedir<AltaEmpleadoApi>('/personal', {

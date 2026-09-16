@@ -22,6 +22,7 @@ import { MisTurnosView } from './views/socio/MisTurnosView';
 import { MiProgresoView } from './views/socio/MiProgresoView';
 import { MiDietaView } from './views/socio/MiDietaView';
 import { MiCuotaView } from './views/socio/MiCuotaView';
+import { MisClasesView } from './views/profesor/MisClasesView';
 import { Snackbar } from './components/ui/Snackbar';
 import { ConfirmDialog } from './components/ui/ConfirmDialog';
 import { APP_NAME, Routes } from './config';
@@ -141,6 +142,12 @@ export default function App() {
             </Route>
             <Route element={<ProtectedRoute seccion={Routes.MI_CUOTA} />}>
               <Route path={`/${Routes.MI_CUOTA}`} element={<MiCuotaView />} />
+            </Route>
+
+            {/* La pantalla del profesor. Va con las personales y no con las de
+                gestión: muestra los turnos de UNA persona, los que dicta ella. */}
+            <Route element={<ProtectedRoute seccion={Routes.MIS_CLASES} />}>
+              <Route path={`/${Routes.MIS_CLASES}`} element={<MisClasesView />} />
             </Route>
           </Route>
         </Route>

@@ -93,9 +93,14 @@ por pedido. Se resuelve **una sola vez en el login** y el resultado viaja
 firmado dentro del token. El contrato de la API queda idéntico al del profesor
 (devuelve `roles`); lo que cambia es de dónde sale el dato.
 
-> **Caso especial:** un **Profesor** es empleado pero **no tiene rol de
-> sesión** — da clases, no usa el sistema. El alta no le crea cuenta aunque se
-> pida, y avisa por qué.
+> **Caso especial (hasta el 2026-09-16):** un **Profesor** era empleado pero
+> **no tenía rol de sesión** — "da clases, no usa el sistema"—, y el alta no le
+> creaba cuenta aunque se pidiera. **Eso cambió:** ahora `Rol.PROFESOR` existe,
+> el alta le crea cuenta como a cualquier otro, y tiene una pantalla propia
+> ("Mis clases"). No es un rol de gestión: no entra a ninguna de las nueve
+> secciones del staff, sólo ve los turnos que dicta él. El motivo del cambio es
+> el que la nota vieja no contemplaba: sin cuenta, el profesor se enteraba de
+> su horario por WhatsApp y no tenía forma de ver quién se había anotado.
 
 ### 2.4. Bootstrapping: el sistema se configura solo
 

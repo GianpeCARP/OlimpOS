@@ -783,8 +783,11 @@ class ActividadCrear(BaseModel):
     # Tope de 180 igual que el CHECK de la base: existe para atajar el dedo
     # que escribe 1500 queriendo 15, no para discutir cuanto es razonable.
     minutos_tolerancia: int = Field(default=15, ge=0, le=180)
-    # gt=0 y no ge=0: una clase con cupo cero no la puede tomar nadie.
-    cupo_default: int = Field(ge=1)
+    # ge=1 y no ge=0: una clase con cupo cero no la puede tomar nadie.
+    # le=100 por el mismo motivo que el tope de minutos_tolerancia: ningún
+    # gimnasio dicta una clase de 500 personas, así que un número así es un
+    # dedo de más, no una decisión. Atajarlo acá evita un turno imposible.
+    cupo_default: int = Field(ge=1, le=100)
     # La clase suelta se carga como un Plan_Actividad, no acá.
     horas_anticipacion_cancelacion: int = Field(default=0, ge=0)
 
@@ -794,6 +797,30 @@ class PlanActividadCrear(BaseModel):
     tipo_limite: TipoLimite
     cantidad: int = Field(ge=1)
     precio: float = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _cantidad_posible_para_el_tipo(self):
+        """
+        El tope depende del tipo, así que no puede ser un `le=` del campo.
+
+        Una semana tiene 7 días y un mes 31. Sin esto se podía cargar "8 clases
+        por semana" o "32 por mes", que no son planes caros: son planes
+        IMPOSIBLES — el socio los compra y nunca puede usar lo que pagó, porque
+        no existen tantos días donde gastarlos.
+        """
+        topes = {
+            TipoLimite.POR_SEMANA: (7, "por semana"),
+            TipoLimite.POR_MES: (31, "por mes"),
+            # Una clase suelta es una: si fueran dos, es un abono.
+            TipoLimite.CLASE_SUELTA: (1, "de clase suelta"),
+        }
+        tope, etiqueta = topes[self.tipo_limite]
+        if self.cantidad > tope:
+            raise PydanticCustomError(
+                "cantidad_imposible",
+                f"Un plan {etiqueta} no puede tener más de {tope} clase(s).",
+            )
+        return self
 
 
 class ComprarPlanRequest(BaseModel):
@@ -1262,7 +1289,12 @@ class RutinaCrear(BaseModel):
     """
     nombre: str = Field(min_length=1, max_length=100)
     objetivo: str | None = None
-    nivel: str | None = None
+    # Sin `nivel`: se retiró el 2026-09-16. Era un varchar libre que el
+    # formulario llenaba con Principiante/Intermedio/Avanzado, y es una
+    # etiqueta ambigua —el "intermedio" de uno es el "avanzado" de otro— que
+    # no servía para filtrar nada útil. Lo que sí sirve es `dias_por_semana`,
+    # que ya estaba. La COLUMNA queda en la base (nullable, sin usar): sacarla
+    # sería un cambio de esquema por un dato de presentación.
     dias_por_semana: int | None = Field(default=None, ge=1, le=7)
     id_entrenador: int | None = None
     ejercicios: list[RutinaEjercicioCrear] = []
@@ -1271,7 +1303,7 @@ class RutinaCrear(BaseModel):
 class RutinaEditarRequest(BaseModel):
     nombre: str = Field(min_length=1, max_length=100)
     objetivo: str | None = None
-    nivel: str | None = None
+    # Sin `nivel`: ver RutinaCrearRequest.
     dias_por_semana: int | None = Field(default=None, ge=1, le=7)
     id_entrenador: int | None = None
     # None = los ejercicios no se tocan. Una lista (aunque sea vacía) REEMPLAZA
@@ -1290,7 +1322,6 @@ class MiRutinaPropiaCrear(BaseModel):
     """
     nombre: str = Field(min_length=1, max_length=100)
     objetivo: str | None = Field(default=None, max_length=100)
-    nivel: str | None = Field(default=None, max_length=20)
     dias_por_semana: int | None = Field(default=None, ge=1, le=7)
     # Al menos uno: una rutina sin ejercicios no sirve para entrenar ni para el
     # circuito. El orden/día los arma el cliente.
@@ -1305,7 +1336,6 @@ class RutinaOut(BaseModel):
     entrenador: str
     nombre: str
     objetivo: str | None = None
-    nivel: str | None = None
     dias_por_semana: int | None = None
     fecha_creacion: date | None = None
     activo: bool
@@ -1630,6 +1660,10 @@ class UsuarioAdminOut(BaseModel):
     dni: str
     nombre_completo: str
     email: str | None = None
+    # El principal. Hace falta para que el panel pueda ofrecer mandar las
+    # credenciales por WhatsApp a quien no dejó mail, igual que hace el alta
+    # de personal.
+    telefono: str | None = None
     # Derivados de las tablas de rol, no de una columna. Una persona puede
     # tener más de uno (el dueño que además entrena).
     roles: list[str]
@@ -1699,7 +1733,6 @@ class MiRutinaOut(BaseModel):
     """
     id_rutina: int
     nombre: str
-    nivel: str | None = None
     objetivo: str | None = None
     dias_por_semana: int | None = None
     entrenador: str

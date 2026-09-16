@@ -25,11 +25,18 @@ import {
 // hacer en un panel de administración. (Hoy sigue teniendo acceso técnico a
 // estas pantallas, ver el comentario en PERMISOS; se corrige cuando exista
 // su portal propio.)
+//
+// El Profesor SÍ se lista, aunque su fila quede entera en "sin acceso": es
+// personal del gimnasio, y que se vea que no toca NADA de gestión es
+// información útil, no un hueco. Su única pantalla ("Mis clases") no aparece
+// acá porque esta tabla recorre SECCIONES_ADMIN, y esa no es una sección de
+// gestión — es suya, como "Mi rutina" lo es del socio.
 const ROLES_MOSTRADOS: RolValue[] = [
   Roles.DUENO,
   Roles.RECEPCIONISTA,
   Roles.ENTRENADOR,
   Roles.NUTRICIONISTA,
+  Roles.PROFESOR,
 ];
 
 /** Las acciones de la matriz que hoy tienen una pantalla donde aplicarse. */

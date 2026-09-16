@@ -392,7 +392,8 @@ class ActividadesView:
 
         # Profesores asignados
         if act["profesores"]:
-            chips = [_pill(p, Colors.TEXT_SECONDARY, con_icono=ft.Icons.PERSON_ROUNDED)
+            chips = [_pill(p["nombre"], Colors.TEXT_SECONDARY,
+                           con_icono=ft.Icons.PERSON_ROUNDED)
                      for p in act["profesores"]]
         else:
             chips = [ft.Text("Sin profesores asignados", color=Colors.TEXT_MUTED,
@@ -490,10 +491,21 @@ class ActividadesView:
                               value=str(act["horas_cancelacion"]) if editando else "0")
 
         def guardar():
+            n_cupo = self._entero(cupo, 1)
+            # Mismo tope que el backend (ActividadCrear.cupo_default, le=100).
+            # Se valida acá también para no gastar un viaje de red en algo que
+            # se ve mirando el campo: ningún gimnasio dicta una clase de 500
+            # personas, así que un número así es un dedo de más.
+            if not 1 <= n_cupo <= 100:
+                show_snack(self.page,
+                           "El cupo por turno va de 1 a 100.",
+                           Colors.STATUS_DANGER)
+                return
+
             datos = {
                 "nombre": (nombre.value or "").strip(),
                 "descripcion": (desc.value or "").strip() or None,
-                "cupo_default": self._entero(cupo, 1),
+                "cupo_default": n_cupo,
                 "precio_clase_suelta": self._entero(precio, 0),
                 "horas_anticipacion_cancelacion": self._entero(horas, 0),
             }
@@ -549,10 +561,28 @@ class ActividadesView:
                              value=str(plan["precio"]) if editando else "")
 
         def guardar():
+            tipo_limite = tipo.value or "POR_MES"
+            n_cant = self._entero(cant, 1)
+
+            # El tope depende del tipo, igual que en el backend
+            # (PlanActividadCrear._cantidad_posible_para_el_tipo): una semana
+            # tiene 7 días y un mes 31. "8 clases por semana" no es un plan
+            # caro, es un plan IMPOSIBLE — el socio lo paga y nunca puede usar
+            # lo que compró, porque no existen tantos días donde gastarlo.
+            topes = {"POR_SEMANA": (7, "por semana"),
+                     "POR_MES": (31, "por mes"),
+                     "CLASE_SUELTA": (1, "de clase suelta")}
+            tope, etiqueta = topes.get(tipo_limite, (31, "por mes"))
+            if not 1 <= n_cant <= tope:
+                show_snack(self.page,
+                           f"Un plan {etiqueta} va de 1 a {tope} clase(s).",
+                           Colors.STATUS_DANGER)
+                return
+
             datos = {
                 "nombre": (nombre.value or "").strip(),
-                "tipo_limite": tipo.value or "POR_MES",
-                "cantidad": self._entero(cant, 1),
+                "tipo_limite": tipo_limite,
+                "cantidad": n_cant,
                 "precio": self._entero(precio, 0),
             }
             self._resolver(
@@ -594,12 +624,15 @@ class ActividadesView:
         cada fila se guarda al toque y no hay botón "Guardar" al pie.
         """
         profesores = app_state.get_profesores()
-        asignados  = set(act["profesores"])
+        # Por ID y no por nombre. Comparando nombres, dos profesores que se
+        # llaman igual salían los dos como "Asignado" aunque sólo uno lo
+        # estuviera — y tocar a uno parecía afectar al otro. Ver el comentario
+        # de get_actividades en state.py.
+        asignados = {p["id"] for p in act["profesores"]}
 
         filas = []
         for prof in profesores:
-            esta = prof["nombre"] in asignados
-            filas.append(self._fila_profesor(act, prof, esta))
+            filas.append(self._fila_profesor(act, prof, prof["id"] in asignados))
 
         open_dialog(self.page, form_dialog(
             self.page,

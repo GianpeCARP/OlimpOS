@@ -57,6 +57,9 @@ class Sesion:
     # Viene firmado en el token: las pantallas del portal lo usan para filtrar
     # y el cliente no puede alterarlo. Ver crear_token_acceso.
     id_socio: int | None = None
+    # Lo mismo para el Profesor: es con lo que "Mis clases" filtra los turnos
+    # que dicta esta persona. None para todos los demás.
+    id_profesor: int | None = None
 
     @property
     def id_usuario(self) -> int:
@@ -134,7 +137,9 @@ def obtener_sesion(
     if not isinstance(roles, list):
         raise _NO_AUTENTICADO
 
-    return Sesion(usuario=usuario, roles=roles, id_socio=payload.get("id_socio"))
+    return Sesion(usuario=usuario, roles=roles,
+                  id_socio=payload.get("id_socio"),
+                  id_profesor=payload.get("id_profesor"))
 
 
 def requiere_seccion(seccion: str, minimo: str = Acceso.LECTURA):

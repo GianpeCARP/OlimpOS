@@ -2,7 +2,6 @@ export { Sidebar } from './Sidebar';
 export { Topbar } from './Topbar';
 export { StatCard } from './StatCard';
 export { StatusBadge } from './StatusBadge';
-export { LevelBadge } from './LevelBadge';
 export { PrimaryButton } from './PrimaryButton';
 export { InputField } from './InputField';
 export { SelectField, type SelectOption } from './SelectField';

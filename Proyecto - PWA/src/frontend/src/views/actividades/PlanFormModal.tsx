@@ -88,6 +88,13 @@ export function PlanFormModal({ idActividad, plan, onClose, onGuardado }: PlanFo
               icon={Hash}
               type="number"
               min={1}
+              // El tope depende del tipo, igual que en el backend
+              // (PlanActividadCrear._cantidad_posible_para_el_tipo): una semana
+              // tiene 7 días y un mes 31. "8 clases por semana" no es un plan
+              // caro, es un plan IMPOSIBLE — el socio lo paga y nunca puede
+              // usar lo que compró.
+              max={tipoLimite === 'POR_SEMANA' ? 7 : tipoLimite === 'CLASE_SUELTA' ? 1 : 31}
+              hint={tipoLimite === 'POR_SEMANA' ? 'Hasta 7: una por día' : 'Hasta 31'}
               name="cantidad"
               required
             />

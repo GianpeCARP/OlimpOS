@@ -76,6 +76,12 @@ class Seccion:
     MI_CUOTA = "mi-cuota"
     MIS_TURNOS = "mis-turnos"
 
+    # --- Pantalla propia del profesor ---
+    # Mismo criterio que las "mi-" de arriba: devuelve los turnos de UNA
+    # persona, los que dicta ella. No es una vista filtrada de ACTIVIDADES —
+    # esa es el ABM del catálogo y el profesor no tiene nada que hacer ahí.
+    MIS_CLASES = "mis-clases"
+
 
 class Accion:
     """
@@ -109,10 +115,11 @@ class Accion:
     VER_HISTORIAL_MEDICO = "verHistorialMedico"
 
 
-# Las siete pantallas del portal del socio, apagadas de una. Todo rol de staff
-# las tiene en NINGUNO: "Mi rutina" es la rutina DE UNO, no tiene sentido que
-# la abra un entrenador (para eso tiene /rutinas, que las lista todas).
-_SIN_PORTAL_SOCIO = {
+# Las pantallas PERSONALES, apagadas de una: las siete del portal del socio
+# más "Mis clases" del profesor. Todo rol de staff las tiene en NINGUNO: "Mi
+# rutina" es la rutina DE UNO, no tiene sentido que la abra un entrenador
+# (para eso tiene /rutinas, que las lista todas).
+_SIN_PANTALLAS_PROPIAS = {
     Seccion.MI_PERFIL: Acceso.NINGUNO,
     Seccion.MI_RUTINA: Acceso.NINGUNO,
     Seccion.MIS_ACTIVIDADES: Acceso.NINGUNO,
@@ -120,7 +127,12 @@ _SIN_PORTAL_SOCIO = {
     Seccion.MI_DIETA: Acceso.NINGUNO,
     Seccion.MI_CUOTA: Acceso.NINGUNO,
     Seccion.MIS_TURNOS: Acceso.NINGUNO,
+    Seccion.MIS_CLASES: Acceso.NINGUNO,
 }
+
+# Nombre anterior, mantenido por si algo lo importa. El set creció: ya no es
+# sólo el portal del socio.
+_SIN_PORTAL_SOCIO = _SIN_PANTALLAS_PROPIAS
 
 # Espejo del anterior: el socio no entra a NINGUNA pantalla de gestión.
 _SIN_ADMIN = {
@@ -278,6 +290,7 @@ PERMISOS: dict[str, dict] = {
     Rol.SOCIO: {
         "secciones": {
             **_SIN_ADMIN,
+            Seccion.MIS_CLASES: Acceso.NINGUNO,
             Seccion.MI_PERFIL: Acceso.TOTAL,
             Seccion.MI_RUTINA: Acceso.TOTAL,
             Seccion.MIS_ACTIVIDADES: Acceso.TOTAL,
@@ -285,6 +298,27 @@ PERMISOS: dict[str, dict] = {
             Seccion.MI_DIETA: Acceso.TOTAL,
             Seccion.MI_CUOTA: Acceso.TOTAL,
             Seccion.MIS_TURNOS: Acceso.TOTAL,
+        },
+        "acciones": _todas_en(False),
+    },
+
+    # El Profesor dicta las clases grupales. NO es un rol de gestión: no entra
+    # a ninguna de las nueve secciones del staff, ni siquiera a ACTIVIDADES —
+    # el catálogo (precios, cupos, qué actividades existen) es configuración
+    # del Dueño, y el profesor no tiene nada que decidir ahí.
+    #
+    # Lo único suyo es "Mis clases": los turnos que dicta ÉL, con la lista de
+    # quién se anotó. Antes esto no existía y el profesor se enteraba de su
+    # horario por WhatsApp.
+    #
+    # Todas las acciones en False, igual que el Socio, y por el mismo motivo:
+    # son acciones sobre el gimnasio (cobrar, dar de baja, gestionar turnos).
+    # Mirar su propia clase no es un permiso sobre terceros.
+    Rol.PROFESOR: {
+        "secciones": {
+            **_SIN_ADMIN,
+            **_SIN_PANTALLAS_PROPIAS,
+            Seccion.MIS_CLASES: Acceso.LECTURA,
         },
         "acciones": _todas_en(False),
     },

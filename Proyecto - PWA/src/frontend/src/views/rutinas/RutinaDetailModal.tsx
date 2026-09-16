@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { PlayCircle, X } from 'lucide-react';
-import { LevelBadge, PrimaryButton, StatusBadge } from '../../components/ui';
+import { PrimaryButton, StatusBadge } from '../../components/ui';
 import { mensajeDeError } from '../../services/api';
 import {
   obtenerRutina,
@@ -75,7 +75,6 @@ export function RutinaDetailModal({
               {rutina.nombre}
             </h2>
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-              {rutina.nivel && <LevelBadge nivel={rutina.nivel} />}
               <StatusBadge status={rutina.estado} />
             </div>
           </div>
