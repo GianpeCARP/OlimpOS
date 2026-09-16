@@ -130,6 +130,11 @@ export function MiProgresoView() {
   const [grasa, setGrasa] = useState('');
   const [masaMuscular, setMasaMuscular] = useState('');
   const [observaciones, setObservaciones] = useState('');
+  // Grasa y masa muscular van plegadas. No se miden pesándose: salen de un
+  // estudio (bioimpedancia, DEXA) que nadie se hace todos los días, y dos
+  // campos al lado del peso invitaban a inventar un número cada mañana. El
+  // peso sí es diario; la composición, cuando haya un estudio.
+  const [conEstudio, setConEstudio] = useState(false);
 
   useEffect(() => {
     if (idSocio === null) return;
@@ -182,6 +187,7 @@ export function MiProgresoView() {
       setGrasa('');
       setMasaMuscular('');
       setObservaciones('');
+      setConEstudio(false);
       showSnack('Listo, guardamos tu medición de hoy', colors.statusOk);
     } catch (err) {
       showSnack(mensajeDeError(err), colors.statusDanger);
@@ -300,7 +306,7 @@ export function MiProgresoView() {
                       que la comparación sirva de algo. Sólo el peso es obligatorio.
                     </p>
 
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <InputField
                         label="Peso (kg)"
                         value={peso}
@@ -318,21 +324,40 @@ export function MiProgresoView() {
                         name="altura"
                         hint="Ej: 1.78"
                       />
-                      <InputField
-                        label="Grasa corporal (%)"
-                        value={grasa}
-                        onChange={setGrasa}
-                        type="number"
-                        name="grasa_corporal"
-                      />
-                      <InputField
-                        label="Masa muscular (kg)"
-                        value={masaMuscular}
-                        onChange={setMasaMuscular}
-                        type="number"
-                        name="masa_muscular"
-                      />
                     </div>
+
+                    {conEstudio ? (
+                      <div className="mt-4 rounded-md border border-border-idle p-3">
+                        <p className="mb-3 font-body text-xs text-text-muted">
+                          Copiá los valores de tu último estudio de composición corporal
+                          (bioimpedancia o DEXA). No hace falta cargarlos todos los días.
+                        </p>
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                          <InputField
+                            label="Grasa corporal (%)"
+                            value={grasa}
+                            onChange={setGrasa}
+                            type="number"
+                            name="grasa_corporal"
+                          />
+                          <InputField
+                            label="Masa muscular (kg)"
+                            value={masaMuscular}
+                            onChange={setMasaMuscular}
+                            type="number"
+                            name="masa_muscular"
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConEstudio(true)}
+                        className="mt-3 shrink-0 font-body text-sm whitespace-nowrap text-primary-volt hover:underline"
+                      >
+                        + Tengo un estudio de composición corporal
+                      </button>
+                    )}
 
                     <div className="mt-4">
                       <InputField

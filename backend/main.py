@@ -14,6 +14,7 @@ Arranque:
 """
 
 import threading
+from datetime import date
 import os
 from contextlib import asynccontextmanager
 
@@ -29,6 +30,7 @@ from csrf import middleware_csrf
 from sqlalchemy import text
 from database import Base, SessionLocal, calentar_pool, engine
 from seeder import ejecutar_seeder
+from bajas import aplicar_bajas_vencidas
 from turnos import generar_turnos
 from videos import RUTA_HTTP, VIDEOS_DIR
 
@@ -87,10 +89,21 @@ _latido_activo = threading.Event()
 
 def _latido():
     """Mantiene despierto el compute de Neon y vivas las conexiones del pool."""
+    ultimo_dia = None
     while not _latido_activo.wait(SEGUNDOS_ENTRE_LATIDOS):
         try:
             with engine.connect() as con:
                 con.execute(text("SELECT 1"))
+            # Una vez por día, las bajas programadas que ya corren (bajas.py).
+            # Un backend que no se reinicia en semanas no puede depender del
+            # arranque para aplicarlas.
+            if ultimo_dia != date.today():
+                db = SessionLocal()
+                try:
+                    aplicar_bajas_vencidas(db)
+                    ultimo_dia = date.today()
+                finally:
+                    db.close()
         except Exception:  # noqa: BLE001
             # Que falle un latido no es noticia: puede ser un corte de red de
             # un segundo. El próximo lo vuelve a intentar, y si la base está
@@ -150,6 +163,10 @@ async def lifespan(app: FastAPI):
         #
         # Lo importante es que nadie tenga que cargar un turno a mano nunca
         # más: si el horario está declarado, las clases existen.
+        aplicadas = aplicar_bajas_vencidas(db)
+        if aplicadas:
+            print(f"Bajas programadas aplicadas: {aplicadas}")
+
         resultado = generar_turnos(db)
         if resultado["creados"]:
             print(f"Turnos generados: {resultado['creados']} "

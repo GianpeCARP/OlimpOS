@@ -1,6 +1,6 @@
 import { useEffect, useState, type SubmitEvent } from 'react';
-import { Award, IdCard, Mail, Phone, User } from 'lucide-react';
-import { InputField, PrimaryButton, SelectField, type SelectOption } from '../../components/ui';
+import { Award, IdCard, Mail, User } from 'lucide-react';
+import { InputField, PrimaryButton, SelectField, type SelectOption, TelefonoField } from '../../components/ui';
 import {
   colors,
   RolEmpleado,
@@ -14,7 +14,6 @@ import {
   type AltaEmpleadoResultado,
   type EmpleadoListado,
 } from '../../services/personalService';
-import { limpiarTelefono } from '../../utils/contacto';
 import { useUiStore } from '../../store/uiStore';
 // El panel de entrega de credenciales vivía acá adentro. Se movió a
 // components/ porque el reseteo de contraseña en Usuarios necesita el mismo.
@@ -193,14 +192,7 @@ export function EmpleadoFormModal({ empleado, onClose, onGuardado }: EmpleadoFor
           <InputField label="Email" value={email} onChange={setEmail} icon={Mail} type="email" name="email" />
           {/* El teléfono se filtra mientras se tipea: el campo aceptaba letras
               y el error recién aparecía al guardar el formulario entero. */}
-          <InputField
-            label="Teléfono"
-            value={telefono}
-            onChange={(v: string) => setTelefono(limpiarTelefono(v))}
-            icon={Phone}
-            type="tel"
-            name="telefono"
-          />
+          <TelefonoField label="Teléfono" value={telefono} onChange={setTelefono} name="telefono" />
           <p className="-mt-2 font-body text-xs text-text-muted">
             Email o teléfono: al menos uno de los dos, para poder contactarlo.
           </p>

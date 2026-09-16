@@ -148,10 +148,22 @@ D:\OlimpOs\
 - **Promociones:** sólo porcentuales, guardadas en el `Pago`. Tienen que estar
   vigentes **el día que arranca el período cobrado**, no hoy. Listarlas pide la
   sección Cobros; gestionarlas pide `gestionPromociones` (sólo el Dueño).
+- **No se cobran cuotas por adelantado** (`backend/renovacion.py`). Con un período en
+  curso (activo sin vencer o en pausa) no se cobra otro, ni en el mostrador ni online:
+  se renueva desde el día siguiente al vencimiento y la membresía nueva arranca HOY.
+  Motivo del dueño: quien paga meses adelantados congela el precio y el gimnasio
+  pierde con cada aumento. Las pantallas reciben `puede_renovar` + motivo y no ofrecen
+  el cobro. `Pago.es_adelanto` queda siempre en false. Un abono de actividad que no
+  entra en la cuota vigente se cobra junto con la próxima cuota.
+- **No hay renovación automática.** Cada período se cobra a mano (mostrador) o con un
+  checkout de Mercado Pago de pago único (preferencia, no suscripción): si el socio no
+  paga, la cuota simplemente vence. `Pago.id_tipo_membresia` guarda qué plan se cobró.
 - **El alta de socio no elige plan.** Ofrece "Cobrar ahora", que abre Cobros con el
   socio ya elegido.
-- **Los ingresos del negocio los ve sólo el Dueño** (`verIngresos`: métrica del mes y
-  gráfico por día, mes o año).
+- **La facturación la ve sólo el Dueño** (`verIngresos`: métrica del mes y gráfico por
+  día, mes o año). Cada cobro suelto, en cambio, aparece en "Actividad reciente" también
+  para el Recepcionista, con qué se pagó entre paréntesis (se deriva de la membresía,
+  la inscripción o la reserva del pago).
 
 **Asistencia**
 - Con la cuota vencida **ficha igual** y se muestra un aviso.
@@ -172,6 +184,19 @@ D:\OlimpOs\
   no tienen cliente de correo). Vive en `utils/contacto.ts` y `app/contacto.py`.
 - **Un empleado necesita mail o teléfono.** Un socio tiene **varios teléfonos**, con
   uno principal.
+- **Teléfonos con código de país:** todo campo de teléfono usa `TelefonoField` /
+  `telefono_field` (selector de país, Argentina por defecto) y guarda el número completo
+  (`+54 3415551234`). Los viejos sin `+` se leen como argentinos, sin migrar.
+  `linkWhatsapp` agrega el 9 de celular argentino.
+- **Datos personales del socio** (fecha de nacimiento, domicilio, contacto de
+  emergencia) se cargan en el **alta y la edición**, nunca al cobrar. El contacto de
+  emergencia se llama desde un botón de la grilla, que ven todos los que ven Socios.
+- **La baja de un socio no le quita los días pagos** (`backend/bajas.py`). Con cuota
+  vigente queda PROGRAMADA (`Baja.pendiente`) para el día siguiente al vencimiento y
+  hasta entonces sigue activo; se puede anular mientras tanto, y con la baja pendiente
+  no se renueva. Sin cuota vigente es inmediata. Se aplica sola al arrancar el backend,
+  una vez por día desde el latido y al leer socios. La voluntaria deja viva la cuenta
+  de acceso; la de mora o administrativa la desactiva.
 - **Bajas lógicas y reversibles.** Dar de baja un empleado lo desasigna de sus
   actividades, pero no toca los turnos ya programados. **Usuarios no reactiva la
   cuenta de alguien dado de baja** (eso se hace desde Personal) **ni crea personas**:
@@ -194,6 +219,11 @@ D:\OlimpOs\
 - **Clase suelta = `Plan_Actividad` con `tipo_limite=CLASE_SUELTA`.** Las clases
   restantes **se cuentan** en `Reserva`, no se guardan. Topes: 7 por semana, 31 por
   mes, 1 la suelta; cupo por turno de 1 a 100.
+- **Sin horario no hay turnos.** Los turnos los genera el backend (4 semanas) desde
+  `Horario_Actividad`, que se carga en Actividades con su **profesor** (tiene que estar
+  asignado a esa actividad): de ahí salen "Mis clases", "Mis turnos" y la agenda del
+  personal. **Actividades la gestionan el Dueño y el Recepcionista** con los mismos
+  permisos.
 - **El Profesor tiene cuenta, sólo para "Mis clases"** en la PWA. En Flet no tiene
   secciones.
 - **Registros vs planes.** `Registro_*` es un log append-only por fecha, nunca se pisa.

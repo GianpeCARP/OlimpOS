@@ -232,7 +232,6 @@ export function CobrosView() {
 
   const cobrarMembresiaClick = () => {
     if (!socioSeleccionado || !tipoElegido) return;
-    const yaTiene = cuenta?.tieneMembresia;
     // El monto del diálogo sale de la vista previa cuando hay promo: mostrar
     // el precio de lista y después cobrar otro sería pedir una confirmación
     // sobre una cifra que no es la que se va a registrar.
@@ -242,9 +241,7 @@ export function CobrosView() {
       : '';
     confirmDialog(
       `¿Cobrar "${tipoElegido.nombre}"?`,
-      `Se cobran ${formatearMoneda(aCobrar)} en ${OPCIONES_METODO.find((o) => o.value === metodo)?.label}.${detallePromo}${
-        yaTiene ? ' Se suma a partir del vencimiento actual, sin perder los días ya pagados.' : ''
-      }`,
+      `Se cobran ${formatearMoneda(aCobrar)} en ${OPCIONES_METODO.find((o) => o.value === metodo)?.label}.${detallePromo} El período arranca hoy.`,
       () => {
         setOcupado(true);
         cobrar(socioSeleccionado.idSocio, tipoElegido.id_tipo_membresia, metodo, {
@@ -305,8 +302,8 @@ export function CobrosView() {
     if (!socioSeleccionado) return;
     const total = tipo.precio_actual + plan.precio;
     confirmDialog(
-      `¿Renovar membresía y cobrar "${plan.nombre}"?`,
-      `Su membresía actual no llega a cubrir todo el mes de este plan, así que se renueva junto con el plan y queda cubriéndolo entero. Se cobran ${formatearMoneda(tipo.precio_actual)} de ${tipo.nombre} + ${formatearMoneda(plan.precio)} de ${plan.nombre} = ${formatearMoneda(total)} en ${metodoLabel()}.` +
+      `¿Cobrar membresía y "${plan.nombre}"?`,
+      `No tiene la cuota vigente, así que se cobra junto con el plan y los dos arrancan hoy. Se cobran ${formatearMoneda(tipo.precio_actual)} de ${tipo.nombre} + ${formatearMoneda(plan.precio)} de ${plan.nombre} = ${formatearMoneda(total)} en ${metodoLabel()}.` +
         (planViejo ? ` El plan actual (${planViejo.nombrePlan}) se reemplaza sin devolución.` : ''),
       () => {
         setOcupado(true);
@@ -340,10 +337,22 @@ export function CobrosView() {
 
     membresiaCubreNuevoPlan(socioSeleccionado.idSocio)
       .then((cubre) => {
-        if (!cubre && tipoElegido) {
+        if (cubre) {
+          cobrarSoloPlan(plan, planViejo);
+        } else if (cuenta?.puedeRenovar && tipoElegido) {
+          // Sin cuota vigente se cobran las dos cosas juntas, empezando hoy.
           cobrarComboMembresiaYPlan(plan, tipoElegido, planViejo);
         } else {
-          cobrarSoloPlan(plan, planViejo);
+          // Con cuota vigente que no cubre el mes del abono ya no hay combo:
+          // sería renovar por adelantado. El abono se cobra con la próxima
+          // cuota, cuando venza.
+          showSnack(
+            `La cuota no cubre el mes entero de "${plan.nombre}". Cobralo junto con la próxima cuota` +
+              (cuenta?.renovableDesde
+                ? `, desde el ${formatearFechaConAnio(parsearFecha(cuenta.renovableDesde))}.`
+                : ', cuando venza.'),
+            colors.statusWarn,
+          );
         }
       })
       .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger));
@@ -465,7 +474,16 @@ export function CobrosView() {
                       : 'Todavía no tiene ninguna membresía.'}
                   </p>
 
-                  {tiposMembresia && tiposMembresia.length > 0 && (
+                  {/* Sin adelantos: con la cuota vigente o en pausa no se ofrece
+                      cobrar otra, se dice desde cuándo (el motivo lo redacta el
+                      backend, que es quien aplica la regla). */}
+                  {!cuenta.puedeRenovar && (
+                    <p className="mt-3 rounded-md border border-border-idle bg-surface-hover px-3 py-2 font-body text-sm text-text-secondary">
+                      {cuenta.motivoNoRenovar}
+                    </p>
+                  )}
+
+                  {cuenta.puedeRenovar && tiposMembresia && tiposMembresia.length > 0 && (
                     <div className="mt-3 flex flex-wrap items-end gap-3">
                       <div className="w-56">
                         <SelectField

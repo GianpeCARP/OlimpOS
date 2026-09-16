@@ -102,14 +102,12 @@ export const Routes = {
   // gestión como las de arriba, no del portal del socio — el socio ficha
   // pasando su tarjeta, no entrando a una pantalla.
   ASISTENCIA: 'asistencia',
-  // ABM del catálogo (Actividad + Plan_Actividad): cupo, precio, ventana de
-  // cancelación. Exclusiva del Dueño en el .md, igual criterio que
-  // Alta/Baja de Personal — es configuración de negocio, no operativa del
-  // día a día como Asistencia o Socios.
+  // ABM del catálogo (Actividad + Plan_Actividad), el horario semanal y los
+  // turnos. Dueño y Recepcionista: el .md la hacía exclusiva del Dueño, pero
+  // sin horarios no hay turnos, y armarlos es trabajo del mostrador.
   ACTIVIDADES: 'actividades',
   // Cobrar membresía, deudas, planes de actividad y clases sueltas. Mismo
-  // par de roles que Asistencia (Dueño + Recepcionista): es operativo del
-  // día a día, no configuración de negocio como Actividades.
+  // par de roles que Asistencia y Actividades (Dueño + Recepcionista).
   COBROS: 'cobros',
 
   // --- Portal del socio ---
@@ -376,7 +374,9 @@ export const PERMISOS: Record<RolValue, PermisosRol> = {
       [Routes.NUTRICION]: Acceso.TOTAL,
       [Routes.USUARIOS]: Acceso.TOTAL,
       [Routes.ASISTENCIA]: Acceso.TOTAL,
-      [Routes.ACTIVIDADES]: Acceso.NINGUNO,
+      // Igual que el Dueño (2026-09-16): horarios, profesores y planes son lo
+      // que hace que existan turnos, y eso se resuelve en el mostrador.
+      [Routes.ACTIVIDADES]: Acceso.TOTAL,
       [Routes.COBROS]: Acceso.TOTAL,
       ...SIN_ACCESO_A_PORTAL_SOCIO,
     },

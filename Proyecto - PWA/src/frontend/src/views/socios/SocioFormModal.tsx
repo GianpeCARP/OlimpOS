@@ -1,7 +1,7 @@
 import { useState, type SubmitEvent } from 'react';
 import { useNavigate } from 'react-router';
-import { IdCard, Mail, Phone, User } from 'lucide-react';
-import { InputField, PrimaryButton } from '../../components/ui';
+import { Cake, HeartPulse, House, IdCard, Mail, MapPin, User } from 'lucide-react';
+import { InputField, PrimaryButton, TelefonoField } from '../../components/ui';
 import { PanelCredenciales } from '../../components/PanelCredenciales';
 import { Acceso, colors, Routes } from '../../config';
 import { useAccesoSeccion } from '../../hooks/usePermisos';
@@ -56,6 +56,31 @@ export function SocioFormModal({ socio, onClose, onGuardado }: SocioFormModalPro
   const [apellido, setApellido] = useState(socio?.apellido ?? '');
   const [email, setEmail] = useState(socio?.email ?? '');
   const [telefono, setTelefono] = useState(socio?.telefono ?? '');
+  // Datos personales: los pedía el esquema desde siempre y ninguna pantalla
+  // los preguntaba. Van en el alta (con la persona enfrente) y en la edición,
+  // NO al cobrar: el cobro es otra conversación.
+  const [fechaNacimiento, setFechaNacimiento] = useState(socio?.fechaNacimiento ?? '');
+  const [calle, setCalle] = useState(socio?.calle ?? '');
+  const [numeroCalle, setNumeroCalle] = useState(socio?.numeroCalle ?? '');
+  const [localidad, setLocalidad] = useState(socio?.localidad ?? '');
+  const [emergenciaNombre, setEmergenciaNombre] = useState(socio?.emergenciaNombre ?? '');
+  const [emergenciaTelefono, setEmergenciaTelefono] = useState(socio?.emergenciaTelefono ?? '');
+  const [emergenciaParentesco, setEmergenciaParentesco] = useState(
+    socio?.emergenciaParentesco ?? '',
+  );
+  const datosPersonales = {
+    fechaNacimiento,
+    calle,
+    numeroCalle,
+    localidad,
+    emergenciaNombre,
+    emergenciaTelefono,
+    emergenciaParentesco,
+  };
+  // Tope del input de fecha: nadie nace mañana. El backend lo valida igual,
+  // porque con el teclado se puede escribir cualquier cosa.
+  const hoy = new Date();
+  const hoyIso = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-${String(hoy.getDate()).padStart(2, '0')}`;
 
   const [guardando, setGuardando] = useState(false);
   // Las credenciales del alta. Mientras hay, el modal muestra el panel de
@@ -78,6 +103,7 @@ export function SocioFormModal({ socio, onClose, onGuardado }: SocioFormModalPro
           apellido,
           email,
           telefono,
+          datosPersonales,
         });
         showSnack('Socio actualizado correctamente', colors.statusOk);
         onGuardado(actualizado);
@@ -85,7 +111,7 @@ export function SocioFormModal({ socio, onClose, onGuardado }: SocioFormModalPro
         return;
       }
 
-      const resultado = await crearSocio({ dni, nombre, apellido, email, telefono });
+      const resultado = await crearSocio({ dni, nombre, apellido, email, telefono, datosPersonales });
       // La tabla se actualiza YA, aunque el modal siga abierto con las
       // credenciales: el socio existe desde este momento.
       onGuardado(resultado.socio);
@@ -140,7 +166,7 @@ export function SocioFormModal({ socio, onClose, onGuardado }: SocioFormModalPro
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-md rounded-lg border border-border-idle bg-surface-card p-6"
+        className="max-h-[90dvh] w-full max-w-lg overflow-y-auto overscroll-contain rounded-lg border border-border-idle bg-surface-card p-6"
       >
         <h2 className="font-heading text-lg font-semibold text-text-main">
           {esEdicion ? 'Editar socio' : 'Nuevo socio'}
@@ -163,7 +189,55 @@ export function SocioFormModal({ socio, onClose, onGuardado }: SocioFormModalPro
           </div>
 
           <InputField label="Email" value={email} onChange={setEmail} icon={Mail} type="email" name="email" />
-          <InputField label="Teléfono" value={telefono} onChange={setTelefono} icon={Phone} type="tel" name="telefono" />
+          <TelefonoField label="Teléfono" value={telefono} onChange={setTelefono} name="telefono" />
+
+          <InputField
+            label="Fecha de nacimiento"
+            value={fechaNacimiento}
+            onChange={setFechaNacimiento}
+            icon={Cake}
+            type="date"
+            min="1900-01-01"
+            max={hoyIso}
+            name="fechaNacimiento"
+          />
+
+          <p className="-mb-2 font-body text-xs font-semibold tracking-wide text-text-muted uppercase">
+            Domicilio
+          </p>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-2">
+              <InputField label="Calle" value={calle} onChange={setCalle} icon={House} name="calle" />
+            </div>
+            <InputField label="Número" value={numeroCalle} onChange={setNumeroCalle} name="numeroCalle" />
+          </div>
+          <InputField label="Localidad" value={localidad} onChange={setLocalidad} icon={MapPin} name="localidad" />
+
+          <p className="-mb-2 font-body text-xs font-semibold tracking-wide text-text-muted uppercase">
+            Contacto de emergencia
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <InputField
+              label="Nombre"
+              value={emergenciaNombre}
+              onChange={setEmergenciaNombre}
+              icon={HeartPulse}
+              name="emergenciaNombre"
+            />
+            <InputField
+              label="Parentesco"
+              value={emergenciaParentesco}
+              onChange={setEmergenciaParentesco}
+              hint="Ej: madre, pareja"
+              name="emergenciaParentesco"
+            />
+          </div>
+          <TelefonoField
+            label="Teléfono de emergencia"
+            value={emergenciaTelefono}
+            onChange={setEmergenciaTelefono}
+            name="emergenciaTelefono"
+          />
 
           {!esEdicion && (
             <p className="font-body text-xs text-text-muted">

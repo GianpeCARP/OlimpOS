@@ -12,6 +12,7 @@
 import flet as ft
 from app.config import Colors, Fonts, Radius, Routes, alpha
 from app.state import app_state
+from app.components.agenda_turnos import agenda_turnos
 from app.components.ui import (build_topbar, section_card, primary_button,
                                secondary_button, icon_action, input_field,
                                select_field, empty_state, divider_row,
@@ -92,6 +93,11 @@ class ActividadesView:
         # actividad sin horario no la ve nadie.
         cuerpo = ft.Column([
             self._grilla_semanal(horarios),
+            ft.Container(height=24),
+            # Gemela de <AgendaTurnos /> en ActividadesAdminView.tsx: el
+            # horario dice cuándo hay clase; la agenda, quién se anotó a cada una.
+            agenda_turnos(self.page,
+                          on_cambio=lambda: self.router.navigate(Routes.ACTIVIDADES)),
             ft.Container(height=24),
             ft.Text("Catálogo", color=Colors.TEXT_PRIMARY, size=16,
                     weight=ft.FontWeight.BOLD),
@@ -234,6 +240,12 @@ class ActividadesView:
         no espere al próximo arranque: quien acaba de cargar "Yoga los lunes
         19:00" espera ver los turnos, y si aparecieran recién mañana pensaría
         que no se guardó y lo cargaría de nuevo.
+
+        El PROFESOR se elige acá (gemelo de HorarioFormModal.tsx): pasa a cada
+        turno generado y de ahí sale "Mis clases". Antes no se pedía, y un
+        profesor asignado a la actividad igual veía su pantalla vacía. Sólo se
+        ofrecen los asignados a esa actividad y, si hay uno solo, viene elegido;
+        el cupo arranca en el de la actividad.
         """
         vigentes = [a for a in actividades if a["activa"]]
         if not vigentes:
@@ -246,6 +258,27 @@ class ActividadesView:
         dia_ref = ft.Ref[ft.Dropdown]()
         hora_ref = ft.Ref[ft.TextField]()
         cupo_ref = ft.Ref[ft.TextField]()
+        prof_ref = ft.Ref[ft.Dropdown]()
+        sin_profesor = "0"
+
+        def opciones_profesor(actividad: dict) -> tuple[list, str]:
+            asignados = actividad["profesores"]
+            opciones = [ft.dropdown.Option(key=sin_profesor, text="Sin profesor")] + [
+                ft.dropdown.Option(key=str(p["id"]), text=p["nombre"]) for p in asignados
+            ]
+            elegido = str(asignados[0]["id"]) if len(asignados) == 1 else sin_profesor
+            return opciones, elegido
+
+        def al_elegir_actividad(e):
+            actividad = next((a for a in vigentes if str(a["id"]) == act_ref.current.value), None)
+            if actividad is None:
+                return
+            prof_ref.current.options, prof_ref.current.value = opciones_profesor(actividad)
+            cupo_ref.current.value = str(actividad["cupo"])
+            prof_ref.current.update()
+            cupo_ref.current.update()
+
+        opciones_iniciales, profesor_inicial = opciones_profesor(vigentes[0])
 
         def guardar():
             hora = (hora_ref.current.value or "").strip() if hora_ref.current else ""
@@ -270,12 +303,14 @@ class ActividadesView:
                            Colors.STATUS_DANGER)
                 return
 
+            id_profesor = int(prof_ref.current.value or sin_profesor)
             resultado = app_state.crear_horario({
                 "id_actividad": int(act_ref.current.value),
                 "id_sede": 1,
                 "dia_semana": int(dia_ref.current.value),
                 "hora": f"{h:02d}:{m:02d}:00",
                 "cupo": cupo,
+                "id_profesor": id_profesor or None,
             })
             self._resolver(resultado)
 
@@ -292,6 +327,7 @@ class ActividadesView:
                     options=[ft.dropdown.Option(key=str(a["id"]), text=a["nombre"])
                              for a in vigentes],
                     value=str(vigentes[0]["id"]),
+                    on_select=al_elegir_actividad,
                     color=Colors.TEXT_PRIMARY, bgcolor=Colors.BG_INPUT,
                     border_color=Colors.BORDER, focused_border_color=Colors.ACCENT,
                     border_radius=Radius.MD,
@@ -311,7 +347,16 @@ class ActividadesView:
                             icon=ft.Icons.SCHEDULE_ROUNDED),
                 ft.Container(height=12),
                 input_field("Cupo", "Ej: 20", ref=cupo_ref,
-                            icon=ft.Icons.GROUP_ROUNDED),
+                            icon=ft.Icons.GROUP_ROUNDED,
+                            value=str(vigentes[0]["cupo"])),
+                ft.Container(height=12),
+                ft.Dropdown(
+                    ref=prof_ref, label="Profesor",
+                    options=opciones_iniciales, value=profesor_inicial,
+                    color=Colors.TEXT_PRIMARY, bgcolor=Colors.BG_INPUT,
+                    border_color=Colors.BORDER, focused_border_color=Colors.ACCENT,
+                    border_radius=Radius.MD,
+                ),
             ],
             on_save=guardar,
             texto_guardar="Crear y generar turnos",
@@ -445,8 +490,13 @@ class ActividadesView:
         )
 
     def _fila_plan(self, act: dict, plan: dict) -> ft.Container:
-        etiqueta = (f"{plan['cantidad']} clases/mes" if plan["tipo"] == "POR_MES"
-                    else f"{plan['cantidad']}x por semana")
+        # CLASE_SUELTA aparte (igual que etiquetaLimite en la PWA): caía en el
+        # else y se leía "1x por semana", como si fuera un abono semanal.
+        if plan["tipo"] == "CLASE_SUELTA":
+            etiqueta = "Una clase"
+        else:
+            etiqueta = (f"{plan['cantidad']} clases/mes" if plan["tipo"] == "POR_MES"
+                        else f"{plan['cantidad']}x por semana")
         activo = plan["activo"]
 
         return ft.Container(

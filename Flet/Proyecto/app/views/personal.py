@@ -10,7 +10,7 @@ from app.config import Colors, Routes, alpha
 from app.permisos import Accion
 from app.state import app_state
 from app.components.ui import (build_topbar, confirm_dialog, status_badge, primary_button,
-                                input_field, show_snack, open_dialog, close_dialog)
+                                input_field, telefono_field, show_snack, open_dialog, close_dialog)
 from app.contacto import ASUNTO_CREDENCIALES, limpiar_telefono, link_mail, link_whatsapp
 
 
@@ -299,8 +299,8 @@ class PersonalView:
                                 icon=ft.Icons.EMAIL_OUTLINED,
                                 value=empleado["email"] if is_edit else ""),
                     ft.Container(height=12),
-                    input_field("Teléfono", "Ej: 3415551234", ref=telefono_ref,
-                                icon=ft.Icons.PHONE_OUTLINED),
+                    telefono_field("Teléfono", "Ej: 3415551234", ref=telefono_ref,
+                                   value=empleado["telefono"] if is_edit else ""),
                     ft.Container(height=12),
                     input_field("Título", "Ej: Profesor de Educación Física",
                                 ref=titulo_ref, icon=ft.Icons.SCHOOL_OUTLINED,

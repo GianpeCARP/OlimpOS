@@ -6,17 +6,21 @@ import { mensajeDeError } from '../../services/api';
 import {
   listarSocios,
   darDeBajaSocio,
+  anularBajaSocio,
   reactivarSocio,
   type SocioListado,
 } from '../../services/sociosService';
 import { useUiStore } from '../../store/uiStore';
 import { useAccesoSeccion, usePuedeAccion } from '../../hooks/usePermisos';
 import { useAuthStore } from '../../store/authStore';
+import { formatearFecha } from '../../utils/format';
+import { parsearFecha } from '../../utils/fechas';
 import { EntrenadoresModal } from './EntrenadoresModal';
 import { PatologiasModal } from './PatologiasModal';
 import { SocioFormModal } from './SocioFormModal';
 import { SocioTableRow } from './SocioTableRow';
 import { SortableHeader } from './SortableHeader';
+import { EmergenciaModal } from './EmergenciaModal';
 import { TelefonosModal } from './TelefonosModal';
 
 // Equivalente de SociosView (estructura_socios.md).
@@ -110,6 +114,7 @@ export function SociosView() {
   const [historial, setHistorial] = useState<SocioListado | null>(null);
   const [entrenadores, setEntrenadores] = useState<SocioListado | null>(null);
   const [telefonos, setTelefonos] = useState<SocioListado | null>(null);
+  const [emergencia, setEmergencia] = useState<SocioListado | null>(null);
 
   useEffect(() => {
     let cancelado = false;
@@ -177,14 +182,19 @@ export function SociosView() {
     (socio: SocioListado) => {
       confirmDialog(
         `¿Dar de baja a ${socio.nombreCompleto}?`,
-        'El socio deja de figurar como activo y pierde el acceso a la app. Esta acción queda registrada en Auditoría.',
+        'Si tiene la cuota paga, la baja corre desde el día siguiente al vencimiento y hasta entonces sigue entrenando: no pierde los días que pagó. Si no, es inmediata y pierde el acceso a la app.',
         () => {
           darDeBajaSocio(socio.idSocio)
-            .then(() => {
+            .then((actualizado) => {
               // Forma impersonal: el participio en masculino fijo le erraba
               // al género de la mitad de los socios (mismo criterio que
               // PersonalView).
-              showSnack(`Se dio de baja a ${socio.nombreCompleto}`, colors.statusOk);
+              showSnack(
+                actualizado.bajaProgramada
+                  ? `La baja de ${socio.nombreCompleto} queda para el ${formatearFecha(parsearFecha(actualizado.bajaProgramada))}`
+                  : `Se dio de baja a ${socio.nombreCompleto}`,
+                colors.statusOk,
+              );
               recargar();
             })
             .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger));
@@ -197,6 +207,18 @@ export function SociosView() {
   // Sin diálogo de confirmación: reactivar es una acción de bajo riesgo y
   // reversible (siempre se puede volver a dar de baja), a diferencia de
   // pedirBaja.
+  const anularBaja = useCallback(
+    (socio: SocioListado) => {
+      anularBajaSocio(socio.idSocio)
+        .then(() => {
+          showSnack(`Se anuló la baja de ${socio.nombreCompleto}`, colors.statusOk);
+          recargar();
+        })
+        .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger));
+    },
+    [showSnack, recargar],
+  );
+
   const activar = useCallback(
     (socio: SocioListado) => {
       reactivarSocio(socio.idSocio)
@@ -315,8 +337,10 @@ export function SociosView() {
                           onEditar={() => setModal({ socio })}
                           onEntrenadores={() => setEntrenadores(socio)}
                           onTelefonos={() => setTelefonos(socio)}
+                          onEmergencia={() => setEmergencia(socio)}
                           onDarDeBaja={() => pedirBaja(socio)}
                           onActivar={() => activar(socio)}
+                          onAnularBaja={() => anularBaja(socio)}
                           onHistorialMedico={() => setHistorial(socio)}
                         />
                       ))}
@@ -349,6 +373,8 @@ export function SociosView() {
           cambiar cuál es el principal cambia lo que el formulario de edición
           va a mostrar la próxima vez que se abra. Sin recargar, editar al
           socio después reenviaría el número viejo. */}
+      {emergencia && <EmergenciaModal socio={emergencia} onClose={() => setEmergencia(null)} />}
+
       {telefonos && (
         <TelefonosModal
           socio={telefonos}

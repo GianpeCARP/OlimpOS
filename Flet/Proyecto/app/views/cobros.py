@@ -302,8 +302,19 @@ class CobrosView:
 
         fila.append(primary_button("Cobrar renovación" if tiene_membresia else "Cobrar membresía",
                                    on_click=self._cobrar_membresia))
-        controles.append(ft.Row(fila, spacing=12,
-                                vertical_alignment=ft.CrossAxisAlignment.CENTER))
+        # Sin adelantos (backend/renovacion.py): con la cuota vigente o en
+        # pausa no se ofrece cobrar otra; se muestra el motivo, que dice desde
+        # cuándo. Gemelo del aviso de CobrosView.tsx.
+        if cuenta["puede_renovar"]:
+            controles.append(ft.Row(fila, spacing=12,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER))
+        else:
+            controles.append(ft.Container(
+                content=ft.Text(cuenta["motivo_no_renovar"], color=Colors.TEXT_SECONDARY,
+                                size=13, font_family=Fonts.BODY),
+                bgcolor=Colors.BG_INPUT, border_radius=Radius.SM,
+                padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+            ))
 
         # Las tres cifras, no solo la final: quien cobra tiene que poder
         # decirle al socio cuánto era y cuánto se le descontó.
@@ -777,7 +788,7 @@ class CobrosView:
             self.page,
             f"¿Cobrar \"{tipo['nombre']}\"?",
             f"Se cobran {_moneda(a_cobrar)} en {self._metodo}.{detalle_promo} "
-            f"Se suma a partir del vencimiento actual, sin perder los días ya pagados.",
+            f"El período arranca hoy.",
             on_confirm=confirmar, texto_confirmar="Cobrar",
         ))
 
@@ -793,6 +804,16 @@ class CobrosView:
         """
         chequeo = app_state.puede_comprar_actividad(self._socio["id"])
         tipo = getattr(self, "_tipo_elegido", None)
+        cuenta = app_state.get_cuenta_socio(self._socio["id"])
+
+        # Con la cuota vigente que no cubre el mes del abono ya no hay combo:
+        # sería renovar por adelantado. El abono va con la próxima cuota.
+        if not chequeo["puede"] and not cuenta["puede_renovar"]:
+            show_snack(self.page,
+                       f"La cuota no cubre el mes entero de \"{plan['nombre']}\". "
+                       "Cobralo junto con la próxima cuota, cuando venza.",
+                       Colors.STATUS_WARN)
+            return
 
         if not chequeo["puede"] and tipo:
             total = tipo["precio"] + plan["precio"]
@@ -805,9 +826,9 @@ class CobrosView:
 
             open_dialog(self.page, confirm_dialog(
                 self.page,
-                f"¿Renovar membresía y cobrar \"{plan['nombre']}\"?",
-                f"{chequeo['motivo'] or 'La membresía actual no cubre este plan.'} "
-                f"Se renueva junto con el plan: {_moneda(tipo['precio'])} de {tipo['nombre']} + "
+                f"¿Cobrar membresía y \"{plan['nombre']}\"?",
+                "No tiene la cuota vigente, así que se cobra junto con el plan y los dos "
+                f"arrancan hoy: {_moneda(tipo['precio'])} de {tipo['nombre']} + "
                 f"{_moneda(plan['precio'])} de {plan['nombre']} = {_moneda(total)} "
                 f"en {self._metodo}.",
                 on_confirm=combo, texto_confirmar="Cobrar las dos",

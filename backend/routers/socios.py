@@ -36,6 +36,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, selectinload
 
+from bajas import aplicar_baja, aplicar_bajas_vencidas, baja_pendiente, fecha_de_baja, pendientes_por_socio
 from auth import generar_password_temporal, generar_username, hashear_password
 from database import get_db
 from models import (
@@ -138,6 +139,33 @@ def _telefono_principal(db: Session, id_persona: int) -> str | None:
     return telefono.numero if telefono else None
 
 
+def _emergencia_principal(persona: Persona) -> ContactoEmergencia | None:
+    """El contacto de emergencia principal (o el primero cargado)."""
+    contactos = sorted(persona.contactos_emergencia or [],
+                       key=lambda c: (not c.principal, c.id_contacto_emergencia))
+    return contactos[0] if contactos else None
+
+
+def _datos_personales(persona: Persona) -> dict:
+    """
+    Los campos de Persona que viajan en SocioOut además del nombre y el
+    contacto. Una sola función para los dos armadores (el de a uno y el en
+    lote): si cada uno los copiara, tarde o temprano uno se olvida de alguno.
+    Lee contactos_emergencia por la relación: el armador en lote la trae con
+    selectinload, así que no suma una consulta por fila.
+    """
+    emergencia = _emergencia_principal(persona)
+    return {
+        "fecha_nacimiento": persona.fecha_nacimiento,
+        "calle": persona.calle,
+        "numero_calle": persona.numero_calle,
+        "localidad": persona.localidad,
+        "emergencia_nombre": emergencia.nombre if emergencia else None,
+        "emergencia_telefono": emergencia.telefono if emergencia else None,
+        "emergencia_parentesco": emergencia.parentesco if emergencia else None,
+    }
+
+
 def _listar_socios_en_lote(db: Session, consulta) -> list[SocioOut]:
     """
     Arma la grilla de socios con un numero FIJO de consultas.
@@ -168,12 +196,14 @@ def _listar_socios_en_lote(db: Session, consulta) -> list[SocioOut]:
                   # se veia "vacia pero funcionando", que es peor que un error.
                   selectinload(Socio.persona).selectinload(Persona.telefonos),
                   selectinload(Socio.persona).selectinload(Persona.usuario),
+                  selectinload(Socio.persona).selectinload(Persona.contactos_emergencia),
               )
               .all())
     if not socios:
         return []
 
     ids = [s.id_socio for s in socios]
+    bajas_programadas = pendientes_por_socio(db, ids)
 
     # TODAS las membresias de esos socios en una sola consulta, ya ordenadas
     # igual que en `_membresia_vigente`. Al recorrerlas se queda la PRIMERA de
@@ -213,7 +243,9 @@ def _listar_socios_en_lote(db: Session, consulta) -> list[SocioOut]:
             apellido=persona.apellido,
             email=persona.email,
             telefono=telefono,
+            **_datos_personales(persona),
             tiene_cuenta=persona.usuario is not None,
+            baja_programada=bajas_programadas.get(socio.id_socio),
             id_tipo_membresia=membresia.id_tipo_membresia if membresia else None,
             plan=(membresia.tipo.nombre if membresia and membresia.tipo else "Sin plan"),
             estado=_estado_socio(socio, membresia),
@@ -240,7 +272,9 @@ def _a_socio_out(db: Session, socio: Socio) -> SocioOut:
         apellido=persona.apellido,
         email=persona.email,
         telefono=_telefono_principal(db, persona.id_persona),
+        **_datos_personales(persona),
         tiene_cuenta=persona.usuario is not None,
+        baja_programada=(baja.fecha_baja if (baja := baja_pendiente(db, socio.id_socio)) else None),
         id_tipo_membresia=membresia.id_tipo_membresia if membresia else None,
         plan=(membresia.tipo.nombre if membresia and membresia.tipo else "Sin plan"),
         estado=_estado_socio(socio, membresia),
@@ -257,6 +291,8 @@ def listar_socios(
     Lista los socios. Alcanza con acceso de LECTURA a la sección: un
     Entrenador necesita ver a quién le asigna una rutina.
     """
+    # Las bajas programadas cuya fecha llegó se aplican al leer (bajas.py).
+    aplicar_bajas_vencidas(db)
     return _listar_socios_en_lote(db, db.query(Socio).order_by(Socio.id_socio.desc()))
 
 
@@ -484,8 +520,34 @@ def editar_socio(
     persona.nombre = datos.nombre.strip()
     persona.apellido = datos.apellido.strip()
     persona.email = datos.email
+    persona.fecha_nacimiento = datos.fecha_nacimiento
+    persona.calle = (datos.calle or "").strip() or None
+    persona.numero_calle = (datos.numero_calle or "").strip() or None
+    persona.localidad = (datos.localidad or "").strip() or None
     socio.objetivo = datos.objetivo
     socio.observaciones = datos.observaciones
+
+    # Contacto de emergencia principal: se crea o se actualiza, nunca se borra
+    # desde acá (mismo criterio que "Mi perfil" del socio). Para crearlo hace
+    # falta nombre Y teléfono: la tabla los exige, y un contacto sin número no
+    # sirve para lo único que existe, que es llamarlo.
+    nombre_em = (datos.emergencia_nombre or "").strip()
+    telefono_em = (datos.emergencia_telefono or "").strip()
+    if nombre_em or telefono_em:
+        emergencia = _emergencia_principal(persona)
+        if emergencia is None:
+            if not (nombre_em and telefono_em):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="El contacto de emergencia necesita nombre y teléfono.")
+            db.add(ContactoEmergencia(
+                id_persona=persona.id_persona, nombre=nombre_em, telefono=telefono_em,
+                parentesco=(datos.emergencia_parentesco or "").strip() or None,
+                principal=True))
+        else:
+            emergencia.nombre = nombre_em or emergencia.nombre
+            emergencia.telefono = telefono_em or emergencia.telefono
+            emergencia.parentesco = (datos.emergencia_parentesco or "").strip() or None
 
     # El teléfono vive en su propia tabla: se actualiza el principal o se crea
     # uno si la persona no tenía ninguno cargado.
@@ -523,13 +585,11 @@ def dar_de_baja(
     rutinas — y esos datos siguen siendo del gimnasio aunque la persona se
     haya ido. Además impediría reactivarla si vuelve.
 
-    Se registra en la tabla Baja con su motivo, y se cancela la membresía
-    vigente: dejarla activa haría que un socio de baja siguiera figurando al
-    día en los listados de cobros.
-
-    La cuenta de acceso también se desactiva. Es lo que cierra el agujero que
-    encontró la auditoría del 2026-08-03: un socio dado de baja seguía
-    pudiendo entrar a la app.
+    SI TIENE UN PERÍODO PAGO EN CURSO, la baja queda PROGRAMADA para el día
+    siguiente al vencimiento (bajas.py): hasta entonces sigue activo y no
+    pierde los días que pagó. Sin período en curso es inmediata: se desactiva
+    la ficha y la cuenta de acceso (el agujero de la auditoría del 2026-08-03:
+    un socio dado de baja seguía pudiendo entrar a la app).
     """
     socio = db.get(Socio, id_socio)
     if socio is None:
@@ -537,24 +597,53 @@ def dar_de_baja(
     if not socio.activo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail=f"{socio.persona.nombre_completo} ya estaba dado de baja.")
+    ya = baja_pendiente(db, socio.id_socio)
+    if ya is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(f"{socio.persona.nombre_completo} ya tiene la baja programada para el "
+                    f"{ya.fecha_baja.strftime('%d/%m/%Y')}."))
 
-    hoy = date.today()
-    socio.activo = False
-
+    fecha = fecha_de_baja(db, socio.id_socio)
+    programada = fecha > date.today()
     db.add(Baja(
         id_socio=socio.id_socio,
-        fecha_baja=hoy,
+        fecha_baja=fecha,
         tipo=datos.tipo.value,
         motivo=datos.motivo,
+        pendiente=programada,
     ))
+    if not programada:
+        db.flush()
+        from turnos import promover_de_lista_de_espera
+        for id_turno in aplicar_baja(db, socio, desactivar_cuenta=True):
+            promover_de_lista_de_espera(db, id_turno)
 
-    membresia = _membresia_vigente(db, socio.id_socio)
-    if membresia and membresia.estado == "ACTIVA":
-        membresia.estado = "CANCELADA"
+    db.commit()
+    db.refresh(socio)
+    return _a_socio_out(db, socio)
 
-    if socio.persona.usuario is not None:
-        socio.persona.usuario.activo = False
 
+@router.post("/{id_socio}/anular-baja", response_model=SocioOut)
+def anular_baja(
+    id_socio: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.ALTA_BAJA_SOCIOS)),
+):
+    """
+    Anula una baja PROGRAMADA que todavía no ocurrió (el socio cambió de idea).
+
+    La fila se borra: una baja que nunca se aplicó no es historial de nada. Una
+    baja ya aplicada no se anula: para eso está reactivar.
+    """
+    socio = db.get(Socio, id_socio)
+    if socio is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="El socio no existe.")
+    pendiente = baja_pendiente(db, socio.id_socio)
+    if pendiente is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"{socio.persona.nombre_completo} no tiene una baja programada.")
+    db.delete(pendiente)
     db.commit()
     db.refresh(socio)
     return _a_socio_out(db, socio)

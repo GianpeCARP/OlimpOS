@@ -32,7 +32,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Membresia, Pago, Persona, Socio, Turno
+from models import InscripcionActividad, Membresia, Pago, Persona, Reserva, Socio, Turno
 from permisos import Accion, Seccion
 from schemas import (
     DashboardStats, EventoActividad, IngresosPorPeriodo, Metrica, PuntoIngresos, SocioResumen,
@@ -237,6 +237,31 @@ def ingresos_por_periodo(
                               puntos=puntos)
 
 
+def _concepto_de_pago(db: Session, pago: Pago) -> str | None:
+    """
+    Qué se pagó, en pocas palabras: "Mensual", "Yoga: 8 clases al mes",
+    "clase suelta de Yoga".
+
+    No hay una columna "concepto": se deriva de a qué está atado el pago (una
+    membresía, una inscripción a un plan, o la reserva de una clase suelta).
+    Un "pagó $15.000" sin esto obligaba a abrir Cobros para saber de qué.
+    """
+    if pago.membresia is not None and pago.membresia.tipo is not None:
+        return pago.membresia.tipo.nombre
+    if pago.id_inscripcion is not None:
+        inscripcion = db.get(InscripcionActividad, pago.id_inscripcion)
+        if inscripcion is not None and inscripcion.plan is not None:
+            plan = inscripcion.plan
+            actividad = plan.actividad.nombre if plan.actividad else "?"
+            if plan.tipo_limite == "CLASE_SUELTA":
+                return f"clase suelta de {actividad}"
+            return f"{actividad}: {plan.nombre}"
+    reserva = db.query(Reserva).filter(Reserva.id_pago == pago.id_pago).first()
+    if reserva is not None and reserva.turno is not None and reserva.turno.actividad:
+        return f"clase suelta de {reserva.turno.actividad.nombre}"
+    return None
+
+
 @router.get("/actividad", response_model=list[EventoActividad])
 def actividad_reciente(
     db: Session = Depends(get_db),
@@ -257,26 +282,28 @@ def actividad_reciente(
     eventos: list[EventoActividad] = []
     hoy = date.today()
 
-    ve_ingresos = puede_accion(sesion.roles, Accion.VER_INGRESOS)
-
     # --- Pagos recientes ----------------------------------------------------
-    # Solo para quien puede ver ingresos: el monto es dato de negocio.
-    if ve_ingresos:
-        pagos = (
-            db.query(Pago)
-            .filter(Pago.estado == "CONFIRMADO")
-            .order_by(Pago.fecha_pago.desc())
-            .limit(EVENTOS_RECIENTES)
-            .all()
-        )
-        for p in pagos:
-            nombre = p.socio.persona.nombre_completo if p.socio and p.socio.persona else "?"
-            eventos.append(EventoActividad(
-                id=f"pago-{p.id_pago}",
-                tipo="pago",
-                descripcion=f"{nombre} pagó ${float(p.monto):,.2f}",
-                fecha=p.fecha_pago,
-            ))
+    # Los ve también el Recepcionista (decisión del dueño, 2026-09-16). Lo que
+    # es dato de negocio es el TOTAL facturado (métrica y gráfico, detrás de
+    # verIngresos); cada cobro suelto es trabajo del mostrador, que en general
+    # lo cobró él mismo.
+    pagos = (
+        db.query(Pago)
+        .filter(Pago.estado == "CONFIRMADO")
+        .order_by(Pago.fecha_pago.desc())
+        .limit(EVENTOS_RECIENTES)
+        .all()
+    )
+    for p in pagos:
+        nombre = p.socio.persona.nombre_completo if p.socio and p.socio.persona else "?"
+        concepto = _concepto_de_pago(db, p)
+        eventos.append(EventoActividad(
+            id=f"pago-{p.id_pago}",
+            tipo="pago",
+            descripcion=(f"{nombre} pagó ${float(p.monto):,.2f}"
+                         + (f" ({concepto})" if concepto else "")),
+            fecha=p.fecha_pago,
+        ))
 
     # --- Altas de socios ----------------------------------------------------
     altas = (

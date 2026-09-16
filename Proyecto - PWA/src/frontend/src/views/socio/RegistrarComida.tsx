@@ -76,7 +76,11 @@ export function RegistrarComida({ onCerrar }: RegistrarComidaProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-surface-base">
+    // En el celular ocupa toda la pantalla (es donde se usa parado en el
+    // gimnasio); desde tablet es una ventana centrada como el resto de los
+    // modales. A pantalla completa en una PC quedaba estirado de lado a lado.
+    <div className="fixed inset-0 z-50 flex bg-surface-base md:items-center md:justify-center md:bg-black/60 md:p-4">
+      <div className="flex h-full w-full flex-col bg-surface-base md:h-auto md:max-h-[85dvh] md:max-w-2xl md:overflow-hidden md:rounded-lg md:border md:border-border-idle md:bg-surface-card">
       <header className="flex shrink-0 items-center justify-between border-b border-border-idle px-4 py-3">
         <p className="font-heading text-lg font-semibold text-text-main">Registrar comida</p>
         <button
@@ -89,7 +93,7 @@ export function RegistrarComida({ onCerrar }: RegistrarComidaProps) {
         </button>
       </header>
 
-      <div className="flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 py-5">
+      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 py-5">
         {/* Formulario */}
         <div className="space-y-3 rounded-lg bg-surface-card p-4">
           <label className="flex flex-col gap-1">
@@ -185,6 +189,7 @@ export function RegistrarComida({ onCerrar }: RegistrarComidaProps) {
             </div>
           ))}
         </div>
+      </div>
       </div>
     </div>
   );

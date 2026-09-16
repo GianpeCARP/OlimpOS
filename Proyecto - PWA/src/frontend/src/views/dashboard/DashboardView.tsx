@@ -9,8 +9,9 @@ import {
   Apple,
   type LucideIcon,
 } from 'lucide-react';
+import { AgendaTurnos } from '../../components/AgendaTurnos';
 import { Topbar, StatCard, SectionCard, PrimaryButton } from '../../components/ui';
-import { colors, Routes, puedeVerRuta, type RouteValue } from '../../config';
+import { Acceso, colors, Routes, puedeVerRuta, type RouteValue } from '../../config';
 import { mensajeDeError } from '../../services/api';
 import {
   obtenerEstadisticas,
@@ -22,7 +23,7 @@ import {
   type SocioResumen,
 } from '../../services/dashboardService';
 import { useAuthStore } from '../../store/authStore';
-import { usePuedeAccion } from '../../hooks/usePermisos';
+import { useAccesoSeccion, usePuedeAccion } from '../../hooks/usePermisos';
 import { formatearDelta, formatearMoneda, formatearNumero } from '../../utils/format';
 import { ActivityItem } from './ActivityItem';
 import { IngresosChart } from './IngresosChart';
@@ -141,6 +142,13 @@ export function DashboardView() {
   // el Dashboard la tienen, pero quedaba como trampa para el próximo rol
   // que se agregue.
   const puedeAltaSocios = usePuedeAccion('altaBajaSocios');
+  // Los próximos turnos con sus anotados. El detalle de cada turno sale del
+  // mismo endpoint que el panel de Recepción de Flet (sección Asistencia).
+  const verTurnos = useAccesoSeccion(Routes.ASISTENCIA) !== Acceso.NINGUNO;
+  // Para quien atiende el mostrador (no ve la facturación) los turnos van
+  // ARRIBA de todo: es lo que mira el día entero. El Dueño los ve después de
+  // sus números, que es lo primero que va a buscar.
+  const turnosArriba = verTurnos && !verIngresos;
 
   // El Recepcionista ve un dashboard "parcial": las mismas métricas menos
   // las de facturación.
@@ -211,6 +219,8 @@ export function DashboardView() {
 
         {!error && datos && (
           <>
+            {turnosArriba && <AgendaTurnos compacto dias={2} />}
+
             {/* 1. Métricas */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
               {tarjetasVisibles.map(({ clave, titulo, icono, color, comparacion, formatear }) => {
@@ -233,6 +243,8 @@ export function DashboardView() {
                 Recepcionista ve el dashboard, pero la facturación no. Tiene su
                 propia carga, así cambiar de escala no recarga el resto. */}
             {verIngresos && <IngresosChart />}
+
+            {verTurnos && !turnosArriba && <AgendaTurnos compacto dias={2} />}
 
             {/* 2. Actividad reciente */}
             <SectionCard title="Actividad reciente">

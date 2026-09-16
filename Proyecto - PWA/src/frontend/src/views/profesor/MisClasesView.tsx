@@ -2,7 +2,12 @@ import { useEffect, useState } from 'react';
 import { CalendarCheck, CircleAlert, Users2 } from 'lucide-react';
 import { SectionCard, Topbar } from '../../components/ui';
 import { mensajeDeError } from '../../services/api';
-import { getMisClases, type EstadoInscripto, type MiClase } from '../../services/profesorService';
+import { getMisClases, type MiClase } from '../../services/profesorService';
+import {
+  ESTADO_INSCRIPTO_COLOR,
+  ESTADO_INSCRIPTO_LABEL,
+  fechaCortaConDia,
+} from '../../utils/estadoInscripto';
 
 // "Mis clases" — la única pantalla del profesor.
 //
@@ -18,33 +23,6 @@ import { getMisClases, type EstadoInscripto, type MiClase } from '../../services
 // Los datos vienen del mismo armador que el panel de recepción, así que dicen
 // exactamente lo mismo que ve el mostrador. No hay dos versiones de "quién se
 // anotó" que puedan discrepar.
-
-const ESTADO_LABEL: Record<EstadoInscripto, string> = {
-  pendiente: 'Falta llegar',
-  asistio: 'Presente',
-  ausente: 'No llegó',
-  en_espera: 'En espera',
-  cancelada: 'Canceló',
-};
-
-// Mismos colores que la vista de Recepción en Flet, para que el mismo estado
-// no se vea de dos colores distintos según quién mire.
-const ESTADO_COLOR: Record<EstadoInscripto, string> = {
-  pendiente: 'text-text-secondary',
-  asistio: 'text-status-ok',
-  ausente: 'text-status-danger',
-  en_espera: 'text-status-warn',
-  cancelada: 'text-text-muted',
-};
-
-/** "lun 16/09". Local y no del util compartido: son dos líneas y evita atar
- *  esta pantalla a un formato pensado para otra. */
-function fechaCorta(iso: string): string {
-  const [anio, mes, dia] = iso.split('-').map(Number);
-  const d = new Date(anio, mes - 1, dia);
-  const diaSemana = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'][d.getDay()];
-  return `${diaSemana} ${String(dia).padStart(2, '0')}/${String(mes).padStart(2, '0')}`;
-}
 
 /** "en 25 min", "en 3 h", "empezó hace 10 min". */
 function cuando(minutos: number): string {
@@ -117,7 +95,7 @@ export function MisClasesView() {
                   </h3>
                 </div>
                 <span className="shrink-0 font-mono text-sm text-text-secondary">
-                  {fechaCorta(clase.fecha)} · {clase.hora.slice(0, 5)}
+                  {fechaCortaConDia(clase.fecha)} · {clase.hora.slice(0, 5)}
                 </span>
               </div>
 
@@ -157,9 +135,9 @@ export function MisClasesView() {
                         )}
                       </div>
                       <span
-                        className={`shrink-0 whitespace-nowrap font-body text-xs ${ESTADO_COLOR[inscripto.estado]}`}
+                        className={`shrink-0 whitespace-nowrap font-body text-xs ${ESTADO_INSCRIPTO_COLOR[inscripto.estado]}`}
                       >
-                        {ESTADO_LABEL[inscripto.estado]}
+                        {ESTADO_INSCRIPTO_LABEL[inscripto.estado]}
                       </span>
                     </div>
                   ))

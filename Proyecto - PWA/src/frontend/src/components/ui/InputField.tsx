@@ -20,7 +20,7 @@ interface InputFieldProps {
   // Tipo de input HTML para los campos que no son texto libre (email, tel,
   // date, number): habilita el teclado correcto en mobile y el chequeo
   // nativo de formato/rango. Se ignora si password está activo.
-  type?: 'text' | 'email' | 'tel' | 'date' | 'number';
+  type?: 'text' | 'email' | 'tel' | 'date' | 'number' | 'time';
   // Rango del campo. Con type="number" son números; con type="date" son
   // fechas ISO ("2026-09-15"), que es el formato en que el input nativo espera
   // sus límites — por eso aceptan las dos formas y no sólo número.

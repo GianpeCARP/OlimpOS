@@ -54,6 +54,23 @@ def _telefono_valido(v: str | None) -> str | None:
     return v
 
 
+def _fecha_nacimiento_valida(v: date | None) -> date | None:
+    """
+    Nadie nace mañana, y un año como 1890 es un error de tipeo, no un socio.
+    El input de fecha deja escribir cualquier cosa con el teclado, así que el
+    tope del formulario no alcanza.
+    """
+    if v is None:
+        return None
+    if v > date.today():
+        raise PydanticCustomError(
+            "fecha_futura", "La fecha de nacimiento no puede ser posterior a hoy.")
+    if v.year < 1900:
+        raise PydanticCustomError(
+            "fecha_invalida", "Revisá la fecha de nacimiento: el año es anterior a 1900.")
+    return v
+
+
 def _email_valido(v: str | None) -> str | None:
     """
     EmailStr por sí solo acepta direcciones a las que no se le puede escribir a
@@ -226,6 +243,7 @@ class SocioAltaRequest(BaseModel):
     _validar_telefono = field_validator("telefono")(_telefono_valido)
     _validar_email = field_validator("email")(_email_valido)
     _validar_emergencia = field_validator("emergencia_telefono")(_telefono_valido)
+    _validar_nacimiento = field_validator("fecha_nacimiento")(_fecha_nacimiento_valida)
 
     # --- Socio ---
     id_sede: int
@@ -281,9 +299,23 @@ class SocioEditarRequest(BaseModel):
     telefono: str | None = None
     objetivo: str | None = None
     observaciones: str | None = None
+    # Datos personales que antes sólo entraban en el alta y ninguna pantalla
+    # pedía ("no aparece la opción en ningún lado", dijo el dueño). El
+    # formulario los manda SIEMPRE, así que None significa "vacío".
+    fecha_nacimiento: date | None = None
+    calle: str | None = None
+    numero_calle: str | None = None
+    localidad: str | None = None
+    # El contacto de emergencia principal. Vacío no borra el que haya: un
+    # formulario que no lo mande no puede llevarse el dato.
+    emergencia_nombre: str | None = None
+    emergencia_telefono: str | None = None
+    emergencia_parentesco: str | None = None
 
     _validar_telefono = field_validator("telefono")(_telefono_valido)
     _validar_email = field_validator("email")(_email_valido)
+    _validar_emergencia = field_validator("emergencia_telefono")(_telefono_valido)
+    _validar_nacimiento = field_validator("fecha_nacimiento")(_fecha_nacimiento_valida)
 
 
 class TelefonoOut(BaseModel):
@@ -365,7 +397,19 @@ class SocioOut(BaseModel):
     apellido: str
     email: str | None = None
     telefono: str | None = None
+    fecha_nacimiento: date | None = None
+    calle: str | None = None
+    numero_calle: str | None = None
+    localidad: str | None = None
+    # El contacto de emergencia principal: para poder llamarlo desde la grilla
+    # sin abrir otra pantalla, que es justo cuando hace falta rápido.
+    emergencia_nombre: str | None = None
+    emergencia_telefono: str | None = None
+    emergencia_parentesco: str | None = None
     tiene_cuenta: bool = False
+    # Fecha de la baja PROGRAMADA (bajas.py), si pidió la baja con un período
+    # pago en curso. Hasta ese día sigue activo.
+    baja_programada: date | None = None
     # --- Derivados de la membresía vigente ---
     id_tipo_membresia: int | None = None
     plan: str = "Sin plan"
@@ -741,6 +785,12 @@ class EstadoCuentaOut(BaseModel):
     deuda_total: float
     deudas: list[DeudaOut] = []
     ultimos_pagos: list[PagoOut] = []
+    # Si hoy se le puede cobrar una cuota (renovacion.py: no hay adelantos).
+    # Viaja resuelto para que la pantalla no ofrezca un cobro que el backend
+    # va a rechazar.
+    puede_renovar: bool = True
+    motivo_no_renovar: str | None = None
+    renovable_desde: date | None = None
 
 
 # =============================================================================
@@ -1213,6 +1263,14 @@ class MiCuotaOut(BaseModel):
     deuda_total: float = 0
     deudas: list[MiDeudaOut] = []
     ultimos_pagos: list[PagoOut] = []
+    # Si pidió la baja con la cuota paga: desde cuándo corre (bajas.py).
+    baja_programada: date | None = None
+    # Si hoy se le puede cobrar una cuota (renovacion.py: no hay adelantos).
+    # Viaja resuelto para que la pantalla no ofrezca un cobro que el backend
+    # va a rechazar.
+    puede_renovar: bool = True
+    motivo_no_renovar: str | None = None
+    renovable_desde: date | None = None
 
 
 # =============================================================================
@@ -1787,6 +1845,9 @@ class InscriptoEnTurno(BaseModel):
     # mirar membresía y deudas, y hacerlo por fila en el cliente serían dos
     # consultas por persona anotada.
     alerta: str | None = None
+    # Si hoy se le puede cobrar la cuota (renovacion.py: no hay adelantos). El
+    # panel sólo muestra el botón de cobrar cuando es True.
+    puede_cobrar_cuota: bool = True
 
 
 class TurnoDePanel(BaseModel):
@@ -1853,6 +1914,9 @@ class ResultadoBusqueda(BaseModel):
     deuda_total: float = 0
     proximo_turno: TurnoDePanel | None = None
     alerta: str | None = None
+    # Si hoy se le puede cobrar la cuota (renovacion.py: no hay adelantos). El
+    # panel sólo muestra el botón de cobrar cuando es True.
+    puede_cobrar_cuota: bool = True
 
 
 # =============================================================================

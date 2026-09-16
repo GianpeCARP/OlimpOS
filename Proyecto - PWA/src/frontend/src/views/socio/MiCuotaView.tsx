@@ -20,6 +20,7 @@ import {
 import { colors } from '../../config';
 import { mensajeDeError } from '../../services/api';
 import {
+  anularMiBaja,
   congelarMiMembresia,
   darmeDeBaja,
   getMiCuota,
@@ -194,9 +195,9 @@ export function MiCuotaView() {
   const darDeBaja = useCallback(() => {
     confirmDialog(
       'Darte de baja',
-      'Se cancela tu membresía y las clases que tengas reservadas. ' +
-        'Tu cuenta sigue activa: vas a poder entrar cuando quieras a ver tu ' +
-        'historial, y si volvés no hace falta que te den de alta de nuevo.',
+      'No perdés lo que pagaste: si tenés la cuota paga, la baja corre desde el día ' +
+        'siguiente al vencimiento y hasta entonces seguís entrenando. Tu cuenta sigue ' +
+        'activa, y si volvés no hace falta que te den de alta de nuevo.',
       () => {
         setProcesando(true);
         darmeDeBaja()
@@ -210,11 +211,27 @@ export function MiCuotaView() {
     );
   }, [confirmDialog, showSnack, recargar]);
 
+  const anularBaja = () => {
+    setProcesando(true);
+    anularMiBaja()
+      .then(({ mensaje }) => {
+        showSnack(mensaje, colors.statusOk);
+        recargar();
+      })
+      .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger))
+      .finally(() => setProcesando(false));
+  };
+
   if (idSocio === null) {
     return <SinSocioEnSesion titulo="Mi cuota" />;
   }
 
-  const tieneDeuda = (cuota?.deudas.length ?? 0) > 0;
+  // "Vencida" sale de la membresía, no de una lista de deudas: el esquema
+  // eliminó la tabla Deuda (el sistema es prepago) y el backend manda siempre
+  // `deudas: []` y total 0. La pantalla seguía mostrando "Saldo pendiente $0"
+  // y un bloque de deudas que no podía aparecer nunca. Lo que sí le pasa al
+  // socio es que la cuota se le venza, y eso es lo que se avisa.
+  const vencida = cuota?.tieneMembresia === true && !cuota.alDia;
 
   return (
     <div>
@@ -244,7 +261,7 @@ export function MiCuotaView() {
             {/* La deuda va PRIMERA, arriba de todo: es lo único de esta
                 pantalla que pide una acción del socio. Debajo de tres
                 tarjetas y una tabla, se la perdería. */}
-            {tieneDeuda && (
+            {vencida && (
               <div
                 className="rounded-lg border px-5 py-4"
                 style={{
@@ -253,49 +270,15 @@ export function MiCuotaView() {
                 }}
               >
                 <div className="flex items-start gap-3">
-                  <AlertTriangle
-                    size={20}
-                    color={colors.statusDanger}
-                    className="mt-0.5 shrink-0"
-                  />
+                  <AlertTriangle size={20} color={colors.statusDanger} className="mt-0.5 shrink-0" />
                   <div className="min-w-0 flex-1">
                     <p className="font-heading text-lg font-semibold text-text-main">
-                      Tenés {formatearMoneda(cuota.totalAdeudado)} pendiente
-                      {cuota.deudas.length > 1 ? 's' : ''}
+                      Tu cuota está vencida
                     </p>
                     <p className="mt-1 font-body text-sm text-text-secondary">
-                      Acercate a recepción para regularizar. Desde acá no se puede pagar.
+                      Renovala acá abajo o en recepción. Mientras tanto podés entrar igual, pero no
+                      reservar clases.
                     </p>
-
-                    <div className="mt-4 flex flex-col divide-y divide-border-idle border-t border-border-idle pt-2">
-                      {cuota.deudas.map((deuda) => (
-                        <div
-                          key={deuda.idDeuda}
-                          className="flex flex-wrap items-baseline justify-between gap-2 py-2"
-                        >
-                          <div className="min-w-0">
-                            <p className="font-body text-sm text-text-main">
-                              {deuda.observaciones ?? 'Cuota impaga'}
-                            </p>
-                            <p className="font-body text-xs text-text-muted">
-                              Generada el{' '}
-                              {formatearFecha(parsearFecha(deuda.fechaGeneracion))}
-                              {/* Sólo se muestra el atraso si realmente hay
-                                  atraso: una deuda generada que todavía no
-                                  venció no es una deuda "vencida hace -3
-                                  días". */}
-                              {deuda.diasDeAtraso > 0 &&
-                                ` · ${deuda.diasDeAtraso} ${
-                                  deuda.diasDeAtraso === 1 ? 'día' : 'días'
-                                } de atraso`}
-                            </p>
-                          </div>
-                          <span className="font-mono text-sm text-text-main">
-                            {formatearMoneda(deuda.monto)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
                   </div>
                 </div>
               </div>
@@ -340,10 +323,15 @@ export function MiCuotaView() {
                 color={colors.statusOk}
               />
               <StatCard
-                title="Saldo pendiente"
-                value={formatearMoneda(cuota.totalAdeudado)}
+                title="Último pago"
+                value={cuota.pagos[0] ? formatearMoneda(cuota.pagos[0].monto) : '—'}
+                delta={
+                  cuota.pagos[0]
+                    ? `el ${formatearFecha(parsearFecha(cuota.pagos[0].fecha.slice(0, 10)))}`
+                    : 'Todavía no registraste pagos'
+                }
                 icon={Banknote}
-                color={tieneDeuda ? colors.statusDanger : colors.textSecondary}
+                color={colors.textSecondary}
               />
             </div>
 
@@ -362,7 +350,7 @@ export function MiCuotaView() {
                 <StatusBadge status={cuota.estado} />
               </div>
 
-              {!tieneDeuda && (
+              {!vencida && cuota.tieneMembresia && (
                 <div className="mt-4 flex items-start gap-3 border-t border-border-idle pt-4">
                   <Info size={16} className="mt-0.5 shrink-0 text-text-muted" />
                   <p className="font-body text-sm text-text-secondary">
@@ -390,8 +378,23 @@ export function MiCuotaView() {
                 falla con un 503 cuyo mensaje manda a recepción. No se
                 esconden los botones: que el socio vea el precio y sepa cuánto
                 tiene que llevar es útil igual. */}
-            {planes.length > 0 && (
-              <SectionCard title={tieneDeuda ? 'Regularizar tu cuota' : 'Renovar tu cuota'}>
+            {/* Sin adelantos (backend/renovacion.py): con la cuota vigente no
+                se ofrece pagar el período siguiente, se dice desde cuándo. */}
+            {planes.length > 0 && !cuota.puedeRenovar && (
+              <SectionCard title="Renovar tu cuota">
+                <div className="flex items-start gap-3">
+                  <Info size={16} className="mt-0.5 shrink-0 text-text-muted" />
+                  <p className="font-body text-sm text-text-secondary">
+                    {cuota.renovableDesde
+                      ? `Vas a poder renovarla desde el ${formatearFecha(parsearFecha(cuota.renovableDesde))}. Las cuotas se pagan cuando vencen, no por adelantado.`
+                      : cuota.motivoNoRenovar}
+                  </p>
+                </div>
+              </SectionCard>
+            )}
+
+            {planes.length > 0 && cuota.puedeRenovar && (
+              <SectionCard title={vencida ? 'Regularizar tu cuota' : 'Renovar tu cuota'}>
                 <div className="space-y-2">
                   {planes.map((plan) => (
                     <div
@@ -510,10 +513,30 @@ export function MiCuotaView() {
                   irreversible de la pantalla y no tiene por qué competir
                   visualmente con pausar, que es lo que la mayoría busca. */}
               <div className="mt-4 border-t border-border-idle pt-4">
+                {cuota.bajaProgramada ? (
+                  // Ya pidió la baja con la cuota paga: se le dice desde cuándo
+                  // corre y se le deja arrepentirse. No hay "darme de baja" de
+                  // nuevo, porque ya está pedida.
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="font-body text-sm text-status-warn">
+                      Tu baja corre desde el {formatearFecha(parsearFecha(cuota.bajaProgramada))}.
+                      Hasta entonces seguís entrenando normalmente.
+                    </p>
+                    <button
+                      type="button"
+                      disabled={procesando}
+                      onClick={anularBaja}
+                      className="shrink-0 rounded-lg border border-border-idle px-3 py-2 font-body text-sm whitespace-nowrap text-text-main transition-opacity hover:border-primary-volt disabled:opacity-50"
+                    >
+                      Anular la baja
+                    </button>
+                  </div>
+                ) : (
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className="font-body text-xs text-text-muted">
-                    ¿Ya no querés seguir? Podés darte de baja. Tu cuenta y tu historial
-                    quedan igual, y si volvés no hace falta que te den de alta de nuevo.
+                    ¿Ya no querés seguir? Podés darte de baja sin perder los días que pagaste.
+                    Tu cuenta y tu historial quedan igual, y si volvés no hace falta que te den
+                    de alta de nuevo.
                   </p>
                   <button
                     type="button"
@@ -526,6 +549,7 @@ export function MiCuotaView() {
                     Darme de baja
                   </button>
                 </div>
+                )}
               </div>
             </SectionCard>
 

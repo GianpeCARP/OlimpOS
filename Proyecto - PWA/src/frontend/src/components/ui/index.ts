@@ -4,6 +4,7 @@ export { StatCard } from './StatCard';
 export { StatusBadge } from './StatusBadge';
 export { PrimaryButton } from './PrimaryButton';
 export { InputField } from './InputField';
+export { TelefonoField } from './TelefonoField';
 export { SelectField, type SelectOption } from './SelectField';
 export { FilterChip } from './FilterChip';
 export { SectionCard } from './SectionCard';

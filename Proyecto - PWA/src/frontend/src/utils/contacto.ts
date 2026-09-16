@@ -37,8 +37,16 @@ export function soloDigitos(telefono: string): string {
  */
 export function linkWhatsapp(telefono: string, mensaje?: string): string {
   let numero = soloDigitos(telefono);
-  if (numero.startsWith('0')) numero = numero.slice(1);
-  if (!numero.startsWith('54')) numero = PREFIJO_INTERNACIONAL + numero;
+  if (telefono.trim().startsWith('+')) {
+    // Con código de país (utils/telefono.ts) el número ya dice de dónde es. El
+    // único ajuste es el de Argentina: WhatsApp exige el 9 de celular después
+    // del 54, y en el campo nadie lo escribe.
+    if (numero.startsWith('54') && !numero.startsWith('549')) numero = `549${numero.slice(2)}`;
+  } else {
+    // Cargado antes del selector de país: es argentino.
+    if (numero.startsWith('0')) numero = numero.slice(1);
+    if (!numero.startsWith('54')) numero = PREFIJO_INTERNACIONAL + numero;
+  }
   const texto = mensaje ? `?text=${encodeURIComponent(mensaje)}` : '';
   return `https://wa.me/${numero}${texto}`;
 }

@@ -32,6 +32,7 @@ from permisos import Seccion
 from schemas import (
     IniciarPagoRequest, IniciarPagoResponse, MensajeResponse, PlanDisponibleOut,
 )
+from renovacion import estado_renovacion
 from security import Sesion, requiere_seccion
 
 router = APIRouter(tags=["Pagos online"])
@@ -108,6 +109,14 @@ def iniciar_pago(
     """
     socio = _mi_socio(db, sesion)
 
+    # Sin adelantos (renovacion.py). Antes que el chequeo de Mercado Pago: si
+    # no puede pagar, que lo sepa por el motivo real y no por "el pago online
+    # no está habilitado".
+    renovacion = estado_renovacion(db, socio.id_socio)
+    if not renovacion.puede:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=renovacion.motivo)
+
     if not mp.esta_configurado():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -124,6 +133,9 @@ def iniciar_pago(
 
     pago = Pago(
         id_socio=socio.id_socio,
+        # El plan viaja en el pago: la membresía se crea recién al acreditarse
+        # y tiene que saber de qué plan es, sin adivinarlo por el monto.
+        id_tipo_membresia=tipo.id_tipo_membresia,
         id_sede=socio.id_sede,
         # BILLETERA_VIRTUAL es lo más cercano en el enum del esquema. No se
         # agrega un valor "MERCADO_PAGO" porque el enum describe CÓMO paga la
@@ -227,27 +239,32 @@ def _extender_membresia(db: Session, pago: Pago) -> None:
     if pago.id_membresia is not None:
         return  # ya se le habia asignado
 
-    tipo = (db.query(TipoMembresia)
-            .filter(TipoMembresia.precio_actual == pago.monto,
-                    TipoMembresia.activo.is_(True))
-            .first())
+    # El plan sale del pago. Los pagos online anteriores a la columna no lo
+    # tienen: para esos queda la deducción vieja por precio, que es lo único
+    # que había.
+    tipo = db.get(TipoMembresia, pago.id_tipo_membresia) if pago.id_tipo_membresia else None
+    if tipo is None:
+        tipo = (db.query(TipoMembresia)
+                .filter(TipoMembresia.precio_actual == pago.monto,
+                        TipoMembresia.activo.is_(True))
+                .first())
     if tipo is None:
         return
 
     hoy = date.today()
-    vigente = (db.query(Membresia)
-               .filter(Membresia.id_socio == pago.id_socio,
-                       Membresia.estado == "ACTIVA")
-               .order_by(Membresia.fecha_vencimiento.desc())
-               .first())
 
-    # Si todavía le queda cuota, la nueva arranca cuando termina la anterior.
-    # Arrancar hoy le comería los días que ya había pagado — es la misma regla
-    # que aplica el cobro del mostrador.
+    # Sin adelantos (renovacion.py): la membresía arranca hoy. iniciar_pago ya
+    # rechaza a quien tiene un período en curso, pero entre el checkout y este
+    # aviso pueden pasar minutos (dos pestañas pagando a la vez, el mostrador
+    # cobrando en efectivo mientras tanto). En ese caso NO se crea un segundo
+    # período superpuesto ni se pisa el que corre: el pago queda confirmado y
+    # sin membresía, y eso es lo que ve quien revise la caja para devolverlo.
+    if not estado_renovacion(db, pago.id_socio).puede:
+        print(f"  [MP] Pago {pago.id_pago} confirmado con un período en curso: "
+              "no se crea membresía, revisar para devolverlo.")
+        return
+
     desde = hoy
-    if vigente and vigente.fecha_vencimiento and vigente.fecha_vencimiento >= hoy:
-        desde = vigente.fecha_vencimiento
-        vigente.estado = "VENCIDA"
 
     from datetime import timedelta
 

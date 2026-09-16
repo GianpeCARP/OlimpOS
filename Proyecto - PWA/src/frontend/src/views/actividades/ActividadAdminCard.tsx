@@ -24,7 +24,10 @@ interface ActividadAdminCardProps {
   onGestionarProfesores: () => void;
 }
 
+// CLASE_SUELTA va aparte: caía en el "else" y el plan de clase suelta se leía
+// "1x por semana", como si fuera un abono semanal.
 function etiquetaLimite(plan: PlanActividadAdmin): string {
+  if (plan.tipoLimite === 'CLASE_SUELTA') return 'Una clase';
   return plan.tipoLimite === 'POR_MES'
     ? `${plan.cantidad} clases/mes`
     : `${plan.cantidad}x por semana`;

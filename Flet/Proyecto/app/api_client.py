@@ -441,6 +441,10 @@ def reactivar_socio(id_socio: int) -> dict:
     return _post(f"/socios/{id_socio}/reactivar")
 
 
+def anular_baja_socio(id_socio: int) -> dict:
+    return _post(f"/socios/{id_socio}/anular-baja")
+
+
 # --- Teléfonos de la ficha ---------------------------------------------------
 # Van por endpoints propios y no como un campo más del PUT del socio: agregar
 # un número no es editar la ficha, y no tiene por qué arrastrar nombre, email y
@@ -779,6 +783,12 @@ def obtener_panel_recepcion() -> dict:
 
 def obtener_turno_detalle(id_turno: int) -> dict:
     return _get(f"/recepcion/turnos/{id_turno}")
+
+
+def cancelar_turno(id_turno: int, motivo: str) -> dict:
+    """Cancela una clase puntual; el backend devuelve la clase a cada anotado."""
+    from urllib.parse import quote
+    return _post(f"/actividades/turnos/{id_turno}/cancelar?motivo={quote(motivo)}")
 
 
 def buscar_por_dni(dni: str) -> dict:

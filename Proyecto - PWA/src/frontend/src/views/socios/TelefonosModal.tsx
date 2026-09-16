@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { MessageCircle, Phone, Plus, Star, Trash2, X } from 'lucide-react';
-import { InputField, PrimaryButton, SelectField, type SelectOption } from '../../components/ui';
+import { PrimaryButton, SelectField, type SelectOption, TelefonoField } from '../../components/ui';
 import { colors } from '../../config';
 import { mensajeDeError } from '../../services/api';
 import {
@@ -13,7 +13,7 @@ import {
   type TipoTelefono,
 } from '../../services/sociosService';
 import { useUiStore } from '../../store/uiStore';
-import { limpiarTelefono, linkWhatsapp } from '../../utils/contacto';
+import { linkWhatsapp } from '../../utils/contacto';
 
 // Los teléfonos de un socio, que hasta acá eran uno solo.
 //
@@ -219,12 +219,10 @@ export function TelefonosModal({ socio, puedeGestionar, onClose, onCambio }: Tel
 
               {puedeGestionar && (
                 <div className="mt-6 flex flex-col gap-4 border-t border-border-idle pt-5">
-                  <InputField
+                  <TelefonoField
                     label="Agregar teléfono"
                     value={numero}
-                    onChange={(v: string) => setNumero(limpiarTelefono(v))}
-                    icon={Phone}
-                    type="tel"
+                    onChange={setNumero}
                     name="numeroTelefono"
                   />
                   <SelectField

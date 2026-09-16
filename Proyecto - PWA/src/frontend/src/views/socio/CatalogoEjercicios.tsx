@@ -51,7 +51,11 @@ export function CatalogoEjercicios({
   const grupos = useMemo(() => agruparCatalogo(catalogo, busqueda), [catalogo, busqueda]);
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-surface-base">
+    // En el celular ocupa toda la pantalla (es donde se usa parado en el
+    // gimnasio); desde tablet es una ventana centrada como el resto de los
+    // modales. A pantalla completa en una PC quedaba estirado de lado a lado.
+    <div className="fixed inset-0 z-50 flex bg-surface-base md:items-center md:justify-center md:bg-black/60 md:p-4">
+      <div className="flex h-full w-full flex-col bg-surface-base md:h-auto md:max-h-[85dvh] md:max-w-2xl md:overflow-hidden md:rounded-lg md:border md:border-border-idle md:bg-surface-card">
       {viendo?.video && (
         <VerTecnica nombre={viendo.nombre} video={viendo.video} onCerrar={() => setViendo(null)} />
       )}
@@ -132,6 +136,7 @@ export function CatalogoEjercicios({
             </div>
           </div>
         ))}
+      </div>
       </div>
     </div>
   );

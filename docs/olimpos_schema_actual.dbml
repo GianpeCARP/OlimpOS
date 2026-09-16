@@ -206,6 +206,11 @@ Table "Baja" {
   "fecha_baja" date [not null]
   "tipo" "tipo_baja"
   "motivo" varchar(250)
+  "pendiente" boolean [not null, default: false, note: '''true = baja PROGRAMADA: el socio tenia un periodo pago en curso y la baja corre
+desde fecha_baja (el dia siguiente al vencimiento); hasta entonces sigue activo. Se
+aplica sola al llegar la fecha (backend/bajas.py) y pasa a false. Mientras este
+pendiente se puede anular: la fila se borra, porque una baja que no ocurrio no es
+historial. Existe para no quitarle al socio los dias que ya pago.''']
 
   Note: '''DFD 1.1.3 / 6.3.2. Un socio puede reinscribirse, asi que la baja es un HECHO con
 fecha y no un booleano de Socio. Nada se borra: las bajas se marcan.
@@ -454,8 +459,9 @@ estado es NOT NULL a proposito: un enum con NULL admite un valor fuera del domin
 declarado, y ademas las filas con NULL se ESCAPAN del indice parcial, porque un
 indice con WHERE solo indexa las filas que cumplen la condicion.
 
-RENOVACION ANTICIPADA: la membresia nueva NO nace al cobrar, nace cuando vence la
-anterior. Asi nunca hay dos ACTIVA simultaneas. Ver Pago.es_adelanto.
+SIN COBROS POR ADELANTADO (2026-09-16): con un periodo en curso (ACTIVA sin vencer o
+SUSPENDIDA) no se cobra otro; la membresia nueva nace el dia del cobro. Asi nunca hay
+dos ACTIVA simultaneas. Ver backend/renovacion.py y Pago.es_adelanto.
 PENDIENTE: falta CHECK fecha_vencimiento >= fecha_inicio.'''
 }
 
@@ -470,6 +476,11 @@ Table "Pago" {
   "id_pago" integer [pk, increment]
   "id_socio" integer [not null]
   "id_membresia" integer
+  "id_tipo_membresia" integer [note: '''Plan de membresia que se cobro. NULL si el pago no es de una cuota (abono de
+actividad, clase suelta). No alcanza con id_membresia: el pago online nace PENDIENTE
+y sin membresia, que se crea recien al acreditarse y tiene que saber de que plan.
+Antes se deducia buscando un plan con el mismo precio, y dos planes al mismo precio
+(o un precio que cambio en el medio) lo confundian.''']
   "id_inscripcion" integer
   "id_sede" integer
   "metodo" "metodo_pago" [not null]
@@ -477,11 +488,9 @@ Table "Pago" {
   "fecha_pago" timestamp [not null, default: `now()`]
   "periodo_desde" date
   "periodo_hasta" date
-  "es_adelanto" boolean [not null, default: false, note: '''true = cobro de un periodo que todavia no empezo. La membresia nueva NO se crea al
-cobrar: se crea recien cuando vence la anterior. Hasta ese momento el pago queda con
-id_membresia NULL y el periodo cubierto en periodo_desde / periodo_hasta.
-Consecuencia: nunca hay dos membresias ACTIVA simultaneas, y el indice
-membresia_una_activa_uidx no necesita excepciones.''']
+  "es_adelanto" boolean [not null, default: false, note: '''Siempre false desde 2026-09-16: no se cobran periodos por adelantado (quien paga
+meses adelantados congela el precio y el gimnasio pierde con cada aumento). Se
+conserva por los pagos historicos y por chk_pago_adelanto_periodo.''']
   "estado" "estado_pago" [not null, default: 'CONFIRMADO']
   "fecha_cancelacion" timestamp
   "numero_comprobante" varchar(50) [unique]
@@ -915,6 +924,7 @@ Ref: "Membresia"."id_tipo_membresia" > "Tipo_Membresia"."id_tipo_membresia"
 Ref: "Nutricionista"."id_empleado" > "Empleado"."id_empleado"
 Ref: "Pago"."id_inscripcion" > "Inscripcion_Actividad"."id_inscripcion"
 Ref: "Pago"."id_membresia" > "Membresia"."id_membresia"
+Ref: "Pago"."id_tipo_membresia" > "Tipo_Membresia"."id_tipo_membresia"
 Ref: "Pago"."id_promocion" > "Promocion"."id_promocion"
 Ref: "Pago"."id_sede" > "Sede"."id_sede"
 Ref: "Pago"."id_socio" > "Socio"."id_socio"

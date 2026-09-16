@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Dumbbell, Flame, Minus, TrendingDown, TrendingUp, Utensils } from 'lucide-react';
+import { Check, Dumbbell, Flame, Minus, Target, TrendingDown, TrendingUp, Utensils, X } from 'lucide-react';
 import { SectionCard } from '../../components/ui';
 import { colors } from '../../config';
 import {
+  getMiDieta,
   listarMisComidas,
   listarMisRegistrosEjercicio,
   type ComidaRegistrada,
@@ -23,25 +24,34 @@ const ALTURA_MINIMA = 6; // % — que un valor chico no desaparezca del todo.
 /** Barras verticales, escala desde CERO (para calorías, el cero es real). */
 function GraficoBarras({
   datos,
+  objetivo,
 }: {
-  datos: { etiqueta: string; valor: number; titulo: string }[];
+  datos: { etiqueta: string; valor: number; titulo: string; claseBarra?: string }[];
+  /** Si viene, se dibuja una línea punteada a esa altura: la meta del día. */
+  objetivo?: number;
 }) {
-  const maximo = Math.max(...datos.map((d) => d.valor), 1);
+  const maximo = Math.max(...datos.map((d) => d.valor), objetivo ?? 0, 1);
+  const altoDe = (valor: number) =>
+    valor <= 0 ? 0 : ALTURA_MINIMA + (valor / maximo) * (100 - ALTURA_MINIMA);
   return (
     <div>
-      <div className="flex h-36 items-end gap-1.5">
-        {datos.map((d, i) => {
-          const alto = d.valor <= 0 ? 0 : ALTURA_MINIMA + (d.valor / maximo) * (100 - ALTURA_MINIMA);
-          return (
-            <div key={i} className="flex h-full flex-1 flex-col items-center justify-end gap-1">
-              <div
-                className="w-full rounded-t-sm bg-primary-volt/70 transition-[height]"
-                style={{ height: `${alto}%` }}
-                title={d.titulo}
-              />
-            </div>
-          );
-        })}
+      <div className="relative flex h-36 items-end gap-1.5">
+        {objetivo !== undefined && (
+          <div
+            className="pointer-events-none absolute inset-x-0 border-t border-dashed border-text-secondary/70"
+            style={{ bottom: `${altoDe(objetivo)}%` }}
+            title={`Objetivo: ${objetivo} kcal`}
+          />
+        )}
+        {datos.map((d, i) => (
+          <div key={i} className="flex h-full flex-1 flex-col items-center justify-end gap-1">
+            <div
+              className={`w-full rounded-t-sm transition-[height] ${d.claseBarra ?? 'bg-primary-volt/70'}`}
+              style={{ height: `${altoDe(d.valor)}%` }}
+              title={d.titulo}
+            />
+          </div>
+        ))}
       </div>
       <div className="mt-2 flex gap-1.5 border-t border-border-idle pt-2">
         {datos.map((d, i) => (
@@ -99,14 +109,126 @@ function agruparPorDia(comidas: ComidaRegistrada[]): DiaNutricion[] {
   return [...mapa.values()].sort((a, b) => a.fecha.localeCompare(b.fecha));
 }
 
+// ¿Se cumplió el objetivo de calorías del día?
+//
+// "Cumplir" es quedar CERCA de la meta, no pasarla ni quedarse corto por
+// mucho: la meta de una dieta es un número a alcanzar, y comer 40% menos
+// tampoco es cumplirla. La tolerancia de ±10% es la que se usa habitualmente
+// para seguir una dieta (un día no se come exacto), y está en una constante
+// para poder discutirla sin buscarla en el JSX.
+const TOLERANCIA_OBJETIVO = 0.1;
+/** Cuántos días hacia atrás muestra la tira de cumplimiento. */
+const DIAS_CUMPLIMIENTO = 7;
+
+type Cumplimiento = 'cumplido' | 'debajo' | 'arriba' | 'sin-registro';
+
+function cumplimientoDe(calorias: number, objetivo: number): Cumplimiento {
+  if (calorias <= 0) return 'sin-registro';
+  if (calorias < objetivo * (1 - TOLERANCIA_OBJETIVO)) return 'debajo';
+  if (calorias > objetivo * (1 + TOLERANCIA_OBJETIVO)) return 'arriba';
+  return 'cumplido';
+}
+
+const BARRA_POR_CUMPLIMIENTO: Record<Cumplimiento, string> = {
+  cumplido: 'bg-status-ok/80',
+  debajo: 'bg-status-warn/70',
+  arriba: 'bg-status-danger/70',
+  'sin-registro': 'bg-surface-hover',
+};
+
+/** "YYYY-MM-DD" de hace `n` días, en hora local. */
+function isoHaceDias(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * La tira de los últimos 7 días: un círculo por día con tilde si cumplió.
+ * Pensada para leerse en un segundo en el celular: verde es bien, y el resto
+ * dice para qué lado se fue.
+ */
+function TiraCumplimiento({ dias, objetivo }: { dias: DiaNutricion[]; objetivo: number }) {
+  const porFecha = new Map(dias.map((d) => [d.fecha, d]));
+  const semana = Array.from({ length: DIAS_CUMPLIMIENTO }, (_, i) => {
+    const fecha = isoHaceDias(DIAS_CUMPLIMIENTO - 1 - i);
+    const calorias = porFecha.get(fecha)?.calorias ?? 0;
+    return { fecha, calorias, estado: cumplimientoDe(calorias, objetivo) };
+  });
+  const cumplidos = semana.filter((d) => d.estado === 'cumplido').length;
+  const conRegistro = semana.filter((d) => d.estado !== 'sin-registro').length;
+
+  return (
+    <div className="mb-5 rounded-md border border-border-idle p-3">
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+        <p className="flex items-center gap-2 font-body text-sm text-text-main">
+          <Target size={16} className="text-primary-volt" />
+          Objetivo diario: <span className="font-mono font-semibold">{objetivo} kcal</span>
+        </p>
+        <p className="font-body text-xs text-text-muted">
+          {conRegistro === 0
+            ? 'Sin comidas registradas esta semana'
+            : `Cumpliste ${cumplidos} de ${conRegistro} día${conRegistro === 1 ? '' : 's'} con registro`}
+        </p>
+      </div>
+      <div className="flex justify-between gap-1">
+        {semana.map((d) => {
+          const fecha = parsearFecha(d.fecha);
+          const letra = ['D', 'L', 'M', 'M', 'J', 'V', 'S'][fecha.getDay()];
+          const titulo =
+            d.estado === 'sin-registro'
+              ? 'Sin comidas registradas'
+              : `${d.calorias} kcal (${d.estado === 'cumplido' ? 'cumplido' : d.estado === 'debajo' ? 'por debajo' : 'por arriba'})`;
+          return (
+            <div key={d.fecha} className="flex flex-1 flex-col items-center gap-1" title={titulo}>
+              <span
+                className={`flex h-8 w-8 items-center justify-center rounded-full border ${
+                  d.estado === 'cumplido'
+                    ? 'border-status-ok bg-status-ok/20 text-status-ok'
+                    : d.estado === 'sin-registro'
+                      ? 'border-border-idle text-text-muted'
+                      : d.estado === 'debajo'
+                        ? 'border-status-warn/60 text-status-warn'
+                        : 'border-status-danger/60 text-status-danger'
+                }`}
+              >
+                {d.estado === 'cumplido' ? (
+                  <Check size={15} strokeWidth={3} />
+                ) : d.estado === 'sin-registro' ? (
+                  <Minus size={12} />
+                ) : (
+                  <X size={13} strokeWidth={3} />
+                )}
+              </span>
+              <span className="font-body text-[10px] text-text-muted">{letra}</span>
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-3 font-body text-[11px] text-text-muted">
+        Cuenta como cumplido quedar a ±10% del objetivo.{' '}
+        <span className="text-status-warn">Amarillo</span>: comiste de menos.{' '}
+        <span className="text-status-danger">Rojo</span>: te pasaste.
+      </p>
+    </div>
+  );
+}
+
 export function SeccionNutricion() {
   const [comidas, setComidas] = useState<ComidaRegistrada[] | null>(null);
+  // La meta sale de la dieta ACTIVA (la del nutricionista o la propia). Sin
+  // dieta o sin calorías cargadas no hay contra qué comparar, y la sección se
+  // queda como estaba: promedio y barras.
+  const [objetivo, setObjetivo] = useState<number | undefined>(undefined);
 
   useEffect(() => {
     let cancelado = false;
     listarMisComidas(30)
       .then((c) => { if (!cancelado) setComidas(c); })
       .catch(() => { if (!cancelado) setComidas([]); });
+    getMiDieta()
+      .then((d) => { if (!cancelado) setObjetivo(d?.caloriasDiarias || undefined); })
+      .catch(() => { /* sin dieta: se muestra sin objetivo */ });
     return () => { cancelado = true; };
   }, []);
 
@@ -124,6 +246,7 @@ export function SeccionNutricion() {
   if (conCalorias.length === 0) {
     return (
       <SectionCard title="Nutrición">
+        {objetivo !== undefined && <TiraCumplimiento dias={dias} objetivo={objetivo} />}
         <p className="font-body text-sm text-text-muted">
           Registrá tus comidas con calorías en “Mi dieta” y acá vas a ver tu promedio y la
           evolución día a día.
@@ -138,6 +261,7 @@ export function SeccionNutricion() {
 
   return (
     <SectionCard title="Nutrición">
+      {objetivo !== undefined && <TiraCumplimiento dias={dias} objetivo={objetivo} />}
       <div className="mb-4 flex flex-wrap gap-4">
         <div className="flex items-center gap-2">
           <Flame size={18} className="text-primary-volt" />
@@ -158,10 +282,15 @@ export function SeccionNutricion() {
       </div>
       <p className="mb-2 font-body text-xs text-text-muted">Calorías por día (últimos con registro)</p>
       <GraficoBarras
+        objetivo={objetivo}
         datos={ultimos.map((d) => ({
           etiqueta: formatearFechaCorta(parsearFecha(d.fecha)),
           valor: d.calorias,
           titulo: `${d.calorias} kcal el ${formatearFechaCorta(parsearFecha(d.fecha))}`,
+          // Con objetivo, cada barra se pinta según cumplió o no; sin
+          // objetivo, todas del mismo color como antes.
+          claseBarra:
+            objetivo !== undefined ? BARRA_POR_CUMPLIMIENTO[cumplimientoDe(d.calorias, objetivo)] : undefined,
         }))}
       />
     </SectionCard>

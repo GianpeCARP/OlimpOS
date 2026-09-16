@@ -392,6 +392,9 @@ class Baja(Base):
     tipo = Column(ENUM("VOLUNTARIA", "MORA", "ADMINISTRATIVA",
                         name="tipo_baja", create_type=False))
     motivo = Column(Text)
+    # True = baja PROGRAMADA para fecha_baja (tenía un período pago en curso):
+    # hasta entonces sigue activo. Ver bajas.py.
+    pendiente = Column(Boolean, nullable=False, server_default=text("false"))
     # NO hay `id_registrado_por` acá. Lo tuvo un rato porque Asistencia sí lo
     # tiene y parecía razonable guardar también quién dio la baja, pero
     # schema.sql —que es de donde se crea la base— no declara esa columna en
@@ -491,6 +494,10 @@ class Pago(Base):
     id_pago = Column(Integer, primary_key=True)
     id_socio = Column(Integer, ForeignKey("Socio.id_socio"), nullable=False)
     id_membresia = Column(Integer, ForeignKey("Membresia.id_membresia"))
+    # El plan que se cobró (NULL si no es una cuota). Lo necesita el pago
+    # online: nace sin membresía y, al acreditarse, la crea de ESTE plan. Antes
+    # lo deducía por el precio y dos planes iguales lo confundían.
+    id_tipo_membresia = Column(Integer, ForeignKey("Tipo_Membresia.id_tipo_membresia"))
     id_inscripcion = Column(Integer, ForeignKey("Inscripcion_Actividad.id_inscripcion"))
     id_sede = Column(Integer, ForeignKey("Sede.id_sede"))
     metodo = Column(ENUM("EFECTIVO", "DEBITO", "CREDITO", "TRANSFERENCIA",

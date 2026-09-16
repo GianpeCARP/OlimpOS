@@ -509,6 +509,64 @@ def input_field(label: str, hint: str = "", password: bool = False,
     )
 
 
+class _TelefonoCompuesto:
+    """
+    Lo que queda en el `ref` de un telefono_field: expone `.value` con el
+    número COMPLETO ("+54 3415551234"), igual que un TextField. Así los
+    formularios que leen `ref.current.value` no se enteran de que adentro hay
+    un selector de país y un campo.
+    """
+
+    def __init__(self, pais: ft.Dropdown, numero: ft.TextField):
+        self.pais = pais
+        self.numero = numero
+
+    @property
+    def value(self) -> str:
+        from app.telefono import unir_telefono
+        return unir_telefono(self.pais.value, self.numero.value or "")
+
+
+def telefono_field(label: str, hint: str = "", ref: ft.Ref = None,
+                   value: str = "", icon: str = ft.Icons.PHONE_OUTLINED) -> ft.Row:
+    """
+    Teléfono con código de país. Gemelo de TelefonoField.tsx. El número se
+    filtra mientras se tipea (sin letras). Ver app/telefono.py.
+    """
+    from app.telefono import PAISES, limpiar_numero_local, separar_telefono
+
+    prefijo, numero = separar_telefono(value)
+    pais = ft.Dropdown(
+        label="País",
+        options=[ft.dropdown.Option(key=pre, text=f"{bandera} {pre}")
+                 for _, pre, bandera in PAISES],
+        value=prefijo,
+        width=120,
+        color=Colors.TEXT_MAIN, bgcolor=Colors.SURFACE_CARD,
+        border_color=Colors.BORDER_IDLE, focused_border_color=Colors.BORDER_ACTIVE,
+        border_radius=Radius.SM,
+    )
+    campo = input_field(label, hint, icon=icon, value=numero)
+
+    def filtrar(e):
+        limpio = limpiar_numero_local(campo.value)
+        if limpio != campo.value:
+            campo.value = limpio
+            campo.update()
+
+    campo.on_change = filtrar
+    fila = ft.Row([pais, ft.Container(content=campo, expand=True)], spacing=8,
+                  vertical_alignment=ft.CrossAxisAlignment.START)
+    compuesto = _TelefonoCompuesto(pais, campo)
+    # ft.Ref guarda una referencia DÉBIL: si nadie más retiene al compuesto,
+    # el recolector se lo lleva y el formulario lee None al guardar. Se cuelga
+    # de la fila, que vive mientras viva el diálogo que la contiene.
+    fila.data = compuesto
+    if ref is not None:
+        ref.current = compuesto
+    return fila
+
+
 def select_field(label: str, opciones: list, ref: ft.Ref = None,
                  value: str = None, width=None, on_change=None) -> ft.Dropdown:
     """

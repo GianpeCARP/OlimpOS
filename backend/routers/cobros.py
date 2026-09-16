@@ -41,6 +41,7 @@ from schemas import (
     CobrarRequest, CobroResponse, EstadoCuentaOut, InscripcionOut, MembresiaOut,
     PagoOut, TipoMembresiaCrear, TipoMembresiaOut,
 )
+from renovacion import estado_renovacion
 from security import Sesion, requiere_accion, requiere_seccion
 
 # El calculo del descuento vive en el router de promociones y se importa: es la
@@ -206,6 +207,7 @@ def estado_cuenta(
     )
 
     db.commit()   # persiste los VENCIDA que marcó _membresia_vigente
+    renovacion = estado_renovacion(db, id_socio)
 
     # "Al día" es, sencillamente, tener una membresía vigente. NO existe una
     # tabla de deudas: la política es prepago y el estado "debe" es derivable
@@ -221,6 +223,9 @@ def estado_cuenta(
         deuda_total=0.0,
         deudas=[],
         ultimos_pagos=[_a_pago_out(p) for p in pagos],
+        puede_renovar=renovacion.puede,
+        motivo_no_renovar=renovacion.motivo,
+        renovable_desde=renovacion.desde,
     )
 
 
@@ -252,6 +257,13 @@ def cobrar(
     socio = db.get(Socio, datos.id_socio)
     if socio is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="El socio no existe.")
+
+    # Sin adelantos (renovacion.py): con un período en curso no se cobra otro.
+    # Va antes que todo lo demás porque ningún otro dato cambia la respuesta.
+    renovacion = estado_renovacion(db, socio.id_socio)
+    if not renovacion.puede:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=f"{_nombre_socio(socio)}: {renovacion.motivo}")
 
     tipo = db.get(TipoMembresia, datos.id_tipo_membresia)
     if tipo is None:
@@ -298,16 +310,9 @@ def cobrar(
         if promocion is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                                 detail="Esa promoción no existe.")
-        # La promo tiene que estar vigente CUANDO ARRANCA EL PERÍODO que se
-        # cobra, no hoy. Renovando por adelantado, el período nuevo empieza al
-        # día siguiente del vencimiento actual: cobrar hoy con una promo que
-        # para entonces ya no existe es regalar plata de un mes en el que la
-        # promoción no corre.
-        vigente_ahora = _membresia_vigente(db, socio.id_socio)
+        # La promo tiene que estar vigente cuando arranca el período cobrado.
+        # Sin adelantos (renovacion.py) el período arranca siempre hoy.
         inicio_periodo = date.today()
-        if (vigente_ahora and vigente_ahora.fecha_vencimiento
-                and vigente_ahora.fecha_vencimiento >= inicio_periodo):
-            inicio_periodo = vigente_ahora.fecha_vencimiento + timedelta(days=1)
 
         if not esta_vigente(promocion, inicio_periodo):
             # Un solo mensaje para los dos motivos (apagada o fuera de fecha)
@@ -347,16 +352,12 @@ def cobrar(
     hoy = date.today()
 
     # --- 1. Membresía -------------------------------------------------------
-    # Si tenía una vigente, la nueva arranca cuando termina la anterior, no
-    # hoy: quien paga el mes que viene por adelantado no pierde los días que
-    # le quedaban.
-    vigente = _membresia_vigente(db, socio.id_socio)
+    # Arranca HOY, siempre. Antes, con una cuota vigente, la nueva arrancaba al
+    # vencer la anterior y la que corría quedaba marcada VENCIDA: eso era el
+    # cobro por adelantado que el dueño sacó (ver renovacion.py). El chequeo de
+    # arriba garantiza que acá no hay período en curso.
+    _membresia_vigente(db, socio.id_socio)   # marca VENCIDA las que ya pasaron
     inicio = hoy
-    es_adelanto = False
-    if vigente and vigente.fecha_vencimiento and vigente.fecha_vencimiento >= hoy:
-        inicio = vigente.fecha_vencimiento + timedelta(days=1)
-        es_adelanto = True
-        vigente.estado = "VENCIDA"    # la reemplaza la nueva
 
     # Membresia tiene un UNIQUE en (id_socio, fecha_inicio), asi que dos
     # membresias del mismo socio no pueden arrancar el mismo dia. Sin este
@@ -397,13 +398,14 @@ def cobrar(
     pago = Pago(
         id_socio=socio.id_socio,
         id_membresia=membresia.id_membresia,
+        id_tipo_membresia=tipo.id_tipo_membresia,
         id_sede=socio.id_sede,
         metodo=datos.metodo.value,
         monto=precio,
         fecha_pago=datetime.now(),
         periodo_desde=membresia.fecha_inicio,
         periodo_hasta=membresia.fecha_vencimiento,
-        es_adelanto=es_adelanto,
+        es_adelanto=False,
         estado="CONFIRMADO",
         numero_comprobante=datos.numero_comprobante,
         id_promocion=promocion.id_promocion if promocion else None,
@@ -470,8 +472,6 @@ def cobrar(
             f"Incluye el abono {inscripcion_out.plan} de {inscripcion_out.actividad}, "
             f"vigente hasta el {inscripcion_out.fecha_vencimiento}."
         )
-    if es_adelanto:
-        partes.append(f"Como tenía cuota vigente, el período nuevo arranca el {inicio}.")
 
     return CobroResponse(
         pago=_a_pago_out(pago),

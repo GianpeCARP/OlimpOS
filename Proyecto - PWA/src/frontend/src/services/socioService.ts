@@ -768,6 +768,17 @@ export interface MiCuota {
   deudas: DeudaListada[];
   totalAdeudado: number;
   pagos: PagoListado[];
+  /**
+   * Si hoy se puede pagar una cuota. NO se cobran períodos por adelantado
+   * (backend/renovacion.py): con la cuota vigente o en pausa, esto viene en
+   * false con el motivo ya redactado, y la pantalla no ofrece pagar.
+   */
+  puedeRenovar: boolean;
+  motivoNoRenovar?: string;
+  /** "YYYY-MM-DD": desde cuándo se va a poder renovar, si se sabe. */
+  renovableDesde?: string;
+  /** "YYYY-MM-DD" desde la que corre la baja que pidió (backend/bajas.py). */
+  bajaProgramada?: string;
 }
 
 interface CuotaApi {
@@ -779,6 +790,10 @@ interface CuotaApi {
   fecha_inicio: string | null;
   fecha_vencimiento: string | null;
   dias_restantes: number | null;
+  puede_renovar?: boolean;
+  motivo_no_renovar?: string | null;
+  renovable_desde?: string | null;
+  baja_programada?: string | null;
   deuda_total: number;
   deudas: {
     id_deuda: number;
@@ -828,6 +843,10 @@ export async function getMiCuota(): Promise<MiCuota> {
       observaciones: d.observaciones ?? undefined,
     })),
     totalAdeudado: c.deuda_total,
+    puedeRenovar: c.puede_renovar ?? true,
+    motivoNoRenovar: c.motivo_no_renovar ?? undefined,
+    renovableDesde: c.renovable_desde ?? undefined,
+    bajaProgramada: c.baja_programada ?? undefined,
     pagos: c.ultimos_pagos.map((p) => ({
       idPago: p.id_pago,
       fecha: p.fecha_pago,
@@ -1129,6 +1148,11 @@ export async function reanudarMiMembresia(): Promise<Congelamiento> {
  * desactiva la cuenta, y por eso este no lo reusa: aplicado a uno mismo,
  * apretar el botón lo dejaría afuera sin poder volver a entrar.)
  */
+/** Anula la baja programada, antes de que corra. */
+export async function anularMiBaja(): Promise<{ mensaje: string }> {
+  return pedir<{ mensaje: string }>('/portal/mi-membresia/baja', { metodo: 'DELETE' });
+}
+
 export async function darmeDeBaja(motivo?: string): Promise<{ mensaje: string }> {
   return pedir<{ mensaje: string }>('/portal/mi-membresia/baja', {
     metodo: 'POST',

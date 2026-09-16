@@ -13,6 +13,7 @@
 import flet as ft
 from app.config import Colors, Fonts, Radius, Routes, alpha
 from app.permisos import Accion
+from app.components.agenda_turnos import agenda_turnos
 from app.state import app_state
 from app.components.ui import (build_topbar, stat_card, section_card,
                                status_badge, primary_button, divider_row,
@@ -161,6 +162,14 @@ class DashboardView:
             card_accesos,
         ], spacing=24, vertical_alignment=ft.CrossAxisAlignment.START)
 
+        # ── Próximos turnos ──────────────────────────────────────────────────
+        # Gemelo de <AgendaTurnos compacto /> de DashboardView.tsx. Para quien
+        # atiende el mostrador (no ve la facturación) van ARRIBA de todo; el
+        # Dueño los ve después de sus números.
+        ver_turnos = app_state.puede_ver(Routes.ASISTENCIA)
+        turnos_arriba = ver_turnos and not ver_ingresos
+        card_turnos = agenda_turnos(self.page, dias=2, compacto=True) if ver_turnos else None
+
         # ── Ensamblado ───────────────────────────────────────────────────────
         # Separación de 24px entre bloques y padding de 32, igual que el
         # `space-y-6 p-8` de la web.
@@ -173,12 +182,15 @@ class DashboardView:
             topbar,
             ft.Container(
                 content=ft.Column([
+                    *([card_turnos, ft.Container(height=24)] if turnos_arriba else []),
                     fila_metricas,
                     ft.Container(height=24),
                     # Sólo con verIngresos: el Recepcionista ve el dashboard,
                     # pero la facturación no. Mismo lugar que en la PWA.
                     *([self._card_ingresos(), ft.Container(height=24)]
                       if ver_ingresos else []),
+                    *([card_turnos, ft.Container(height=24)]
+                      if ver_turnos and not turnos_arriba else []),
                     card_actividad,
                     ft.Container(height=24),
                     fila_inferior,

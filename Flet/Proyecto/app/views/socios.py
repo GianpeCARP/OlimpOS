@@ -5,12 +5,12 @@
 from datetime import date
 
 import flet as ft
-from app.config import Colors, Radius, Routes  # Paleta, radios y rutas
+from app.config import Colors, Fonts, Radius, Routes  # Paleta, fuentes, radios y rutas
 from app.permisos import Accion                # Qué botones se dibujan (espejo de SociosView.tsx)
 from app.state import app_state               # Estado global con los datos de socios
 # Componentes reutilizables del sistema de diseño
 from app.components.ui import (build_topbar, status_badge, primary_button,
-                               input_field, show_snack, open_dialog,
+                               input_field, telefono_field, show_snack, open_dialog,
                                close_dialog)
 from app.contacto import ASUNTO_CREDENCIALES, link_mail, link_whatsapp
 
@@ -246,7 +246,14 @@ class SociosView:
                         width=32, height=32, border_radius=16,
                         bgcolor=Colors.ACCENT, alignment=ft.Alignment.CENTER,
                     ),
-                    ft.Text(s["nombre"], color=Colors.TEXT_PRIMARY, size=14),
+                    ft.Column([
+                        ft.Text(s["nombre"], color=Colors.TEXT_PRIMARY, size=14),
+                        # Baja programada: sigue activo hasta esa fecha. Gemelo
+                        # del aviso de SocioTableRow.tsx.
+                        *([ft.Text(f"Baja el {s['baja_programada']}",
+                                   color=Colors.STATUS_WARN, size=11)]
+                          if s["baja_programada"] else []),
+                    ], spacing=0, tight=True),
                 ], spacing=10, expand=3),
                 ft.Container(content=ft.Text(s["plan"], color=Colors.TEXT_SECONDARY, size=13), expand=2),
                 ft.Container(content=status_badge(s["estado"]), expand=2, alignment=ft.Alignment.CENTER_LEFT),
@@ -270,6 +277,16 @@ class SociosView:
                         icon_size=18, tooltip="Teléfonos",
                         on_click=lambda e, x=s: self._telefonos(x),
                     ),
+                    # Contacto de emergencia, para todos los que ven la grilla
+                    # (gemelo del botón de SocioTableRow.tsx). En rojo si hay
+                    # uno cargado, así se ve de lejos a quién se puede llamar.
+                    ft.IconButton(
+                        ft.Icons.MONITOR_HEART_ROUNDED,
+                        icon_color=Colors.STATUS_DANGER if s["emergencia_telefono"]
+                        else Colors.TEXT_MUTED,
+                        icon_size=18, tooltip="Contacto de emergencia",
+                        on_click=lambda e, x=s: self._emergencia(x),
+                    ),
                     # El botón se OMITE, no se deshabilita, para quien no tenga
                     # la acción. Un botón gris que no responde igual delata que
                     # el socio tiene algo cargado, y el punto de que el
@@ -285,7 +302,11 @@ class SociosView:
                     # asistencias— y se puede deshacer. Un socio dado de baja
                     # muestra el botón de volver a activarlo, no uno de borrar.
                     # Sólo con la acción altaBajaSocios.
-                    *([ft.IconButton(ft.Icons.PERSON_OFF_ROUNDED, icon_color=Colors.DANGER,
+                    *([ft.IconButton(ft.Icons.UNDO_ROUNDED, icon_color=Colors.STATUS_WARN,
+                                     icon_size=18, tooltip="Anular la baja programada",
+                                     on_click=lambda e, x=s: self._anular_baja(x))
+                       if s["baja_programada"] else
+                       ft.IconButton(ft.Icons.PERSON_OFF_ROUNDED, icon_color=Colors.DANGER,
                                      icon_size=18, tooltip="Dar de baja",
                                      on_click=lambda e, x=s: self._confirmar_baja(x))
                        if s["estado"] != "Dado de baja" else
@@ -326,6 +347,25 @@ class SociosView:
         telefono_ref = ft.Ref[ft.TextField]()
         objetivo_ref = ft.Ref[ft.TextField]()
         obs_ref      = ft.Ref[ft.TextField]()
+        # Datos personales y contacto de emergencia: los pide el alta y la
+        # edición (gemelo de SocioFormModal.tsx). NO se piden al cobrar.
+        nac_ref      = ft.Ref[ft.TextField]()
+        calle_ref    = ft.Ref[ft.TextField]()
+        numero_ref   = ft.Ref[ft.TextField]()
+        local_ref    = ft.Ref[ft.TextField]()
+        em_nom_ref   = ft.Ref[ft.TextField]()
+        em_tel_ref   = ft.Ref[ft.TextField]()
+        em_par_ref   = ft.Ref[ft.TextField]()
+
+        def valor(campo: str) -> str:
+            return socio[campo] if is_edit else ""
+
+        def subtitulo(texto: str) -> ft.Control:
+            return ft.Container(
+                content=ft.Text(texto.upper(), color=Colors.TEXT_MUTED, size=11,
+                                weight=ft.FontWeight.W_600),
+                padding=ft.Padding.only(top=16, bottom=8),
+            )
 
         dlg = ft.AlertDialog(
             modal=True,
@@ -333,8 +373,8 @@ class SociosView:
                           color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
             bgcolor=Colors.BG_CARD,
             content=ft.Container(
-                width=420,
-                height=400,
+                width=460,
+                height=520,
                 content=ft.Column([
                     input_field("Nombre", "Ej: Juan", ref=nombre_ref,
                                 icon=ft.Icons.PERSON_OUTLINE_ROUNDED,
@@ -355,9 +395,42 @@ class SociosView:
                                 icon=ft.Icons.EMAIL_OUTLINED,
                                 value=socio["email"] if is_edit else ""),
                     ft.Container(height=12),
-                    input_field("Teléfono", "Ej: 3415551234", ref=telefono_ref,
-                                icon=ft.Icons.PHONE_OUTLINED,
-                                value=socio["telefono"] if is_edit else ""),
+                    telefono_field("Teléfono", "Ej: 3415551234", ref=telefono_ref,
+                                   value=socio["telefono"] if is_edit else ""),
+                    ft.Container(height=12),
+                    input_field("Fecha de nacimiento", "dd/mm/aaaa", ref=nac_ref,
+                                icon=ft.Icons.CAKE_OUTLINED,
+                                value=valor("fecha_nacimiento")),
+                    subtitulo("Domicilio"),
+                    ft.Row([
+                        ft.Container(content=input_field("Calle", "Ej: San Martín",
+                                                         ref=calle_ref,
+                                                         icon=ft.Icons.HOME_OUTLINED,
+                                                         value=valor("calle")),
+                                     expand=2),
+                        ft.Container(content=input_field("Número", "Ej: 1234",
+                                                         ref=numero_ref,
+                                                         value=valor("numero_calle")),
+                                     expand=1),
+                    ], spacing=12),
+                    ft.Container(height=12),
+                    input_field("Localidad", "Ej: Rosario", ref=local_ref,
+                                icon=ft.Icons.PLACE_OUTLINED, value=valor("localidad")),
+                    subtitulo("Contacto de emergencia"),
+                    ft.Row([
+                        ft.Container(content=input_field("Nombre", "Ej: María García",
+                                                         ref=em_nom_ref,
+                                                         icon=ft.Icons.MONITOR_HEART_OUTLINED,
+                                                         value=valor("emergencia_nombre")),
+                                     expand=2),
+                        ft.Container(content=input_field("Parentesco", "Ej: madre",
+                                                         ref=em_par_ref,
+                                                         value=valor("emergencia_parentesco")),
+                                     expand=1),
+                    ], spacing=12),
+                    ft.Container(height=12),
+                    telefono_field("Teléfono de emergencia", "Ej: 3415551234",
+                                   ref=em_tel_ref, value=valor("emergencia_telefono")),
                     ft.Container(height=12),
                     input_field("Objetivo", "Ej: Bajar de peso", ref=objetivo_ref,
                                 icon=ft.Icons.FLAG_OUTLINED,
@@ -380,7 +453,12 @@ class SociosView:
                                   {"nombre": nombre_ref, "apellido": apellido_ref,
                                    "dni": dni_ref, "email": email_ref,
                                    "telefono": telefono_ref,
-                                   "objetivo": objetivo_ref, "observaciones": obs_ref},
+                                   "objetivo": objetivo_ref, "observaciones": obs_ref,
+                                   "fecha_nacimiento": nac_ref, "calle": calle_ref,
+                                   "numero_calle": numero_ref, "localidad": local_ref,
+                                   "emergencia_nombre": em_nom_ref,
+                                   "emergencia_telefono": em_tel_ref,
+                                   "emergencia_parentesco": em_par_ref},
                               )),
             ],
             actions_alignment=ft.MainAxisAlignment.END,
@@ -404,6 +482,14 @@ class SociosView:
                        Colors.STATUS_DANGER)
             return
 
+        # La fecha se tipea dd/mm/aaaa. False = escribió algo que no es una
+        # fecha: se frena acá en vez de guardarlo en silencio como vacío.
+        nacimiento = self._fecha_iso(datos["fecha_nacimiento"])
+        if nacimiento is False:
+            show_snack(self.page, "La fecha de nacimiento va como dd/mm/aaaa.",
+                       Colors.STATUS_DANGER)
+            return
+
         # Los opcionales van como None y no como "": el backend valida el mail
         # con EmailStr y una cadena vacía no es un mail válido — mandarla haría
         # fallar el alta de alguien que simplemente no dejó mail.
@@ -414,6 +500,13 @@ class SociosView:
             "telefono": datos["telefono"] or None,
             "objetivo": datos["objetivo"] or None,
             "observaciones": datos["observaciones"] or None,
+            "fecha_nacimiento": nacimiento,
+            "calle": datos["calle"] or None,
+            "numero_calle": datos["numero_calle"] or None,
+            "localidad": datos["localidad"] or None,
+            "emergencia_nombre": datos["emergencia_nombre"] or None,
+            "emergencia_telefono": datos["emergencia_telefono"] or None,
+            "emergencia_parentesco": datos["emergencia_parentesco"] or None,
         }
 
         if id_socio is None:
@@ -543,6 +636,49 @@ class SociosView:
         )
         open_dialog(self.page, dlg)
 
+    def _emergencia(self, socio: dict):
+        """
+        El contacto de emergencia, a un click de la grilla. Gemelo de
+        EmergenciaModal.tsx: el número grande (si la PC no llama, alguien lo
+        marca en el celular) y WhatsApp. Antes el dato existía y ninguna
+        pantalla del personal lo mostraba, que es justo cuando hace falta.
+        """
+        telefono = socio["emergencia_telefono"]
+        if not telefono:
+            contenido = ft.Text(
+                "No tiene un contacto de emergencia cargado. Se carga desde "
+                "\"Editar\", o lo completa el socio en su perfil.",
+                color=Colors.TEXT_SECONDARY, size=13)
+            acciones = []
+        else:
+            detalle = socio["emergencia_nombre"]
+            if socio["emergencia_parentesco"]:
+                detalle += f" · {socio['emergencia_parentesco']}"
+            contenido = ft.Column([
+                ft.Text(detalle, color=Colors.TEXT_MAIN, size=14),
+                ft.Text(telefono, color=Colors.PRIMARY_VOLT, size=26,
+                        weight=ft.FontWeight.BOLD, font_family=Fonts.MONO,
+                        selectable=True),
+            ], spacing=4, tight=True)
+            acciones = [ft.TextButton(
+                "WhatsApp", icon=ft.Icons.CHAT_ROUNDED,
+                style=ft.ButtonStyle(color=Colors.ACCENT),
+                on_click=lambda e: self.page.launch_url(link_whatsapp(telefono)),
+            )]
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f"Contacto de emergencia — {socio['nombre']}",
+                          color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD, size=16),
+            bgcolor=Colors.BG_CARD,
+            content=ft.Container(content=contenido, width=380),
+            actions=[*acciones, ft.TextButton(
+                "Cerrar", style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                on_click=lambda e: close_dialog(self.page, dlg))],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        open_dialog(self.page, dlg)
+
     def _confirmar_baja(self, socio: dict):
         """
         Da de baja al socio. Pide el tipo porque no todas las bajas son
@@ -564,9 +700,11 @@ class SociosView:
                     ft.Text(f"Se va a dar de baja a {socio['nombre']}.",
                             color=Colors.TEXT_SECONDARY, size=13),
                     ft.Container(height=8),
-                    ft.Text("La ficha NO se borra: queda su historial de pagos y "
-                            "asistencias, y se puede reactivar. Se cancela la "
-                            "membresía vigente y se desactiva su cuenta.",
+                    ft.Text("La ficha NO se borra: queda su historial y se puede "
+                            "reactivar. Si tiene la cuota paga, la baja corre desde "
+                            "el día siguiente al vencimiento y hasta entonces sigue "
+                            "entrenando: no pierde los días que pagó. Si no, es "
+                            "inmediata.",
                             color=Colors.TEXT_MUTED, size=12),
                     ft.Container(height=14),
                     ft.Dropdown(
@@ -610,8 +748,19 @@ class SociosView:
             show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
             return
         close_dialog(self.page, dlg)
-        show_snack(self.page, resultado["mensaje"], Colors.SUCCESS)
+        programada = (resultado.get("data") or {}).get("baja_programada")
+        show_snack(self.page,
+                   f"La baja queda para el {app_state._fecha(programada)}." if programada
+                   else resultado["mensaje"],
+                   Colors.SUCCESS)
         self.router.navigate(Routes.SOCIOS)
+
+    def _anular_baja(self, socio: dict):
+        resultado = app_state.anular_baja_socio(socio["id"])
+        show_snack(self.page, resultado["mensaje"],
+                   Colors.SUCCESS if resultado["ok"] else Colors.STATUS_DANGER)
+        if resultado["ok"]:
+            self.router.navigate(Routes.SOCIOS)
 
     def _reactivar(self, socio: dict):
         resultado = app_state.reactivar_socio(socio["id"])
@@ -830,8 +979,7 @@ class SociosView:
         if puede:
             contenido += [
                 ft.Container(height=12),
-                input_field("Agregar teléfono", "Ej: 3415551234",
-                            ref=numero_ref, icon=ft.Icons.PHONE_OUTLINED),
+                telefono_field("Agregar teléfono", "Ej: 3415551234", ref=numero_ref),
                 ft.Container(height=8),
                 ft.Dropdown(
                     ref=tipo_ref,

@@ -27,6 +27,20 @@ export interface SocioListado {
   nombreCompleto: string;
   email?: string;
   telefono?: string;
+  /** "YYYY-MM-DD". */
+  fechaNacimiento?: string;
+  calle?: string;
+  numeroCalle?: string;
+  localidad?: string;
+  /** Contacto de emergencia principal: se puede llamar desde la grilla. */
+  emergenciaNombre?: string;
+  emergenciaTelefono?: string;
+  emergenciaParentesco?: string;
+  /**
+   * "YYYY-MM-DD" de la baja PROGRAMADA: pidió la baja con la cuota paga y
+   * sigue activo hasta ese día (backend/bajas.py). Se puede anular.
+   */
+  bajaProgramada?: string;
   idTipoMembresia?: number;
   plan: string;
   estado: EstadoSocioValue;
@@ -44,6 +58,14 @@ interface SocioApi {
   apellido: string;
   email: string | null;
   telefono: string | null;
+  fecha_nacimiento?: string | null;
+  calle?: string | null;
+  numero_calle?: string | null;
+  localidad?: string | null;
+  emergencia_nombre?: string | null;
+  emergencia_telefono?: string | null;
+  emergencia_parentesco?: string | null;
+  baja_programada?: string | null;
   id_tipo_membresia: number | null;
   plan: string;
   estado: string;
@@ -70,6 +92,14 @@ function aSocioListado(s: SocioApi): SocioListado {
     // y la vista distingue "sin teléfono" de "teléfono vacío".
     email: s.email ?? undefined,
     telefono: s.telefono ?? undefined,
+    fechaNacimiento: s.fecha_nacimiento ?? undefined,
+    calle: s.calle ?? undefined,
+    numeroCalle: s.numero_calle ?? undefined,
+    localidad: s.localidad ?? undefined,
+    emergenciaNombre: s.emergencia_nombre ?? undefined,
+    emergenciaTelefono: s.emergencia_telefono ?? undefined,
+    emergenciaParentesco: s.emergencia_parentesco ?? undefined,
+    bajaProgramada: s.baja_programada ?? undefined,
     idTipoMembresia: s.id_tipo_membresia ?? undefined,
     plan: s.plan,
     estado: s.estado as EstadoSocioValue,
@@ -194,6 +224,32 @@ export async function listarTiposMembresia(): Promise<TipoMembresia[]> {
     }));
 }
 
+// --- Datos personales (alta y edición) ---
+
+/** Fecha de nacimiento, domicilio y contacto de emergencia. Todos opcionales. */
+export interface DatosPersonalesSocio {
+  fechaNacimiento?: string;
+  calle?: string;
+  numeroCalle?: string;
+  localidad?: string;
+  emergenciaNombre?: string;
+  emergenciaTelefono?: string;
+  emergenciaParentesco?: string;
+}
+
+/** Vacío viaja como null: el backend distingue "no hay dato" de un texto en blanco. */
+function cuerpoDatosPersonales(d: DatosPersonalesSocio = {}) {
+  return {
+    fecha_nacimiento: d.fechaNacimiento || null,
+    calle: d.calle?.trim() || null,
+    numero_calle: d.numeroCalle?.trim() || null,
+    localidad: d.localidad?.trim() || null,
+    emergencia_nombre: d.emergenciaNombre?.trim() || null,
+    emergencia_telefono: d.emergenciaTelefono?.trim() || null,
+    emergencia_parentesco: d.emergenciaParentesco?.trim() || null,
+  };
+}
+
 // --- Alta ---
 
 export interface CrearSocioInput {
@@ -204,6 +260,9 @@ export interface CrearSocioInput {
   // contacto después.
   email?: string;
   telefono?: string;
+  // Los pide el alta desde el 2026-09-16: antes el backend los aceptaba y
+  // ninguna pantalla los preguntaba, así que nadie los tenía cargados.
+  datosPersonales?: DatosPersonalesSocio;
   // Acá había `idTipoMembresia`, y no se mandaba nunca: el formulario dejaba
   // elegir un plan y el socio quedaba SIN membresía, sin ningún aviso. Se sacó
   // el 2026-09-16. El plan no es un dato del socio: es una Membresía, y se
@@ -257,6 +316,7 @@ export async function crearSocio(input: CrearSocioInput): Promise<AltaSocioResul
       apellido: input.apellido.trim(),
       email: input.email?.trim() || null,
       telefono: input.telefono?.trim() || null,
+      ...cuerpoDatosPersonales(input.datosPersonales),
       id_sede: 1,
       crear_cuenta: true,
     },
@@ -290,6 +350,7 @@ export interface EditarSocioInput {
   email?: string;
   telefono?: string;
   objetivo?: string;
+  datosPersonales?: DatosPersonalesSocio;
 }
 
 /**
@@ -318,6 +379,7 @@ export async function actualizarSocio(
       email: input.email?.trim() || null,
       telefono: input.telefono?.trim() ?? null,
       objetivo: input.objetivo?.trim() || null,
+      ...cuerpoDatosPersonales(input.datosPersonales),
     },
   });
   return aSocioListado(datos);
@@ -344,6 +406,12 @@ export async function darDeBajaSocio(idSocio: number, motivo?: string): Promise<
  * Camino de vuelta. El socio vuelve SIN membresía: hay que cobrarle de nuevo.
  * Reactivar la vieja le regalaría los días que pasaron mientras estuvo de baja.
  */
+/** Anula una baja programada que todavía no corrió (el socio cambió de idea). */
+export async function anularBajaSocio(idSocio: number): Promise<SocioListado> {
+  const datos = await pedir<SocioApi>(`/socios/${idSocio}/anular-baja`, { metodo: 'POST' });
+  return aSocioListado(datos);
+}
+
 export async function reactivarSocio(idSocio: number): Promise<SocioListado> {
   const datos = await pedir<SocioApi>(`/socios/${idSocio}/reactivar`, { metodo: 'POST' });
   return aSocioListado(datos);

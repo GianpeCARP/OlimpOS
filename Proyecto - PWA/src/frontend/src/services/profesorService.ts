@@ -21,7 +21,7 @@ interface InscriptoApi {
   alerta?: string | null;
 }
 
-interface MiClaseApi {
+export interface MiClaseApi {
   id_turno: number;
   actividad: string;
   fecha: string;
@@ -72,7 +72,9 @@ function aInscripto(i: InscriptoApi): Inscripto {
   };
 }
 
-function aMiClase(t: MiClaseApi): MiClase {
+/** Exportado: la agenda del personal (turnosService) pide el mismo armado del
+ *  backend y tiene que leerlo igual, no con una segunda traducción. */
+export function aMiClase(t: MiClaseApi): MiClase {
   return {
     idTurno: t.id_turno,
     actividad: t.actividad,

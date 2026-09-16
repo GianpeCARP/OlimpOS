@@ -52,9 +52,8 @@ from schemas import (
 )
 from security import Sesion, requiere_accion, requiere_alguna_seccion, requiere_seccion
 
-# Lecturas que Cobros necesita para cobrar abonos y clases sueltas. El
-# Recepcionista tiene Cobros y NO Actividades (configurar el catálogo no es
-# tarea del mostrador, cobrarlo sí). Ver requiere_alguna_seccion.
+# Lecturas que Cobros necesita para cobrar abonos y clases sueltas: alcanza con
+# tener Cobros, aunque el rol no tenga Actividades. Ver requiere_alguna_seccion.
 _LEER_PARA_COBRAR = requiere_alguna_seccion(Seccion.ACTIVIDADES, Seccion.COBROS)
 from notificaciones import notificar_promocion_lista_espera
 from turnos import (
@@ -216,9 +215,8 @@ def crear_actividad(
     sesion: Sesion = Depends(requiere_seccion(Seccion.ACTIVIDADES, Acceso.TOTAL)),
 ):
     """
-    Crea una actividad. La sección está en TOTAL solo para el Dueño: definir
-    qué clases ofrece el gimnasio y a qué precio es configuración de negocio,
-    no operativa del día a día.
+    Crea una actividad. Pide la sección en TOTAL, que tienen el Dueño y el
+    Recepcionista (ver la matriz en permisos.py).
     """
     nombre = datos.nombre.strip()
     if db.query(Actividad).filter(Actividad.nombre.ilike(nombre)).first():
@@ -1007,8 +1005,10 @@ def comprar_plan(
     # Y por eso la membresía tiene que cubrir ese mes ENTERO. Si no llega, se
     # rechaza acá en vez de recortar el abono en silencio: recortarlo sería
     # cobrarle un mes y darle veinte días. La alternativa correcta es que el
-    # mostrador renueve la cuota primero, y para eso existe /puede-comprar,
-    # que deja preguntarlo ANTES de cobrar nada.
+    # mostrador cobre el abono JUNTO con la próxima cuota (Cobros permite los
+    # dos en un solo cobro), y para eso existe /puede-comprar, que deja
+    # preguntarlo ANTES de cobrar nada. "Renovar primero" ya no es una salida:
+    # no se cobran cuotas por adelantado (renovacion.py).
     vencimiento = _sumar_un_mes(hoy)
 
     if membresia.fecha_vencimiento and membresia.fecha_vencimiento < vencimiento:
@@ -1016,7 +1016,7 @@ def comprar_plan(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(f"La membresía de {socio.persona.nombre_completo} vence el "
                     f"{membresia.fecha_vencimiento} y este abono se extendería hasta el "
-                    f"{vencimiento}. Renovale la cuota primero."),
+                    f"{vencimiento}. Cobralo junto con la próxima cuota, cuando venza."),
         )
 
     # Ya no hay chequeo de tabla Deuda (se eliminó del esquema): el estado
@@ -1170,7 +1170,8 @@ def puede_comprar(
         motivo = "Tiene una deuda pendiente. Regularizala antes de comprar."
     elif not cubre:
         motivo = (f"La cuota vence el {membresia.fecha_vencimiento} y el abono llegaría "
-                  f"hasta el {vencimiento_abono}. Hay que renovar primero.")
+                  f"hasta el {vencimiento_abono}. Se cobra junto con la próxima cuota, "
+                  "cuando venza.")
 
     return PuedeComprarOut(
         puede=cubre and not tiene_deuda,
@@ -1395,6 +1396,25 @@ def crear_horario(
     if actividad is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="La actividad no existe.")
+
+    # El profesor del horario pasa a cada turno generado, y de ahí sale "Mis
+    # clases". Tiene que ser uno asignado a ESTA actividad y en actividad: sin
+    # este control, un horario de Yoga podía quedar a nombre de alguien que da
+    # Spinning, o de un profesor dado de baja que ya no ve nada.
+    if datos.id_profesor is not None:
+        asignado = (db.query(ProfesorActividad)
+                    .join(Profesor, Profesor.id_profesor == ProfesorActividad.id_profesor)
+                    .join(Empleado, Empleado.id_empleado == Profesor.id_empleado)
+                    .filter(ProfesorActividad.id_actividad == datos.id_actividad,
+                            ProfesorActividad.id_profesor == datos.id_profesor,
+                            Empleado.activo.is_(True))
+                    .first())
+        if asignado is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(f"Ese profesor no está asignado a {actividad.nombre}. "
+                        "Asignalo primero desde la tarjeta de la actividad."),
+            )
 
     choca = (db.query(HorarioActividad)
              .filter(HorarioActividad.id_sede == datos.id_sede,

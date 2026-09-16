@@ -11,14 +11,13 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
 - **Etapa:** las dos apps están completas y conectadas a la API real. El dueño las
   prueba **rol por rol en la PWA** y anota en `A CORREGIR PWA .txt`. Cada arreglo se
   hace en la PWA y se replica en Flet.
-- **Probado y resuelto:** todo el rol Dueño (Socios, Cobros, Asistencia, Personal,
-  Rutinas, Nutrición, Actividades, Usuarios y Dashboard).
-- **Abierto:** la sección **"OBSERVACIONES NUEVAS 2.0"** del `.txt` (Recepcionista,
-  Profesor y Socio). **No se empezó.** Resumen en "Lo que falta".
+- **Probado y resuelto:** todo el rol Dueño.
+- **Lista 2.0 del `.txt` (Recepcionista, Profesor, Socio): implementada** salvo lo
+  que figura abajo como decisión pendiente. Falta que el dueño la pruebe en pantalla.
 - **Base de datos: tiene los datos que el dueño cargó a mano** desde el estado de
   ENTREGA. **No vaciar ni recargar.** Cuentas hoy: `dueno`, `mario.dj`
   (recepcionista), `dami.silberstein` (profesor, todavía con la contraseña temporal)
-  y `franco.distillio` (socio). Las contraseñas están en el `.txt` de contraseñas.
+  y `franco.distillio` (socio: se limpiaron sus pagos online de prueba; le queda el Trimestral cobrado en el mostrador, activo hasta el 15/12/2026). Las contraseñas están en el `.txt` de contraseñas.
 - **Consecuencias para verificar:** las suites no se pueden correr (necesitan la base
   vacía). `pruebas_vistas.py` sólo entra con las cuentas que existan.
 - **Backend:** 124 rutas en `/openapi.json`; si da menos, está respondiendo un
@@ -28,71 +27,61 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
 
 ## Lo que falta, en orden
 
-### 1. Lista 2.0 del dueño (`A CORREGIR PWA .txt`, leer el texto completo)
-
-**Lo que el dueño marcó como lo más importante:**
-- **Turnos y reservas visibles para todos los roles.** Hoy sólo el socio los ve. El
-  personal no tiene dónde ver quién reservó qué horario.
-- **El Recepcionista tiene que poder gestionar Actividades** igual que el Dueño (toca
-  la matriz de permisos: las tres copias).
-- **Profesor, "Mis clases" vacío:** `dami.silberstein` está asignado a una actividad y
-  hay un socio con clase suelta comprada, pero no ve nada. Probablemente no hay
-  `Turno` generado con su `id_profesor`: investigar.
-- **Socio, "Mis turnos" vacío** después de comprar la clase suelta. Tampoco le aparece
-  el turno para anotarse.
-
-**Recepcionista, Dashboard:**
-- Mostrar primero los turnos próximos.
-- Que vea los cobros en "Actividad reciente".
-- Dueño y Recepcionista: mostrar entre paréntesis qué se pagó al lado del monto.
-
-**Socio:**
-- **Error 500 al guardar la rutina propia.** La dieta propia sí guarda.
-- **Fecha de nacimiento y domicilio:** que se carguen en el alta de socio (Dueño y
-  Recepcionista), no al cobrar. El socio no los edita.
-- **Los modales del catálogo de ejercicios, de "Armar mi rutina", de "Armar mi dieta"
-  y de "Cargar mi plato" ocupan todo el ancho:** tienen que ser una ventana chica como
-  las demás, para todos los roles.
-- **"Mi progreso":** mostrar si cada día se cumplió el objetivo de la dieta, que sea
-  lindo e intuitivo.
-- **"Mi progreso":** el campo de masa muscular por día no tiene sentido (nadie se hace
-  un estudio diario). Repensarlo.
-- **Pregunta sin contestar:** en "Mi cuota", ¿cuándo aparece el saldo como pendiente?
-- **Revisar al final:** en algún momento "Mi cuota" mostró un valor de plan
-  equivocado. Ahora está bien.
-
-**General:**
-- **Contacto de emergencia del socio:** Dueño y Recepcionista tienen que poder
-  llamarlo.
-- **Teléfonos:** ¿hace falta el código de país para extranjeros? Si se agrega, va en
-  **todos** los campos de teléfono. Es una pregunta del dueño: proponer antes de
-  hacer.
-
-### 2. Decidido y sin implementar
+### 1. Decidido y sin implementar
 - **Borrar una cuenta de acceso** (no a la persona). El dueño eligió "sólo la cuenta":
   se borra la fila de `Usuario`, la persona y su historial quedan, y lo que apunte a
   esa cuenta (por ejemplo `Asistencia.id_registrado_por`) pasa a NULL. Revisar todas
   las FK a `Usuario` antes de codear. Hoy Usuarios sólo da de baja o de alta.
 
-### 3. Hecho pero sin probar en pantalla
-- Alta de socio con "Cobrar ahora" (Cobros tiene que abrir con el socio ya elegido),
-  en las dos apps.
-- Que el Recepcionista **no** vea el gráfico ni la métrica de ingresos.
-- El chip "2º de hoy" fichando dos veces al mismo socio (ojo: fichar acredita
-  reservas).
-- El aviso de cuenta trabada en el login y en el cambio de contraseña (PWA y Flet).
+### 2. Hecho pero sin probar en pantalla
+- **Horarios y turnos (PWA + Flet):** en Actividades, el horario semanal (crear con
+  profesor, dar de baja, regenerar) y la agenda de 7 días con los anotados de cada
+  turno y cancelar. Con un horario cargado deberían aparecer turnos en "Mis clases"
+  del profesor, "Mis turnos" del socio y "Próximos turnos" del Dashboard. **La base no
+  tiene ningún horario todavía**: hay que cargar uno para verlo.
+- **Recepcionista:** entra a Actividades con los mismos permisos que el Dueño; en el
+  Dashboard ve los próximos turnos arriba de todo y los cobros en "Actividad
+  reciente" (sin la métrica ni el gráfico de ingresos).
+- **Alta y edición de socio** con fecha de nacimiento, domicilio y contacto de
+  emergencia; botón rojo en la grilla para llamarlo (tel: y WhatsApp).
+- **Rutina propia del socio**: el 500 era un resto del nivel retirado (`portal.py`
+  leía `datos.nivel`); corregido, falta guardar una desde la pantalla.
+- **Mi progreso**: tira de los últimos 7 días contra el objetivo de calorías de la
+  dieta (±10%) y barras pintadas por cumplimiento; grasa y masa muscular plegadas
+  detrás de "Tengo un estudio de composición corporal".
+- **Sin cobros por adelantado** (backend, PWA y Flet): Cobros muestra "se puede renovar
+  desde el X" en vez del botón; Recepción de Flet sólo ofrece "Cobrar cuota" cuando se
+  puede; "Mi cuota" dice desde cuándo renovar; el combo cuota + abono sólo aparece sin
+  cuota vigente. Probado por API (rechazos 409 y los tres casos de la regla).
+- **Baja programada** (backend, PWA y Flet): con la cuota paga la baja corre desde el
+  día siguiente al vencimiento, se ve "Baja el dd/mm" en la grilla de Socios y en Mi
+  cuota, y se puede anular. Probado a nivel base (programar, bloqueo de renovación y
+  aplicación al llegar la fecha) en una transacción descartada; falta en pantalla.
+  **No hay forma de dar de baja YA a alguien con la cuota paga** (una expulsión): si
+  hace falta, sumar un "dar de baja ahora" en el diálogo del personal.
+- **Teléfonos con código de país** en los 6 campos de la PWA y los 4 de Flet (alta y
+  edición de socio y empleado, contacto de emergencia, agregar teléfono, Mi perfil).
+  En Flet, editar un empleado ya precarga el teléfono (antes guardar lo borraba).
+- **Mi cuota**: se sacaron "Saldo pendiente" y el bloque de deudas (la tabla Deuda no
+  existe, siempre daban 0); ahora avisa "cuota vencida" y muestra el último pago.
+- Ventanas de catálogo de ejercicios, armar rutina, armar dieta y registrar comida:
+  pantalla completa en el celular, ventana centrada desde tablet.
+- Alta de socio con "Cobrar ahora"; el chip "2º de hoy" (ojo: fichar acredita
+  reservas); el aviso de cuenta trabada en login y cambio de contraseña.
 
-### 4. Menores
+### 3. Menores
 - **Profesores homónimos:** dos con el mismo nombre se ven idénticos al asignarlos a
   una actividad. Mostrar DNI o legajo.
 - **Flet, Profesor:** al entrar no tiene secciones y cae en una pantalla sin acceso.
   Falta un mensaje que diga que su pantalla está en la PWA.
+- **Horario sin profesor:** no hay forma de asignarle o cambiarle el profesor a un
+  horario ya creado (hay que darlo de baja y crearlo de nuevo).
 - **Flet, detalle de un plan de nutrición:** no cierra tocando afuera (en la PWA sí).
   El `modal=True` es global a los diálogos, así que hay que resolverlo con cuidado.
 - **Contador de repeticiones:** rediseñar el overlay (las líneas verdes del esqueleto
   son sólo para afinar) y seguir ajustando umbrales probando en el celular.
 
-### 5. Grandes, después de la lista
+### 4. Grandes, después de la lista
 - **Coach con IA (decidido, sin implementar; AVISARLE al dueño antes de arrancar).**
   - Chat a pedido con historial guardado (tabla nueva chica), corriendo en el backend
     con **Claude vía API** (Haiku 4.5, necesita API key). Más adelante se puede migrar

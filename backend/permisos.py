@@ -193,9 +193,12 @@ PERMISOS: dict[str, dict] = {
     # no puede entrar a su cuenta, es el Recepcionista quien le gestiona la
     # rutina o se la asigna a un socio en su lugar.
     #
-    # No ve ingresos (dato de negocio, no operativo) ni configura Actividades
-    # (mismo criterio que Alta/Baja de Personal: es configuración, no día a
-    # día). Su límite real es su propia cuenta de acceso — no puede editarla
+    # No ve ingresos (dato de negocio, no operativo). SÍ gestiona Actividades
+    # igual que el Dueño (decisión del dueño, 2026-09-16): cargar horarios,
+    # profesores y planes es lo que hace que existan turnos, y eso lo resuelve
+    # el mostrador en el día a día. Antes quedaba en NINGUNO por ser
+    # "configuración" y el que atiende no tenía dónde ver ni armar una clase.
+    # Su límite real es su propia cuenta de acceso — no puede editarla
     # ni desactivarla, pero eso es una regla de FILA, no de sección, y se
     # aplica en el router de usuarios, no acá.
     Rol.RECEPCIONISTA: {
@@ -207,7 +210,7 @@ PERMISOS: dict[str, dict] = {
             Seccion.NUTRICION: Acceso.TOTAL,
             Seccion.USUARIOS: Acceso.TOTAL,
             Seccion.ASISTENCIA: Acceso.TOTAL,
-            Seccion.ACTIVIDADES: Acceso.NINGUNO,
+            Seccion.ACTIVIDADES: Acceso.TOTAL,
             Seccion.COBROS: Acceso.TOTAL,
             **_SIN_PORTAL_SOCIO,
         },

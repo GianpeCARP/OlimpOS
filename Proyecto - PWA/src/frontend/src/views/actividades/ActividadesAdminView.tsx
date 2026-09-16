@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Plus } from 'lucide-react';
+import { AgendaTurnos } from '../../components/AgendaTurnos';
 import { PrimaryButton, SectionCard, Topbar } from '../../components/ui';
 import { colors } from '../../config';
 import { mensajeDeError } from '../../services/api';
@@ -15,17 +16,26 @@ import {
   type PlanActividadAdmin,
   type ProfesorAsignable,
 } from '../../services/actividadService';
+import {
+  darDeBajaHorario,
+  getHorarios,
+  regenerarTurnos,
+  type Horario,
+} from '../../services/turnosService';
+import { usePuedeAccion } from '../../hooks/usePermisos';
 import { useAuthStore } from '../../store/authStore';
 import { useUiStore } from '../../store/uiStore';
 import { ActividadAdminCard } from './ActividadAdminCard';
 import { ActividadFormModal } from './ActividadFormModal';
+import { HorarioFormModal } from './HorarioFormModal';
+import { HorarioSemanal } from './HorarioSemanal';
 import { PlanFormModal } from './PlanFormModal';
 import { ProfesorAsignacionModal } from './ProfesorAsignacionModal';
 
 // ABM del catálogo de actividades (especificacion_definitiva_actividades.md,
-// Fase 4, sección Dueño). Exclusiva del Dueño — ver el comentario en
-// config.ts sobre por qué esta sección, a diferencia de Asistencia, no es
-// operativa del día a día sino configuración de negocio (precios, cupos).
+// Fase 4). Dueño y Recepcionista — ver el comentario de ACTIVIDADES en
+// config.ts. Además del catálogo tiene el horario semanal (de ahí salen los
+// turnos) y la agenda de los próximos turnos con quién se anotó.
 //
 // Después de CUALQUIER mutación se recarga todo (`recargar`) en vez de
 // parchear el estado local: acá conviven dos entidades anidadas (actividad
@@ -37,6 +47,7 @@ interface DatosAdmin {
   actividades: ActividadAdmin[];
   planesPorActividad: Map<number, PlanActividadAdmin[]>;
   profesoresPorActividad: Map<number, ProfesorAsignable[]>;
+  horarios: Horario[];
 }
 
 function Skeleton({ className }: { className: string }) {
@@ -47,6 +58,7 @@ export function ActividadesAdminView() {
   const idUsuarioActor = useAuthStore((s) => s.usuario?.id_usuario);
   const showSnack = useUiStore((s) => s.showSnack);
   const confirmDialog = useUiStore((s) => s.confirmDialog);
+  const puedeGestionarTurnos = usePuedeAccion('gestionTurnos');
 
   const [datos, setDatos] = useState<DatosAdmin | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -58,6 +70,7 @@ export function ActividadesAdminView() {
     plan: PlanActividadAdmin | null;
   } | null>(null);
   const [actividadParaProfesores, setActividadParaProfesores] = useState<ActividadAdmin | null>(null);
+  const [horarioNuevo, setHorarioNuevo] = useState(false);
 
   useEffect(() => {
     setDatos(null);
@@ -65,9 +78,10 @@ export function ActividadesAdminView() {
 
     getActividadesAdmin()
       .then(async (actividades) => {
-        const [listasDePlanes, listasDeProfesores] = await Promise.all([
+        const [listasDePlanes, listasDeProfesores, horarios] = await Promise.all([
           Promise.all(actividades.map((a) => getPlanesDeActividadAdmin(a.idActividad))),
           Promise.all(actividades.map((a) => getProfesoresDeActividad(a.idActividad))),
+          getHorarios(),
         ]);
         const planesPorActividad = new Map<number, PlanActividadAdmin[]>();
         const profesoresPorActividad = new Map<number, ProfesorAsignable[]>();
@@ -75,7 +89,7 @@ export function ActividadesAdminView() {
           planesPorActividad.set(a.idActividad, listasDePlanes[i]);
           profesoresPorActividad.set(a.idActividad, listasDeProfesores[i]);
         });
-        setDatos({ actividades, planesPorActividad, profesoresPorActividad });
+        setDatos({ actividades, planesPorActividad, profesoresPorActividad, horarios });
       })
       .catch((err: unknown) => setError(mensajeDeError(err)));
   }, [intento]);
@@ -144,11 +158,45 @@ export function ActividadesAdminView() {
     [idUsuarioActor, showSnack, recargar],
   );
 
+  // Dar de baja un horario = "no generes más", NO "borrá lo que ya existe":
+  // los turnos futuros ya generados pueden tener gente anotada. Si hay que
+  // sacar alguno, se cancela desde la agenda. Mismo criterio que Flet.
+  const pedirBajaHorario = useCallback(
+    (horario: Horario) => {
+      confirmDialog(
+        `¿Dar de baja ${horario.actividad} — ${horario.diaNombre} ${horario.hora}?`,
+        `Deja de generar turnos nuevos. Los ${horario.turnosFuturos} que ya están generados no se tocan: si querés sacar alguno, cancelalo desde la agenda de turnos.`,
+        () => {
+          darDeBajaHorario(horario.idHorario)
+            .then(() => {
+              showSnack('Horario dado de baja', colors.statusOk);
+              recargar();
+            })
+            .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger));
+        },
+      );
+    },
+    [confirmDialog, showSnack, recargar],
+  );
+
+  const regenerar = useCallback(() => {
+    regenerarTurnos()
+      .then((mensaje) => {
+        showSnack(mensaje, colors.statusOk);
+        recargar();
+      })
+      .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger));
+  }, [showSnack, recargar]);
+
   return (
     <div>
       <Topbar
         title="Actividades"
-        subtitle={datos ? `${datos.actividades.length} actividades en el catálogo` : undefined}
+        subtitle={
+          datos
+            ? `${datos.actividades.length} actividades · ${datos.horarios.filter((h) => h.activo).length} horarios semanales`
+            : undefined
+        }
       />
 
       <div className="space-y-4 p-8">
@@ -169,7 +217,18 @@ export function ActividadesAdminView() {
 
         {!error && datos && (
           <>
-            <div className="flex justify-end">
+            <HorarioSemanal
+              horarios={datos.horarios}
+              puedeGestionar={puedeGestionarTurnos}
+              onNuevo={() => setHorarioNuevo(true)}
+              onBaja={pedirBajaHorario}
+              onRegenerar={regenerar}
+            />
+
+            <AgendaTurnos recarga={intento} />
+
+            <div className="flex items-center justify-between pt-2">
+              <h2 className="font-heading text-lg font-semibold text-text-main">Catálogo</h2>
               <PrimaryButton
                 label="Nueva actividad"
                 icon={Plus}
@@ -222,6 +281,15 @@ export function ActividadesAdminView() {
           idActividad={planEnForm.idActividad}
           plan={planEnForm.plan}
           onClose={() => setPlanEnForm(null)}
+          onGuardado={recargar}
+        />
+      )}
+
+      {horarioNuevo && datos && (
+        <HorarioFormModal
+          actividades={datos.actividades}
+          profesoresPorActividad={datos.profesoresPorActividad}
+          onClose={() => setHorarioNuevo(false)}
           onGuardado={recargar}
         />
       )}

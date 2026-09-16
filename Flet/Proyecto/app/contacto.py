@@ -35,10 +35,17 @@ def link_whatsapp(telefono: str, mensaje: str | None = None) -> str:
     0 inicial, que sí es inequívoco; el resto va cargado sin el 15.
     """
     numero = solo_digitos(telefono)
-    if numero.startswith("0"):
-        numero = numero[1:]
-    if not numero.startswith("54"):
-        numero = PREFIJO_INTERNACIONAL + numero
+    if (telefono or "").strip().startswith("+"):
+        # Con código de país (app/telefono.py) el número ya dice de dónde es.
+        # Único ajuste, Argentina: WhatsApp exige el 9 de celular tras el 54.
+        if numero.startswith("54") and not numero.startswith("549"):
+            numero = "549" + numero[2:]
+    else:
+        # Cargado antes del selector de país: es argentino.
+        if numero.startswith("0"):
+            numero = numero[1:]
+        if not numero.startswith("54"):
+            numero = PREFIJO_INTERNACIONAL + numero
     texto = f"?text={quote(mensaje)}" if mensaje else ""
     return f"https://wa.me/{numero}{texto}"
 

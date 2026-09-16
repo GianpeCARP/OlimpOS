@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useState, type SubmitEvent } from 'react';
-import { CalendarDays, IdCard, Mail, MapPin, Phone, ShieldAlert, Users } from 'lucide-react';
-import {
-  InputField,
-  PrimaryButton,
-  SectionCard,
-  StatusBadge,
-  Topbar,
-} from '../../components/ui';
+import { CalendarDays, IdCard, Mail, MapPin, ShieldAlert, Users } from 'lucide-react';
+import { InputField, PrimaryButton, SectionCard, StatusBadge, Topbar, TelefonoField } from '../../components/ui';
 import { colors } from '../../config';
 import { mensajeDeError } from '../../services/api';
 import {
@@ -243,12 +237,10 @@ export function MiPerfilView() {
                     type="email"
                     name="email"
                   />
-                  <InputField
+                  <TelefonoField
                     label="Teléfono"
                     value={telefono}
                     onChange={setTelefono}
-                    icon={Phone}
-                    type="tel"
                     name="telefono"
                   />
                 </div>
@@ -265,19 +257,17 @@ export function MiPerfilView() {
                     los dos vacíos.
                   </p>
 
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <InputField
                       label="Nombre"
                       value={emergenciaNombre}
                       onChange={setEmergenciaNombre}
                       name="emergencia_nombre"
                     />
-                    <InputField
+                    <TelefonoField
                       label="Teléfono"
                       value={emergenciaTelefono}
                       onChange={setEmergenciaTelefono}
-                      icon={Phone}
-                      type="tel"
                       name="emergencia_telefono"
                     />
                     <InputField

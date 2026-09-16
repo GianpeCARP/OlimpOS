@@ -91,6 +91,9 @@ interface EstadoCuentaApi {
   deuda_total: number;
   deudas: DeudaApi[];
   ultimos_pagos: PagoApi[];
+  puede_renovar?: boolean;
+  motivo_no_renovar?: string | null;
+  renovable_desde?: string | null;
 }
 
 function aPago(p: PagoApi): PagoListado {
@@ -207,8 +210,9 @@ interface CobroApi {
  * nunca se pisa la anterior. Eso es lo que deja el historial de cuándo estuvo
  * al día y cuándo no.
  *
- * Si la vigente todavía no venció, la nueva arranca DESPUÉS de ese
- * vencimiento: quien paga por adelantado no pierde los días que le quedaban.
+ * La nueva arranca HOY. No se cobran períodos por adelantado (decisión del
+ * dueño, ver backend/renovacion.py): con una cuota vigente el backend rechaza
+ * el cobro, y la pantalla ya no lo ofrece (MiCuota.puedeRenovar).
  *
  * Con `idPlanActividad` cobra además un abono de actividad, en la misma
  * transacción. Ese abono vence junto con la membresía: si la membresía cubre
@@ -333,6 +337,9 @@ export async function obtenerCuotaDeSocio(idSocio: number): Promise<MiCuota> {
 
   return {
     tieneMembresia: m !== null,
+    puedeRenovar: d.puede_renovar ?? true,
+    motivoNoRenovar: d.motivo_no_renovar ?? undefined,
+    renovableDesde: d.renovable_desde ?? undefined,
     alDia: d.al_dia,
     plan: m?.tipo ?? 'Sin plan',
     estado: (m ? estadoDeMembresia(m.dias_restantes) : 'Sin membresía') as MiCuota['estado'],

@@ -15,7 +15,7 @@
 # propagar el error: una grilla vacía con su cartel de "todavía no hay nada"
 # es mejor que una pantalla que explota porque el backend está apagado.
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from app import api_client, permisos
 from app.config import NAV_ITEMS
@@ -392,6 +392,20 @@ class AppState:
                 "telefono": s.get("telefono") or "",
                 "objetivo": s.get("objetivo") or "",
                 "observaciones": s.get("observaciones") or "",
+                # Datos personales y contacto de emergencia (gemelo de
+                # SocioListado en sociosService.ts). La fecha se precarga como
+                # dd/mm/aaaa, que es como se tipea en el formulario.
+                "fecha_nacimiento": self._fecha(s.get("fecha_nacimiento"))
+                                    if s.get("fecha_nacimiento") else "",
+                "calle": s.get("calle") or "",
+                "numero_calle": s.get("numero_calle") or "",
+                "localidad": s.get("localidad") or "",
+                "emergencia_nombre": s.get("emergencia_nombre") or "",
+                "emergencia_telefono": s.get("emergencia_telefono") or "",
+                "emergencia_parentesco": s.get("emergencia_parentesco") or "",
+                # Baja PROGRAMADA (backend/bajas.py): sigue activo hasta ese día.
+                "baja_programada": self._fecha(s.get("baja_programada"))
+                                   if s.get("baja_programada") else "",
                 "activo": s.get("activo", True),
             }
             for s in datos
@@ -692,7 +706,8 @@ class AppState:
         que pase el tiempo.
         """
         vacio = {"plan": "—", "estado": "Sin membresía", "vencimiento": "—",
-                 "deudas": [], "total_adeudado": 0, "pagos": []}
+                 "deudas": [], "total_adeudado": 0, "pagos": [],
+                 "puede_renovar": True, "motivo_no_renovar": ""}
         datos = self._datos(api_client.obtener_estado_cuenta(id_socio), None)
         if not datos:
             return vacio
@@ -723,6 +738,10 @@ class AppState:
             # cuota del mes paga y arrastrar una deuda vieja.
             # Prepago puro: sin tabla Deuda, "al día" es tener membresía vigente.
             "estado": "Al día" if datos.get("al_dia") else "Sin cuota vigente",
+            # Sin adelantos (backend/renovacion.py): si no se puede cobrar, la
+            # pantalla muestra el motivo en vez del botón.
+            "puede_renovar": datos.get("puede_renovar", True),
+            "motivo_no_renovar": datos.get("motivo_no_renovar") or "",
             "vencimiento": self._fecha(membresia.get("fecha_vencimiento")),
             "deudas": deudas,
             "total_adeudado": datos.get("deuda_total", 0),
@@ -1086,6 +1105,9 @@ class AppState:
     def reactivar_socio(self, id_socio: int) -> dict:
         return self._resultado(api_client.reactivar_socio(id_socio), "Socio reactivado.")
 
+    def anular_baja_socio(self, id_socio: int) -> dict:
+        return self._resultado(api_client.anular_baja_socio(id_socio), "Se anuló la baja.")
+
     # ── Teléfonos de la ficha ─────────────────────────────────────────────────
 
     def get_telefonos_de_socio(self, id_socio: int) -> list[dict]:
@@ -1338,6 +1360,7 @@ class AppState:
                     "estado": i.get("estado", "pendiente"),
                     "suelta": i.get("es_clase_suelta", False),
                     "alerta": i.get("alerta"),
+                    "puede_cobrar": i.get("puede_cobrar_cuota", True),
                 }
                 for i in t.get("inscriptos", [])
             ],
@@ -1377,11 +1400,44 @@ class AppState:
                 "vence": self._fecha(s.get("vencimiento")),
                 "deuda": s.get("deuda_total", 0),
                 "alerta": s.get("alerta"),
+                "puede_cobrar": s.get("puede_cobrar_cuota", True),
                 "proximo": (self._turno_panel(s["proximo_turno"])
                             if s.get("proximo_turno") else None),
             }
             for s in datos
         ]
+
+    # ── Agenda de turnos (personal) ───────────────────────────────────────────
+    #
+    # Gemelas de turnosService.ts (getAgenda / getDetalleTurno / cancelarTurno).
+    # El panel de Recepción sólo muestra las próximas horas; la agenda muestra
+    # los días que vienen, con quién se anotó a cada clase.
+
+    def get_agenda_turnos(self, dias: int = 7) -> list[dict]:
+        hoy = date.today()
+        datos = self._datos(api_client.obtener_turnos(
+            hoy.isoformat(), (hoy + timedelta(days=dias)).isoformat()), [])
+        return [
+            {
+                "id": t["id_turno"],
+                "actividad": t.get("actividad", "—"),
+                "fecha": t["fecha"],
+                "hora": str(t.get("hora", ""))[:5],
+                "cupo": t.get("cupo_maximo", 0),
+                "reservados": t.get("reservados", 0),
+                "cancelado": t.get("estado") == "CANCELADO",
+                "profesor": t.get("profesor"),
+                "motivo": t.get("motivo_cancelacion"),
+            }
+            for t in datos
+        ]
+
+    def get_detalle_turno(self, id_turno: int) -> dict | None:
+        datos = self._datos(api_client.obtener_turno_detalle(id_turno), None)
+        return self._turno_panel(datos) if datos else None
+
+    def cancelar_turno(self, id_turno: int, motivo: str = "Cancelada por el gimnasio") -> dict:
+        return self._resultado(api_client.cancelar_turno(id_turno, motivo), "Turno cancelado.")
 
     # ── Horarios semanales ────────────────────────────────────────────────────
 

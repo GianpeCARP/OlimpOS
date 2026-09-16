@@ -36,6 +36,7 @@ from permisos import Acceso, Seccion
 from schemas import (
     InscriptoEnTurno, PanelRecepcion, ResultadoBusqueda, TurnoDePanel,
 )
+from renovacion import estado_renovacion
 from security import Sesion, requiere_seccion
 from turnos import (
     EstadoAsistencia, estado_de_reserva, reservas_con_asistencia, vence_a,
@@ -97,7 +98,8 @@ def _alerta_de_socio(db: Session, socio: Socio) -> str | None:
 
     # Aviso temprano: es el único momento en que se tiene la atención de la
     # persona, y avisarle tres días antes evita el corte en seco del día que
-    # vence. Cobrarlo acá es un click; perseguirlo después, una llamada.
+    # vence. Es un aviso, no un cobro: la cuota se renueva recién cuando vence
+    # (renovacion.py), así que se le avisa para que vuelva ese día.
     if membresia.fecha_vencimiento:
         faltan = (membresia.fecha_vencimiento - date.today()).days
         if faltan <= 3:
@@ -140,6 +142,7 @@ def _a_turno_de_panel(db: Session, turno: Turno, actividad: Actividad,
                     r, turno, actividad, r.id_reserva in acreditadas, ahora),
                 es_clase_suelta=(r.id_inscripcion is None),
                 alerta=_alerta_de_socio(db, socio),
+                puede_cobrar_cuota=estado_renovacion(db, socio.id_socio).puede,
             ))
         # Los que faltan llegar primero: son sobre los que el mostrador puede
         # hacer algo. Los que ya asistieron y los ausentes van al final.
@@ -293,6 +296,7 @@ def _inscriptos_de(db: Session, turno: Turno, actividad: Actividad,
                 r, turno, actividad, r.id_reserva in acreditadas, ahora),
             es_clase_suelta=(r.id_inscripcion is None),
             alerta=_alerta_de_socio(db, r.socio),
+            puede_cobrar_cuota=estado_renovacion(db, r.id_socio).puede,
         ))
     return salida
 
@@ -374,6 +378,7 @@ def buscar(
             deuda_total=0.0,   # sin tabla Deuda: el estado "debe" es derivable
             proximo_turno=proximo,
             alerta=_alerta_de_socio(db, socio),
+            puede_cobrar_cuota=estado_renovacion(db, socio.id_socio).puede,
         ))
 
     return salida

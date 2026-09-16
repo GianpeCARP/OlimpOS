@@ -1,4 +1,4 @@
-import { Dumbbell, Pencil, Phone, RotateCcw, Stethoscope, UserX } from 'lucide-react';
+import { Dumbbell, HeartPulse, Pencil, Phone, RotateCcw, Stethoscope, Undo2, UserX } from 'lucide-react';
 import { StatusBadge } from '../../components/ui';
 import { EstadoSocio } from '../../config';
 import type { SocioListado } from '../../services/sociosService';
@@ -26,8 +26,10 @@ interface SocioTableRowProps {
   onEditar: () => void;
   onEntrenadores: () => void;
   onTelefonos: () => void;
+  onEmergencia: () => void;
   onDarDeBaja: () => void;
   onActivar: () => void;
+  onAnularBaja: () => void;
   onHistorialMedico: () => void;
 }
 
@@ -43,8 +45,10 @@ export function SocioTableRow({
   onEditar,
   onEntrenadores,
   onTelefonos,
+  onEmergencia,
   onDarDeBaja,
   onActivar,
+  onAnularBaja,
   onHistorialMedico,
 }: SocioTableRowProps) {
   const yaDeBaja = socio.estado === EstadoSocio.DE_BAJA;
@@ -59,6 +63,14 @@ export function SocioTableRow({
           <div className="min-w-0">
             <p className="truncate font-body text-sm text-text-main">{socio.nombreCompleto}</p>
             <p className="truncate font-body text-xs text-text-muted">DNI {socio.dni}</p>
+            {/* Baja programada: sigue activo hasta esa fecha (no pierde los
+                días que pagó). Se ve en la fila para que el mostrador no le
+                ofrezca renovar a alguien que ya avisó que se va. */}
+            {socio.bajaProgramada && (
+              <p className="truncate font-body text-xs text-status-warn">
+                Baja el {formatearFecha(parsearFecha(socio.bajaProgramada))}
+              </p>
+            )}
           </div>
         </div>
       </td>
@@ -97,6 +109,20 @@ export function SocioTableRow({
           >
             <Phone size={16} />
           </button>
+          {/* A todos los que ven la grilla, por lo mismo que los teléfonos: si
+              alguien se descompone en una clase, el que está al lado es el
+              entrenador, no el dueño. Se pinta de rojo cuando hay un contacto
+              cargado, así se ve de lejos a quién se puede llamar. */}
+          <button
+            type="button"
+            onClick={onEmergencia}
+            title="Contacto de emergencia"
+            className={`rounded-md p-2 hover:bg-surface-card hover:text-status-danger ${
+              socio.emergenciaTelefono ? 'text-status-danger/80' : 'text-text-muted'
+            }`}
+          >
+            <HeartPulse size={16} />
+          </button>
           {/* Este SÍ se muestra a todos los que ven la grilla, incluido el
               Entrenador que la tiene en LECTURA: quién entrena a quién no es
               un dato sensible, y esconderlo justo al entrenador sería
@@ -127,7 +153,16 @@ export function SocioTableRow({
           {/* Un solo botón que cambia de acción según el estado: UserX para
               dar de baja a un socio activo, RotateCcw para reactivar uno ya
               dado de baja — antes solo existía el camino de ida. */}
-          {!puedeAltaBaja ? null : yaDeBaja ? (
+          {!puedeAltaBaja ? null : socio.bajaProgramada ? (
+            <button
+              type="button"
+              onClick={onAnularBaja}
+              title="Anular la baja programada"
+              className="rounded-md p-2 text-status-warn hover:bg-surface-card hover:text-status-ok"
+            >
+              <Undo2 size={16} />
+            </button>
+          ) : yaDeBaja ? (
             <button
               type="button"
               onClick={onActivar}

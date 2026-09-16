@@ -283,14 +283,14 @@ class RecepcionView:
         acciones = [
             primary_button("Registrar ingreso", ft.Icons.LOGIN_ROUNDED,
                            on_click=lambda e, x=s: self._fichar(x)),
-            # Aparece SIEMPRE, no sólo cuando debe. Alguien que está al día
-            # también puede querer pagar el mes que viene, y esconderlo
-            # obligaría a ir hasta Cobros justo en el caso más fácil de todos.
-            ft.TextButton(
+            # Sólo si hoy se le puede cobrar: la cuota se paga cuando vence, no
+            # por adelantado (backend/renovacion.py). Antes aparecía siempre
+            # "por si quiere pagar el mes que viene", que es justo lo que se sacó.
+            *([ft.TextButton(
                 "Cobrar cuota", icon=ft.Icons.PAYMENTS_ROUNDED,
                 style=ft.ButtonStyle(color=Colors.PRIMARY_VOLT),
                 on_click=lambda e, x=s: self._cobrar(x["id"], x["nombre"]),
-            ),
+            )] if s["puede_cobrar"] else []),
         ]
         filas.append(ft.Row(acciones, spacing=8, wrap=True))
 
@@ -574,14 +574,13 @@ class RecepcionView:
                 ], spacing=4)] if i["alerta"] else []),
                 ft.Text(etiqueta, color=color, size=12, weight=ft.FontWeight.W_500),
                 # Cobrar directo desde la fila del turno. Aparece sólo si hay
-                # algo que decirle —deuda, cuota vencida o por vencer—: es el
-                # aviso y la solución en el mismo lugar. Sin alerta, el botón
-                # sería ruido repetido en una lista de veinte nombres.
+                # algo que decirle Y hoy se le puede cobrar: con "vence en 3
+                # días" se avisa, pero no se cobra por adelantado.
                 *([ft.IconButton(
                     ft.Icons.PAYMENTS_ROUNDED, icon_color=Colors.STATUS_WARN,
                     icon_size=18, tooltip="Cobrar cuota",
                     on_click=lambda e, x=i: self._cobrar(x["id_socio"], x["nombre"]),
-                )] if i["alerta"] else []),
+                )] if i["alerta"] and i["puede_cobrar"] else []),
                 *([ft.IconButton(
                     ft.Icons.HOW_TO_REG_ROUNDED, icon_color=Colors.PRIMARY_VOLT,
                     icon_size=18, tooltip="Registrar ingreso",

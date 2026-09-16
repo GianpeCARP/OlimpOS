@@ -62,6 +62,8 @@ from schemas import (
 )
 from notificaciones import notificar_promocion_lista_espera
 from turnos import ocupacion, promover_de_lista_de_espera
+from renovacion import estado_renovacion
+from bajas import aplicar_baja, aplicar_bajas_vencidas, baja_pendiente, fecha_de_baja
 from security import Sesion, requiere_seccion
 # El saldo del abono se deriva contando Reserva; la fórmula vive en el router
 # de actividades y se importa para no duplicarla.
@@ -335,7 +337,6 @@ def _armar_mi_rutina(asignacion) -> MiRutinaOut:
     return MiRutinaOut(
         id_rutina=base.id_rutina,
         nombre=base.nombre,
-        nivel=base.nivel,
         objetivo=base.objetivo,
         dias_por_semana=base.dias_por_semana,
         entrenador=base.entrenador,
@@ -459,7 +460,6 @@ def crear_mi_rutina_propia(
         id_entrenador=None,          # ← propia: sin entrenador
         nombre=datos.nombre.strip(),
         objetivo=datos.objetivo,
-        nivel=datos.nivel,
         dias_por_semana=datos.dias_por_semana,
         activo=True,
     )
@@ -794,6 +794,8 @@ def mi_cuota(
     solo lo suyo. Tampoco ve el detalle de las deudas —solo el total— porque
     las observaciones de una deuda son notas internas del mostrador.
     """
+    # Las bajas programadas cuya fecha llegó se aplican al leer (bajas.py).
+    aplicar_bajas_vencidas(db)
     socio = _mi_socio(db, sesion)
     hoy = date.today()
 
@@ -861,7 +863,14 @@ def mi_cuota(
     else:
         estado = "Activo"
 
+    renovacion = estado_renovacion(db, socio.id_socio)
+    pendiente = baja_pendiente(db, socio.id_socio)
+
     return MiCuotaOut(
+        baja_programada=pendiente.fecha_baja if pendiente else None,
+        puede_renovar=renovacion.puede,
+        motivo_no_renovar=renovacion.motivo,
+        renovable_desde=renovacion.desde,
         tiene_membresia=membresia is not None,
         # "Al día" es tener membresía vigente sin vencer. No hay tabla Deuda:
         # el estado "debe" es derivable de esto mismo.
@@ -1584,6 +1593,7 @@ def _para_el_socio(texto: str, nombre: str) -> str:
         ("Renovale la cuota", "Renová tu cuota"),
         ("Renovale", "Renová"),
         ("Cobrale", "Pagá"),
+        ("Cobralo junto con la próxima cuota", "Pagalo junto con tu próxima cuota"),
         ("Regularizá su deuda", "Regularizá tu deuda"),
         ("su deuda", "tu deuda"),
         ("su cuota", "tu cuota"),
@@ -2043,59 +2053,46 @@ def darme_de_baja(
     (Es el mismo agujero que el Dueño desactivándose a sí mismo, que ya
     apareció una vez en este proyecto y hubo que arreglar entrando a la base.)
 
-    Así que acá: se da de baja la ficha, se cancela la membresía, se registra
-    el motivo — y la CUENTA QUEDA VIVA.
+    Así que acá la CUENTA QUEDA VIVA.
+
+    Y la baja NO le quita los días que pagó (bajas.py): con un período en
+    curso queda PROGRAMADA para el día siguiente al vencimiento y hasta
+    entonces sigue entrenando; sin período en curso, es inmediata.
     """
     socio = _mi_socio(db, sesion)
 
     if not socio.activo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Ya estás dado de baja.")
+    ya = baja_pendiente(db, socio.id_socio)
+    if ya is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Ya pediste la baja: corre desde el {ya.fecha_baja.strftime('%d/%m/%Y')}.")
 
     hoy = date.today()
-
-    # Si estaba congelada, se cierra la pausa primero. Dejar un congelamiento
-    # ACTIVO colgando de una membresía cancelada haría que el índice único de
-    # "un solo activo por socio" bloquee una futura reinscripción.
-    vigente = _congelamiento_vigente(db, socio.id_socio)
-    if vigente is not None:
-        vigente.estado = "CANCELADO"
-        vigente.fecha_reanudacion = hoy
-
-    socio.activo = False
+    fecha = fecha_de_baja(db, socio.id_socio)   # cierra la pausa si había una
+    programada = fecha > hoy
     db.add(Baja(
         id_socio=socio.id_socio,
-        fecha_baja=hoy,
+        fecha_baja=fecha,
         tipo="VOLUNTARIA",
         motivo=datos.motivo,
+        pendiente=programada,
     ))
 
-    membresia = (db.query(Membresia)
-                 .filter(Membresia.id_socio == socio.id_socio,
-                         Membresia.estado.in_(["ACTIVA", "SUSPENDIDA"]))
-                 .first())
-    if membresia is not None:
-        membresia.estado = "CANCELADA"
-
-    # Las reservas futuras se cancelan y liberan su lugar. Dejarlas ocupando
-    # cupo de clases a las que ya no va sería quitarle el lugar a otro socio.
-    futuras = (db.query(Reserva)
-               .join(Turno, Turno.id_turno == Reserva.id_turno)
-               .filter(Reserva.id_socio == socio.id_socio,
-                       Reserva.estado.in_(["RESERVADA", "EN_ESPERA"]),
-                       Turno.fecha >= hoy)
-               .all())
-    turnos_liberados = []
-    for r in futuras:
-        if r.estado == "RESERVADA":
-            turnos_liberados.append(r.id_turno)
-        r.estado = "CANCELADA_SOCIO"
-        r.fecha_cancelacion = datetime.now()
+    if programada:
+        db.commit()
+        ultimo_dia = (fecha - timedelta(days=1)).strftime("%d/%m/%Y")
+        return MensajeResponse(mensaje=(
+            f"Listo, tu baja queda para el {fecha.strftime('%d/%m/%Y')}. Hasta el "
+            f"{ultimo_dia} seguís entrenando normalmente: no perdés los días que "
+            "pagaste. Si cambiás de idea, la podés anular desde acá."
+        ))
 
     db.flush()
-    for id_turno in turnos_liberados:
+    for id_turno in aplicar_baja(db, socio, desactivar_cuenta=False):
         promover_de_lista_de_espera(db, id_turno)
-
     db.commit()
 
     return MensajeResponse(mensaje=(
@@ -2103,6 +2100,25 @@ def darme_de_baja(
         "cuando quieras a ver tu historial, y si volvés no hace falta que "
         "te den de alta de nuevo."
     ))
+
+
+@router.delete("/mi-membresia/baja", response_model=MensajeResponse)
+def anular_mi_baja(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_CUOTA)),
+):
+    """
+    Anula la baja programada (cambió de idea antes de que corra). La fila se
+    borra: una baja que no ocurrió no es historial. Ver bajas.py.
+    """
+    socio = _mi_socio(db, sesion)
+    pendiente = baja_pendiente(db, socio.id_socio)
+    if pendiente is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="No tenés una baja programada.")
+    db.delete(pendiente)
+    db.commit()
+    return MensajeResponse(mensaje="Listo, anulaste la baja. Seguís siendo socio como siempre.")
 
 
 @router.get("/mis-actividades/inscripciones", response_model=list[InscripcionOut])
