@@ -44,11 +44,11 @@ from sqlalchemy.orm import Session, selectinload
 
 from auth import generar_password_temporal, generar_username, hashear_password
 from database import get_db
-from models import Empleado, Persona, Rol, Usuario, roles_de_persona
+from models import Asistencia, Empleado, Persona, Rol, Usuario, roles_de_persona
 from notificaciones import enviar_credenciales
 from permisos import Accion, Seccion
 from schemas import (
-    CredencialesResponse, PersonaSinCuentaOut, UsuarioAdminOut,
+    CredencialesResponse, MensajeResponse, PersonaSinCuentaOut, UsuarioAdminOut,
     UsuarioCrearRequest, UsuarioEditarRequest,
 )
 from security import Sesion, requiere_accion, requiere_seccion
@@ -482,6 +482,62 @@ def alternar_estado(
     db.commit()
     db.refresh(usuario)
     return _a_usuario_out(usuario)
+
+
+@router.delete("/{id_usuario}", response_model=MensajeResponse)
+def borrar_cuenta(
+    id_usuario: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.GESTION_USUARIOS)),
+):
+    """
+    Borra la CUENTA DE ACCESO, no a la persona. Decisión del dueño (2026-09-16):
+    "sólo la cuenta".
+
+    Desactivar sigue siendo lo normal (reversible, conserva la fila). Borrar
+    existe para la cuenta que no tendría que existir: creada por error, de una
+    persona que no va a volver a usar el sistema, o para empezar de cero con un
+    usuario nuevo. La Persona, su ficha de socio o empleado y todo su historial
+    quedan; la persona vuelve a aparecer en "personas sin cuenta" y se le puede
+    crear otra.
+
+    Lo único que apunta a Usuario es `Asistencia.id_registrado_por` (quién fichó
+    a alguien a mano): pasa a NULL, que el modelo ya admite — es lo mismo que un
+    ingreso registrado por el lector, sin persona detrás. Las sesiones abiertas
+    de esa cuenta mueren solas: obtener_sesion relee el Usuario en cada pedido.
+
+    Reglas de fila (más estrictas que desactivar, porque no tiene vuelta):
+      - Nadie borra SU PROPIA cuenta, ni siquiera el Dueño.
+      - Sólo un Dueño borra la cuenta de un Dueño, y nunca la ÚLTIMA: el sistema
+        quedaría sin nadie que pueda administrarlo.
+    """
+    usuario = _buscar_usuario(db, id_usuario)
+    _validar_jerarquia(sesion, usuario)
+
+    if usuario.id_usuario == sesion.id_usuario:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="No podés borrar tu propia cuenta.")
+
+    persona = usuario.persona
+    if persona is not None and Rol.DUENO in roles_de_persona(persona):
+        otras = [u for u in db.query(Usuario).filter(Usuario.id_usuario != usuario.id_usuario).all()
+                 if u.persona is not None and Rol.DUENO in roles_de_persona(u.persona)]
+        if not otras:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Es la única cuenta de un dueño: borrarla dejaría el sistema sin administrador.")
+
+    nombre = persona.nombre_completo if persona else usuario.username
+    (db.query(Asistencia)
+     .filter(Asistencia.id_registrado_por == usuario.id_usuario)
+     .update({Asistencia.id_registrado_por: None}, synchronize_session=False))
+    import limite_intentos
+    limite_intentos.destrabar(usuario.username)
+    db.delete(usuario)
+    db.commit()
+    return MensajeResponse(
+        mensaje=f"Se borró la cuenta de {nombre}. Su ficha y su historial quedan; "
+                "si hace falta, se le puede crear una cuenta nueva.")
 
 
 @router.put("/{id_usuario}", response_model=UsuarioAdminOut)

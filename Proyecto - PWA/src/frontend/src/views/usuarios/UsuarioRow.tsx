@@ -1,4 +1,4 @@
-import { Ban, KeyRound, Pencil, RotateCcw, Unlock } from 'lucide-react';
+import { Ban, KeyRound, Pencil, RotateCcw, Trash2, Unlock } from 'lucide-react';
 import { StatusBadge } from '../../components/ui';
 import { EstadoUsuario } from '../../config';
 import type { UsuarioListado } from '../../services/usuariosService';
@@ -32,11 +32,18 @@ interface UsuarioRowProps {
    * inferior le entrega la cuenta entera.
    */
   esCuentaProtegida: boolean;
+  /**
+   * Es LITERALMENTE la cuenta de quien mira. Aparte de esCuentaPropia porque
+   * ésa exime al Dueño (puede editarse), y borrar la propia no se permite a
+   * nadie: no tiene vuelta.
+   */
+  esLaMisma: boolean;
   onEditar: () => void;
   onResetear: () => void;
   onDarDeBaja: () => void;
   onActivar: () => void;
   onDesbloquear: () => void;
+  onBorrar: () => void;
 }
 
 function iniciales(nombre: string): string {
@@ -49,11 +56,13 @@ export function UsuarioRow({
   puedeGestionar,
   esCuentaPropia,
   esCuentaProtegida,
+  esLaMisma,
   onEditar,
   onResetear,
   onDarDeBaja,
   onActivar,
   onDesbloquear,
+  onBorrar,
 }: UsuarioRowProps) {
   const yaInactivo = usuario.estado === EstadoUsuario.INACTIVO;
   const bloqueado = usuario.estado === EstadoUsuario.BLOQUEADO;
@@ -135,6 +144,18 @@ export function UsuarioRow({
               className="rounded-md p-2 text-text-muted hover:bg-surface-card hover:text-status-danger"
             >
               <Ban size={16} />
+            </button>
+          )}
+          {/* Borrar la cuenta (no a la persona). Al final y en rojo al pasar: es
+              lo único de la fila que no se puede deshacer. */}
+          {puedeOperar && !esLaMisma && (
+            <button
+              type="button"
+              onClick={onBorrar}
+              title="Borrar la cuenta de acceso"
+              className="rounded-md p-2 text-text-muted hover:bg-surface-card hover:text-status-danger"
+            >
+              <Trash2 size={16} />
             </button>
           )}
         </div>

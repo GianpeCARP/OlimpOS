@@ -728,6 +728,10 @@ def desbloquear_usuario(id_usuario: int) -> dict:
     return _post(f"/usuarios/{id_usuario}/desbloquear")
 
 
+def borrar_cuenta(id_usuario: int) -> dict:
+    return _delete(f"/usuarios/{id_usuario}")
+
+
 def cambiar_estado_usuario(id_usuario: int, activo: bool) -> dict:
     # Se manda siempre el destino, nunca "invertí lo que haya". La pantalla ya
     # sabe si está activando o desactivando; mandarlo hace que el resultado no

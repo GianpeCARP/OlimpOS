@@ -6,7 +6,7 @@ from app import permisos
 from app.config import Colors, NAV_ITEMS, Routes, alpha
 from app.state import app_state
 from app.components.ui import (build_topbar, status_badge, primary_button, input_field,
-                                show_snack, open_dialog, close_dialog)
+                                show_snack, open_dialog, close_dialog, confirm_dialog)
 from app.contacto import ASUNTO_CREDENCIALES, link_mail, link_whatsapp
 
 # rol → (etiqueta, color, fondo translúcido, ícono)
@@ -247,6 +247,17 @@ class UsuariosView:
                     tooltip="Desactivar" if activo else "Activar",
                     on_click=lambda e, x=u: self._cambiar_estado(x),
                 )
+            )
+
+        # Borrar la cuenta (no a la persona). Nadie borra la PROPIA, ni el Dueño:
+        # por eso se compara directo y no con es_cuenta_propia, que lo exime.
+        # Gemelo del botón de UsuarioRow.tsx.
+        es_la_misma = u.get("usuario") == app_state.get_user_username()
+        if puede_gestionar and not es_cuenta_protegida and not es_la_misma:
+            acciones.append(
+                ft.IconButton(ft.Icons.DELETE_OUTLINE_ROUNDED, icon_color=Colors.TEXT_MUTED,
+                              icon_size=18, tooltip="Borrar la cuenta de acceso",
+                              on_click=lambda e, x=u: self._confirmar_borrado(x))
             )
 
         # Sin botones queda una celda vacía y eso se lee como un error de la
@@ -505,6 +516,22 @@ class UsuariosView:
         self._mostrar_credenciales("Contraseña reseteada", resultado,
                                    email=u.get("email", ""),
                                    telefono=u.get("telefono", ""))
+
+    def _confirmar_borrado(self, u: dict):
+        """Confirmación explícita: es lo único de Usuarios que no tiene vuelta."""
+        def borrar():
+            resultado = app_state.borrar_cuenta(u["id"])
+            show_snack(self.page, resultado["mensaje"],
+                       Colors.SUCCESS if resultado["ok"] else Colors.STATUS_DANGER)
+            if resultado["ok"]:
+                self.router.navigate(Routes.USUARIOS)
+
+        open_dialog(self.page, confirm_dialog(
+            self.page, f"¿Borrar la cuenta de {u['nombre']}?",
+            f"Se borra sólo la cuenta de acceso (@{u['usuario']}): no puede volver a "
+            "entrar con ella. Su ficha y su historial quedan, y se le puede crear una "
+            "cuenta nueva. No se puede deshacer.",
+            on_confirm=borrar, texto_confirmar="Borrar cuenta"))
 
     def _desbloquear(self, u: dict):
         resultado = app_state.desbloquear_usuario(u["id"])

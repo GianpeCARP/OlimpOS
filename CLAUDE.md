@@ -202,6 +202,8 @@ D:\OlimpOs\
   actividades, pero no toca los turnos ya programados. **Usuarios no reactiva la
   cuenta de alguien dado de baja** (eso se hace desde Personal) **ni crea personas**:
   la cuenta nace con el alta en Socios o Personal.
+- **Borrar una cuenta** borra sólo el `Usuario` (la persona y su historial quedan).
+  Nadie borra la propia; sólo un Dueño borra la de un Dueño, y nunca la última.
 - **Historial médico:** el catálogo dice QUÉ tiene y las observaciones por socio dicen
   QUÉ HACER. **El Recepcionista no lo ve**, y el botón se **omite** (no se
   deshabilita) para no delatar que hay algo cargado. La fecha no puede ser futura.

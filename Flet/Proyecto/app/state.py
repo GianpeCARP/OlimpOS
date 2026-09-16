@@ -1300,6 +1300,9 @@ class AppState:
     def desbloquear_usuario(self, id_usuario: int) -> dict:
         return self._resultado(api_client.desbloquear_usuario(id_usuario), "Cuenta desbloqueada.")
 
+    def borrar_cuenta(self, id_usuario: int) -> dict:
+        return self._resultado(api_client.borrar_cuenta(id_usuario), "Cuenta borrada.")
+
     def cambiar_estado_usuario(self, id_usuario: int, activo: bool) -> dict:
         return self._resultado(
             api_client.cambiar_estado_usuario(id_usuario, activo),

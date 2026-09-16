@@ -5,6 +5,7 @@ import { colors, esCuentaDeMayorJerarquia, esCuentaPropiaRestringida } from '../
 import { mensajeDeError } from '../../services/api';
 import {
   listarUsuarios,
+  borrarCuenta,
   desbloquearUsuario,
   resetearPassword,
   darDeBajaUsuario,
@@ -135,6 +136,28 @@ export function UsuariosView() {
         .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger));
     },
     [showSnack, actualizarEnLista],
+  );
+
+  // Con confirmación explícita: es lo único de Usuarios que no tiene vuelta.
+  // La persona no se toca — ver borrar_cuenta en routers/usuarios.py.
+  const pedirBorrado = useCallback(
+    (usuario: UsuarioListado) => {
+      confirmDialog(
+        `¿Borrar la cuenta de ${usuario.nombre}?`,
+        'Se borra sólo la cuenta de acceso (@' +
+          usuario.username +
+          '): no puede volver a entrar con ella. Su ficha y su historial quedan, y se le puede crear una cuenta nueva desde "Nuevo usuario". No se puede deshacer.',
+        () => {
+          borrarCuenta(usuario.idUsuario)
+            .then((mensaje) => {
+              showSnack(mensaje, colors.statusOk);
+              recargar();
+            })
+            .catch((err: unknown) => showSnack(mensajeDeError(err), colors.statusDanger));
+        },
+      );
+    },
+    [confirmDialog, showSnack, recargar],
   );
 
   const desbloquear = useCallback(
@@ -272,11 +295,13 @@ export function UsuariosView() {
                             idUsuarioActor,
                           )}
                           esCuentaProtegida={esCuentaDeMayorJerarquia(rolesActor, usuario.rol)}
+                          esLaMisma={usuario.idUsuario === idUsuarioActor}
                           onEditar={() => setModal({ usuario })}
                           onResetear={() => pedirReseteo(usuario)}
                           onDarDeBaja={() => pedirBaja(usuario)}
                           onActivar={() => activar(usuario)}
                           onDesbloquear={() => desbloquear(usuario)}
+                          onBorrar={() => pedirBorrado(usuario)}
                         />
                       ))}
                     </tbody>

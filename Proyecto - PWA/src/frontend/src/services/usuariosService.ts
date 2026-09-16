@@ -211,6 +211,16 @@ export async function actualizarUsuario(
  * fue un accidente (tecleó mal, tenía el Bloq Mayús). Cambiársela en ese caso
  * sería molestarla al pedo.
  */
+/**
+ * Borra la CUENTA de acceso (no a la persona: su ficha e historial quedan y se
+ * le puede crear otra). El backend no deja borrar la propia ni la última de un
+ * Dueño. Devuelve el mensaje ya redactado.
+ */
+export async function borrarCuenta(idUsuario: number): Promise<string> {
+  const datos = await pedir<{ mensaje: string }>(`/usuarios/${idUsuario}`, { metodo: 'DELETE' });
+  return datos.mensaje;
+}
+
 export async function desbloquearUsuario(idUsuario: number): Promise<UsuarioListado> {
   const datos = await pedir<UsuarioApi>(`/usuarios/${idUsuario}/desbloquear`, { metodo: 'POST' });
   return aUsuarioListado(datos);

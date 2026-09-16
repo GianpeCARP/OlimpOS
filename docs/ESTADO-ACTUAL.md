@@ -27,13 +27,7 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
 
 ## Lo que falta, en orden
 
-### 1. Decidido y sin implementar
-- **Borrar una cuenta de acceso** (no a la persona). El dueño eligió "sólo la cuenta":
-  se borra la fila de `Usuario`, la persona y su historial quedan, y lo que apunte a
-  esa cuenta (por ejemplo `Asistencia.id_registrado_por`) pasa a NULL. Revisar todas
-  las FK a `Usuario` antes de codear. Hoy Usuarios sólo da de baja o de alta.
-
-### 2. Hecho pero sin probar en pantalla
+### 1. Hecho pero sin probar en pantalla
 - **Horarios y turnos (PWA + Flet):** en Actividades, el horario semanal (crear con
   profesor, dar de baja, regenerar) y la agenda de 7 días con los anotados de cada
   turno y cancelar. Con un horario cargado deberían aparecer turnos en "Mis clases"
@@ -60,6 +54,10 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   El personal también puede **dar de baja ahora** (al vencer o ahora en el modal de la
   PWA, casilla en Flet; con una baja programada, la adelanta). Probado llamando al
   endpoint en una transacción descartada.
+- **Borrar una cuenta de acceso** (`DELETE /usuarios/{id}`, PWA y Flet): borra sólo la
+  cuenta; la persona y su historial quedan y se le puede crear otra.
+  `Asistencia.id_registrado_por` pasa a NULL. Nadie borra la propia, sólo un Dueño
+  borra la de un Dueño y nunca la última. Compila en las tres capas; sin probar.
 - **Teléfonos con código de país** en los 6 campos de la PWA y los 4 de Flet (alta y
   edición de socio y empleado, contacto de emergencia, agregar teléfono, Mi perfil).
   En Flet, editar un empleado ya precarga el teléfono (antes guardar lo borraba).
@@ -70,19 +68,21 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
 - Alta de socio con "Cobrar ahora"; el chip "2º de hoy" (ojo: fichar acredita
   reservas); el aviso de cuenta trabada en login y cambio de contraseña.
 
-### 3. Menores
+### 2. Menores (el dueño pidió hacerlos todos menos el contador; sin empezar)
 - **Profesores homónimos:** dos con el mismo nombre se ven idénticos al asignarlos a
-  una actividad. Mostrar DNI o legajo.
+  una actividad. Mostrar DNI o legajo. (Plan: sumar `dni` a `ProfesorActividadOut` y mostrarlo
+  en la asignación y en el selector del horario, en las dos apps.)
 - **Flet, Profesor:** al entrar no tiene secciones y cae en una pantalla sin acceso.
   Falta un mensaje que diga que su pantalla está en la PWA.
 - **Horario sin profesor:** no hay forma de asignarle o cambiarle el profesor a un
-  horario ya creado (hay que darlo de baja y crearlo de nuevo).
+  horario ya creado (hay que darlo de baja y crearlo de nuevo). (Plan: `PUT /actividades/horarios/{id}/profesor`
+  con la misma validación que el alta, que actualice los turnos futuros HABILITADOS.)
 - **Flet, detalle de un plan de nutrición:** no cierra tocando afuera (en la PWA sí).
   El `modal=True` es global a los diálogos, así que hay que resolverlo con cuidado.
 - **Contador de repeticiones:** rediseñar el overlay (las líneas verdes del esqueleto
   son sólo para afinar) y seguir ajustando umbrales probando en el celular.
 
-### 4. Grandes, después de la lista
+### 3. Grandes, después de la lista
 - **Coach con IA (decidido, sin implementar; AVISARLE al dueño antes de arrancar).**
   - Chat a pedido con historial guardado (tabla nueva chica), corriendo en el backend
     con **Claude vía API** (Haiku 4.5, necesita API key). Más adelante se puede migrar
