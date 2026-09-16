@@ -271,13 +271,13 @@ que el dueño todavía no probó.
   `check_permisos.py` verifica que digan lo mismo. Si necesitás mostrar permisos en pantalla,
   **derivalos**; no los escribas a mano (ya apareció una cuarta copia mal hecha).
 
-### 9. Tanda de correcciones del 2026-09-15 — **SIN COMMITEAR**
+### 9. Tanda de correcciones del 2026-09-15 — commiteada (`3d4df15`)
 Salió de `A CORREGIR PWA .txt`, probando como Dueño. Está verificada (`tsc`, `oxlint`,
-`compileall`, `pruebas_vistas.py` y un smoke test de los endpoints nuevos) pero **todavía
-no entró a git**: poco más de veinte archivos tocados entre backend, PWA y Flet, más tres
-nuevos (`utils/contacto.ts`, `app/contacto.py`, `views/socios/TelefonosModal.tsx`).
-**Al commitear, rutas explícitas:** `git status` arrastra además borrados y archivos
-sueltos que NO son de esta tanda.
+`compileall`, `pruebas_vistas.py` y un smoke test de los endpoints nuevos) y **entró a git
+el 2026-09-16** en el commit `3d4df15`, empujado a `origin/desarrollo` — junto con lo del
+fichaje sin tope, porque varios archivos son los mismos y no se podían separar limpio.
+Quedaron deliberadamente AFUERA del commit los dos archivos sueltos de la raíz
+(`A CORREGIR PWA .txt` y `VIDEOS-DESCARGA-AUTOMATICA.md`): siguen sin trackear.
 
 - **Teléfonos múltiples del socio** — `GET/POST/PUT/DELETE /socios/{id}/telefonos`, más el
   botón de teléfono en cada fila de la grilla, en las dos apps. Detecta el mismo número
@@ -352,7 +352,6 @@ y dónde persistir el consentimiento.
 ### Otros pendientes
 - **Terminar `A CORREGIR PWA .txt`** — faltan los paneles que el dueño todavía no probó,
   y probar en pantalla el chip del ingreso repetido (fichar dos veces al mismo socio).
-- **Commitear la tanda del 2026-09-15** (sección 9) cuando el dueño lo pida.
 - **#4 overlay del contador** (sacar líneas verdes) — cuando el tracking esté redondo.
 - **Mercado Pago** — falta el token, el secreto del webhook y una URL pública. No depende
   del código.
