@@ -22,6 +22,13 @@ import flet as ft
 APP_NAME    = "OlimpOS"
 APP_VERSION = "1.0.0"
 
+# Espejo de MAX_INTENTOS_FALLIDOS (backend/routers/auth_router.py) y de
+# BLOQUEO_CUENTA_SEG (backend/limite_intentos.py), igual que en config.ts de la
+# PWA. Sólo se usan para AVISAR: quien cuenta y traba es el backend. Los fallos
+# de "contraseña actual" al cambiarla suman al mismo contador que el login.
+MAX_INTENTOS_FALLIDOS  = 5
+MINUTOS_CUENTA_TRABADA = 15
+
 
 # ── Paleta de colores (Kinetic Carbon — espejo de la PWA) ────────────────────
 class Colors:

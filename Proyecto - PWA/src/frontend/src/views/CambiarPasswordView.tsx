@@ -5,7 +5,13 @@ import { useAuthStore } from '../store/authStore';
 import { useUiStore } from '../store/uiStore';
 import { mensajeDeError } from '../services/api';
 import { InputField, PrimaryButton } from '../components/ui';
-import { APP_NAME, Routes, colors } from '../config';
+import {
+  APP_NAME,
+  MAX_INTENTOS_FALLIDOS,
+  MINUTOS_CUENTA_TRABADA,
+  Routes,
+  colors,
+} from '../config';
 
 // Segunda pantalla del flujo de ingreso, y la única salida del estado
 // "credenciales correctas pero sin sesión".
@@ -114,6 +120,15 @@ export function CambiarPasswordView() {
             required
           />
         </div>
+
+        {/* Siempre visible y no sólo al fallar, como en el login: acá el error
+            va al snackbar y se va a los 4 segundos. Y es donde más se equivoca
+            la gente — la temporal se tipea a mano —, sin saber que cada fallo
+            suma al mismo contador que el login. */}
+        <p className="mt-4 font-body text-xs text-text-muted">
+          Cada error en la contraseña actual cuenta como un intento fallido: a los{' '}
+          {MAX_INTENTOS_FALLIDOS} la cuenta queda trabada {MINUTOS_CUENTA_TRABADA} minutos.
+        </p>
 
         <div className="mt-6">
           <PrimaryButton

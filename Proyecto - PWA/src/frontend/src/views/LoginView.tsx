@@ -4,7 +4,13 @@ import { User, Lock } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { mensajeDeError } from '../services/api';
 import { InputField, PrimaryButton } from '../components/ui';
-import { APP_NAME, MAX_INTENTOS_FALLIDOS, Routes, rutaInicialPara } from '../config';
+import {
+  APP_NAME,
+  MAX_INTENTOS_FALLIDOS,
+  MINUTOS_CUENTA_TRABADA,
+  Routes,
+  rutaInicialPara,
+} from '../config';
 
 // Equivalente de show_login (main.md/router.md). Pantalla real, no
 // placeholder: auth.spec.md ya está implementado de punta a punta.
@@ -91,8 +97,9 @@ export function LoginView() {
           <div className="mt-4" role="alert">
             <p className="font-body text-sm text-status-danger">{error}</p>
             <p className="mt-1 font-body text-xs text-text-muted">
-              Después de {MAX_INTENTOS_FALLIDOS} intentos fallidos la cuenta se
-              bloquea y hay que pedirle al gimnasio que la desbloquee.
+              Después de {MAX_INTENTOS_FALLIDOS} intentos fallidos la cuenta queda
+              trabada {MINUTOS_CUENTA_TRABADA} minutos, aunque después pongas bien la
+              contraseña. Esperá, o pedile al gimnasio que la desbloquee.
             </p>
           </div>
         )}

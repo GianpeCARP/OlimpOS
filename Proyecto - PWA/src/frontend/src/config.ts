@@ -149,11 +149,21 @@ export const Routes = {
 export type RouteValue = (typeof Routes)[keyof typeof Routes];
 
 /**
- * Intentos fallidos antes de que el backend bloquee una cuenta.
+ * Intentos fallidos antes de que el backend TRABE una cuenta, y por cuánto.
  *
- * ⚠️ Espejo de MAX_INTENTOS_FALLIDOS en backend/routers/auth_router.py, que es
- * quien REALMENTE cuenta y bloquea. Acá se usa sólo para avisarlo en la
- * pantalla de login. Si divergen, el aviso miente pero nada se rompe.
+ * ⚠️ Espejo de MAX_INTENTOS_FALLIDOS (backend/routers/auth_router.py) y de
+ * BLOQUEO_CUENTA_SEG (backend/limite_intentos.py), que son quienes REALMENTE
+ * cuentan y traban. Acá se usan sólo para avisarlo en el login y en el cambio
+ * de contraseña. Si divergen, el aviso miente pero nada se rompe.
+ *
+ * El aviso decía "hay que pedirle al gimnasio que la desbloquee", que era
+ * cierto cuando el quinto fallo ponía `bloqueado=true` para siempre. Desde
+ * V-02 la traba se va sola a los 15 minutos, y el texto viejo hacía creer que
+ * la cuenta seguía rota cuando sólo había que esperar.
+ *
+ * Los fallos de "contraseña actual" en el cambio de contraseña suman al MISMO
+ * contador: ese endpoint es público, y si no contaran sería la puerta para
+ * probar contraseñas sin freno.
  *
  * El aviso es genérico a propósito: se muestra ante cualquier error de
  * credenciales, sin decir cuántos intentos quedan. Decir "te quedan 2" sería
@@ -161,6 +171,7 @@ export type RouteValue = (typeof Routes)[keyof typeof Routes];
  * el mensaje único de auth.spec.md 3.2.
  */
 export const MAX_INTENTOS_FALLIDOS = 5;
+export const MINUTOS_CUENTA_TRABADA = 15;
 
 // Roles del sistema. Única fuente de verdad del nombre de cada rol: lo usan
 // el guard de ruta (ProtectedRoute), el filtro del sidebar y el mock de

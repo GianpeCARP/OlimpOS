@@ -1,0 +1,88 @@
+OBSERVACIONES: (SOLAMENTE PROBÉ ESTO EN LA PWA, ME IMAGINO QUE PASA LO MISMO EN FLET, ASEGURATE)
+
+*DUEÑO:
+PANEL SOCIO: 
+- donde se guarda los telefonos de los socios? y por qué no puedo agregar más telefonos a un socio si justamente existe la tabla teléfonos en la base? 
+- cuando a Lucia Marino le quiero asignar a beto gomez da error de servidor (500)
+- no entendería por qué hay catálogo de condiciones
+- cuando se agrega la fecha diagnostico se permite elegir una fecha posterior a la actual lo que obvio no tiene sentido y no se debería poder
+- cuando quiero eliminar una condicion de un socio en la ficha médica, el mensaje de "¿Quitar {condicion} de la ficha?" aparece detrás del panel y recién puedo confirmarlo luego de cerrar la ficha 
+- poner más restricciones en el campo de editar email del socio porque me deja poner cualquier cosa, hacerlo más específico y profesional
+- en qué momento un socio queda como estado "vencido"?
+
+PANEL COBROS:
+- a todo esto la única explicación de cobrar en caja o sea con este panel es si el socio paga en efectivo o si no tiene internet o nosé, pero el socio paga desde su celu o pc y listo qué tiene que estar el recepcionista o dueño cobrando, no tiene sentido realmente, yo entiendo solamente el caso de efectivo pero si es una transacción de transferencia o tarjeta el socio lo hace desde la app y listo
+- el método de pago billetera virtual por qué existe? si pagar con mercado pago es lo mismo que transferencia o no?
+- lo mismo con las actividades, cobrar clase suelta desde el dueño o recepcionista tiene sentido solamente si es efectivo sino no, el socio lo hace desde su perfil, más allá de eso me parece bien lo de cobrar membresia y clase suelta como un todo pero devuelta digo que el socio lo hace NO el recepcionista/dueño
+- está mal que se pueda renovar una membresía con una promoción que ya para el momento de terminar la actual no exista más la promo, fijate la tabla misma que yá renove dos veces a nicolino loche, ambas veces con descuento pero la segunda nunca tendría que poderse hacer
+
+PANEL ASISTENCIA:
+- fichar con tarjeta no tiene sentido sacalo al carajo
+- debería haber una opción de "desfichar" a alguien de la lista de fichajes de hoy, porque imaginate que hay una ficha de una persona que no asistió sino que el amigo fichó por el, no tendría sentido ya lo se pero por las dudas ponelo
+- debería haber un límite de fichajes por día de la misma persona si o si, sino agarra un boludo y pone la tarjetita todo el día para romper las bolas nomas, también hay que pensar los homeless que literal pagan la membresía para usar el baño por ejemplo. Planteame una solución inteligente
+
+PANEL PERSONAL:
+- el boton de contactar no hace nada (decime algo para implementar), aparte nunca puede estar sin usar ese boton porque debería ser obligatorio el campo de contacto o el de teléfono 1 de 2 mínimo, cómo voy a tener un empleado y no saber como contactarlo
+- cuando edito al empleado y quiero asignarle un teléfono al guardarlo aparece el mensaje de guardado pero cuando toco nuevamente para editar el campo teléfono está vacío
+- el campo telefono me deja agregar letras
+- cuando agrego un empleado es insólito tener que copiar y guardarme la contraseña, debería haber un boton en el mensaje de abajo de "creado" el cual contacte al empleado cargado y le mande un whatsapp si es que solo tiene teléfono o un mail si es que tiene el mail con o sin el telefono si tiene mail listo se elije esa vía, con la contraseña y un mensaje que le diga que inicie sesión con esa contraseña y luego la actualice
+- la contraseña temporal de pato toranzo es: GobyRzwsHegDWd93
+
+
+**************************************************ACÁ VAN LAS OBSERVACIONES NUEVAS - LO DE ARRIBA YA ESTÁ RESUELTO**************************************************
+
+
+PANEL RUTINAS: 
+- Debería poder ver un boton que diga ejercicios y de ahí ver los ejercicios sueltos, porque capaz el chabon agrega un ejercicio que ya fue cargado pero no se da cuenta
+- Los filtros de principiante intermedio y avanzado me parecen mierda sacalos de react y de flet por favor y reemplazalo por filtros de rutinas desde 1 día hasta 7 y ahí es mucho más útil. Se entiende que por ende eliminá todo tipo de sección que deje elegir nivel de intensidad porque es muy ambiguo
+
+PANEL NUTRICION:
+- agregar aparte del boton "ver plan" un boton de asignar para no tener que entrar a ver el plan
+- cuando toco "ver plan" tengo que cerrarlo si o si con ese boton de cerrar que queda incómodo yo quiero cerrar ese widget tocando fuera de él
+
+PANEL ACTIVIDADES:
+- me deja poner 8 clases por semana y no hace falta explicar por qué eso está mal, arreglar
+- lo mismo pasa con clases por mes me deja poner 32 
+- también los cupos por turno ponele un límite normal seamos profesionales, pongamosle un límite de 100 que ya es una banda
+- hay un bug gravísimo que es difícil de explicar pero cuando quiero asignar un profesor a alguna actividad (no todas pero algunas están raras) me dice literalmente que el profesor no existe y cuando toco un profesor para asignar también me pone "PEPE" ya está asignado a yoga por ejemplo cuando yo pulsé asignar en otro nombre no en PEPE, muy raro y aparte después quiero asignar a ambos a la actividad yoga me deja pero el profesor "PEPE" no me deja desasignarlo porque dice que PEPE NO ESTÁ ASIGNADO A ESA ACTIVIDAD MUY WTF LA VERDAD, debe ser fácil de arreglar pero mirá cómo construiste ese frontend y capaz hay algo de backend bugueado también
+- ACÁ ESTÁ EL PROBLEMA, A "PEPE" YO LO HABÍA DESACTIVADO Y AÚN ASÍ ME APARECÍA PARA PODER ASIGNARLO A UNA ACTIVIDAD, ESE ES EL BUG 
+
+PANEL USUARIOS: 
+- cuando toco resetear contraseña y se haga quiero que en pantalla me aparezca la misma ventana que me aparece cuando agrego un empleado, la ventana que me da las opciones de copiar el mensaje de bienvenida con la contraseña y la info o mandar el mail o teléfono si es que no tiene mail, la misma lógica pero con el botón de resetear contraseña
+- volvemos con "PEPE" que no se que le pasa pero está re corrupto, a PEPE lo desactivé desde el panel Personal pero en el panel Usuarios ni me aparece literalmente no aparece, pero no es que está mal en todos sino que los otros que desactivé desde Personal si me aparecen bien en usuarios y como inactivo, ese PEPE SAND ESTÁ LOCO, sino fijate qué está pasando con sus datos en la base de datos y cómo reacciona eso con los bugs que te dije
+
+HAY UN ERROR GENERAL CON LOS USUARIOS DESACTIVADOS, EN EL CASO DE ACTIVIDAD "PEPE SAND" ESTÁ DESACTIVADO PERO SE VE QUE SIGUE ASIGNADO A ACTIVIDADES QUE ANTES TENÍA ASIGNADOS, LUEGO EL OTRO PROFESOR LO DESACTIVÉ Y LO DI DE ALTA NUEVAMENTE PERO YA NO ME APARECE COMO OPCIÓN PARA ASIGNARLO A ALGUNA ACTIVIDAD.
+YA DE POR SÍ DESACTIVAR UN EMPLEADO ESTÁ MEDIO BUGUEADO PORQUE NO SE DESASIGNAN AUTOMATICAMENTE DE SU RUTINA/PLAN NUTRICIONAL/ACTIVIDAD LO QUE SEA, Y APARTE ME APARECEN COMO OPCIÓN A MARCAR POR MÁS QUE ESTÉN DESACTIVADOS, PARA MÍ ESTAS CONFUNDIENDOME CON EL ESTAR DADO DE BAJA QUE CON ESTAR DESACTIVADO COMO USUARIO NOSE FIJATE
+
+
+**************************************************ACÁ VAN LAS OBSERVACIONES NUEVAS 2.0 - LO DE ARRIBA YA ESTÁ RESUELTO**************************************************
+
+*RECEPCIONISTA:
+
+PANEL DASHBOARD: 
+- acá si o si tiene que ser primordial mostrar los turnos más recientes y no los muestra (me anote con el único socio cargado a una actividad y no me aparece capaz porque no está reservado todavia nose bien como es decime como hago las pruebas)
+- el recepcionista está bien que no le salga lo de ingresos del mes pero si tiene que estar el ingreso en las actividades recientes (igual que el dueño)
+- es más tanto el dueño como el recepcionista aparte de ver las transacciones recientes tendría que ver al lado del monto entre parêntesis que es lo que pagó. 
+LOS OTROS PANELES ESTÁN CASI IGUAL QUE DUEÑO ASI QUE NO VOY A HACER LA PRUEBA DE CADA UNO PORQUE SIENTO QUE ES EN VANO IGUALMENTE CUANDO SE ACERQUE EL FINAL DE ENTREGA DEL PROYECTO TENGO QUE PROBAR ABSOLUTAMENTE TODO
+
+LO MÁS IMPORTANTE QUE VEO QUE FALTA ES QUE EL RECEPCIONISTA TAMBIÉN DEBERÍA PODER VER EL PANEL DE ACTIVIDADES Y HACER LO MISMO QUE PUEDE HACER EL DUEÑO AHÍ
+
+*PROFESOR:
+- en mis clases disse que no tiene clases pero en realidad sí, porque asigné a dami.silberstein a una actividad la cual tambien la compre como classe suelta a um socio y nada
+
+*SOCIO:
+- me dí cuenta que no puedo cargar mi propia fecha de nacimiento ni mi domicilio, yo creo que está bien que no lo pueda cambiar el socio pero tampoco lo puede hacer ni el dueño ni recepcionista lo acabo de chequear literal no aparece la opción esa, debería aparecer cuando se da de alta el socio. NO CUANDO SE LE COBRA OBVIO
+- la ventana de cuando elijo ejercicios debería ser más pequeña porque ocupa todo el ancho y queda feo, debería ser una ventanita más tranqui como las de todas. Esa opción la vi ahora como socio pero también modificalo para el dueño recepcionista y entrenador (AUNQUE IGUAL YA SE QUE ES SIMPLEMENTE MODIFICAR EL FRONTEND DE UN ARCHIVO Y LISTO)
+- cuando quiero guardar mi propia rutina el servidor da error 500
+- lo mismo que te dije antes, ya estoy anotado a una actividad pero no me aparece el turno para anotarme
+ANTES QUE SEGUIR ME ESTOY DANDO CUENTA QUE NO HAY NINGÚN LUGAR EN NINGÚNA VISTA DE NINGÚN ROL QUE APAREZCA LOS TURNOS/RESERVAS EN LOS OTROS USUARIO PORQUE EN SOCIO SI APARECE, es lo más importante para que todos se puedan organizar, lo básico es que exista para reservar a tal horário y que luego aparezca en el panel de mis actividades. METELE PILA AL TEMA DE TURNOS
+- tengo una pregunta y es que en el panel "mi cuota" en que momento el saldo estaria en pendiente?
+- la misma queja que te dije en crear mi rutina lo mismo pasa en crear mi dieta y en cargar mi platô diário está full ancho y queda horripilante, lo que sí acá no da error 500 en el servidor pude crear mi dieta normalmente
+- sigo sin entender por que en mis turnos no aparece nada cuando compre la classe libre en una actividad es como médio raro todo
+- estaria bueno que en mi progresso exista algo que diga si x día se cumplió el objetivo diário de la dieta, que se vea lindo hacelo intuitivo que no quede feo
+- está mal el campo de input para poner la massa muscular, es imposible cargar eso por día tendrías que hacerte um estúdio todos los días
+- en el panel de "mi cuota" aparece um valor de plan equivocado, tendría que decir exatamente lo mismo que vale la membresia actual que pago, encima en este caso se lo cobro el recepcionista y aun asi está mal eso. AHORA ESTOY VIENDO QUE ANDA BIEN PERO EN UN MOMENTO ESTABA MAL FIJATE ESO SI QUERES AL FINAL
+
+A TODO ESTO, HARÁ FALTA QUE SELECCIONE LA REGIÓN PARA EL NÚMERO DE TELEFONO? PORQUE SI HAY GENTE EXTRANJERA SE TRASPAPELA TODO NO? SI VAS A AGREGAR ESO AGREGASELO A TODO LO QUE TENGA CAMPO DE INGRESAR TELEFONO
+
+ESTUVE VIENDO QUE NI EL DUEÑO NI EL RECEPCIONISTA TIENEN LA POSIBILIDAD DE LLAMAR AL CONTACTO DE EMERGENCIA DEL SOCIO, SOLUCIONALO

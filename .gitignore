@@ -84,3 +84,8 @@ videos/
 *.zip
 *.7z
 COSAS NUEVAS A TENER EN CUENTA.docx
+
+# --- Claude Code ---
+# Huella local del hook que recuerda actualizar docs/ESTADO-ACTUAL.md
+# (.claude/hooks/recordar_estado.py): es estado de cada máquina, no del repo.
+.claude/hooks/.estado-avisado

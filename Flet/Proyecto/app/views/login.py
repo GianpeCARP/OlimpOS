@@ -8,9 +8,16 @@
 # que no existía en ninguna otra pantalla ni en la web.
 
 import flet as ft
-from app.config import APP_NAME, Colors, Fonts, Radius
+from app.config import (APP_NAME, MAX_INTENTOS_FALLIDOS, MINUTOS_CUENTA_TRABADA,
+                        Colors, Fonts, Radius)
 from app.state import app_state
 from app.components.ui import input_field, primary_button
+
+
+def _aviso_intentos(texto: str, ref=None, visible: bool = True) -> ft.Text:
+    """Renglón gris con la regla de los intentos fallidos (gemelo del <p> muted de la PWA)."""
+    return ft.Text(texto, ref=ref, color=Colors.TEXT_MUTED, size=11,
+                   font_family=Fonts.BODY, visible=visible)
 
 
 def _boton_ancho(btn: ft.Container) -> ft.Container:
@@ -25,6 +32,7 @@ def show_login(page: ft.Page, router):
     username_ref = ft.Ref[ft.TextField]()
     password_ref = ft.Ref[ft.TextField]()
     error_ref    = ft.Ref[ft.Text]()
+    aviso_ref    = ft.Ref[ft.Text]()
 
     def handle_login(e=None):
         u = (username_ref.current.value or "").strip().lower()
@@ -43,6 +51,11 @@ def show_login(page: ft.Page, router):
             error_ref.current.value   = resultado["mensaje"]
             error_ref.current.visible = True
             error_ref.current.update()
+            # Como en LoginView.tsx: con una cuenta trabada el backend responde
+            # lo mismo que con la contraseña mal (a propósito), así que sin este
+            # aviso nadie entiende por qué la clave correcta "no anda".
+            aviso_ref.current.visible = True
+            aviso_ref.current.update()
             return
 
         error_ref.current.visible = False
@@ -92,6 +105,11 @@ def show_login(page: ft.Page, router):
             # Renglón de error — ocupa lugar sólo cuando hay algo que decir
             ft.Text(ref=error_ref, color=Colors.STATUS_DANGER, size=13,
                     font_family=Fonts.BODY, visible=False, value=""),
+            _aviso_intentos(
+                f"Después de {MAX_INTENTOS_FALLIDOS} intentos fallidos la cuenta queda "
+                f"trabada {MINUTOS_CUENTA_TRABADA} minutos, aunque después pongas bien "
+                "la contraseña. Esperá, o pedí que la desbloqueen desde Usuarios.",
+                ref=aviso_ref, visible=False),
 
             ft.Container(height=10),
             # El botón va dentro de un Row con expand para que ocupe todo el
@@ -219,6 +237,10 @@ def show_cambiar_password(page: ft.Page, router):
 
             ft.Text(ref=error_ref, color=Colors.STATUS_DANGER, size=13,
                     font_family=Fonts.BODY, visible=False, value=""),
+            _aviso_intentos(
+                "Cada error en la contraseña actual cuenta como un intento fallido: "
+                f"a los {MAX_INTENTOS_FALLIDOS} la cuenta queda trabada "
+                f"{MINUTOS_CUENTA_TRABADA} minutos."),
 
             ft.Container(height=10),
             ft.Row([_boton_ancho(primary_button("Guardar y volver al ingreso",
