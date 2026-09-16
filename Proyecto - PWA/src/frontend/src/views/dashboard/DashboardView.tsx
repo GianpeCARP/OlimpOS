@@ -25,6 +25,7 @@ import { useAuthStore } from '../../store/authStore';
 import { usePuedeAccion } from '../../hooks/usePermisos';
 import { formatearDelta, formatearMoneda, formatearNumero } from '../../utils/format';
 import { ActivityItem } from './ActivityItem';
+import { IngresosChart } from './IngresosChart';
 import { SocioRow } from './SocioRow';
 import { QuickAction } from './QuickAction';
 
@@ -227,6 +228,11 @@ export function DashboardView() {
                 );
               })}
             </div>
+
+            {/* 1b. Ingresos por período. Sólo con `verIngresos` (el Dueño): el
+                Recepcionista ve el dashboard, pero la facturación no. Tiene su
+                propia carga, así cambiar de escala no recarga el resto. */}
+            {verIngresos && <IngresosChart />}
 
             {/* 2. Actividad reciente */}
             <SectionCard title="Actividad reciente">

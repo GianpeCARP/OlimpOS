@@ -403,6 +403,26 @@ class DashboardStats(BaseModel):
     nuevosMes: Metrica  # noqa: N815
 
 
+class PuntoIngresos(BaseModel):
+    """Una barra del gráfico de ingresos: un día, un mes o un año."""
+    # Primer día del período. Va como fecha y no sólo como texto para que la
+    # vista pueda ordenar o formatear distinto si algún día hace falta.
+    periodo: date
+    # "16/09", "sep 26", "2026". Lo arma el BACKEND para que las dos apps
+    # rotulen exactamente igual, sin repetir la tabla de meses en cada una.
+    etiqueta: str
+    monto: float
+
+
+class IngresosPorPeriodo(BaseModel):
+    escala: str
+    total: float
+    # SIEMPRE todos los períodos, incluidos los que no tuvieron cobros (en
+    # cero). Si se omitieran, un mes sin ingresos desaparecería del gráfico y
+    # las barras de al lado quedarían pegadas como si fueran meses seguidos.
+    puntos: list[PuntoIngresos]
+
+
 class EventoActividad(BaseModel):
     """Una línea del feed de actividad reciente."""
     # Clave estable para React: tipo + id de la fila que lo originó. Sin esto

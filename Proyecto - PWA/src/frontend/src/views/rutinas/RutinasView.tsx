@@ -5,6 +5,7 @@ import { colors } from '../../config';
 import { mensajeDeError } from '../../services/api';
 import {
   listarRutinas,
+  listarEjercicios,
   darDeBajaRutina,
   activarRutina,
   type RutinaListado,
@@ -254,7 +255,12 @@ export function RutinasView() {
         )}
       </div>
 
-      {verCatalogo && <CatalogoEjercicios onCerrar={() => setVerCatalogo(false)} />}
+      {/* Con el endpoint de GESTIÓN, no el del portal: por defecto el catálogo
+          pide /portal/mi-rutina/ejercicios, que exige "Mi rutina" y le
+          contestaba 403 al Dueño. Ver la prop `cargar`. */}
+      {verCatalogo && (
+        <CatalogoEjercicios onCerrar={() => setVerCatalogo(false)} cargar={listarEjercicios} />
+      )}
 
       {formModal && (
         <RutinaFormModal

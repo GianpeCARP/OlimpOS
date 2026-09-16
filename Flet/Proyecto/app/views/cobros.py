@@ -32,6 +32,15 @@ class CobrosView:
 
         # Socio sobre el que se está cobrando. None = todavía no eligió a nadie.
         self._socio = None
+
+        # Socio preseleccionado por el alta ("Cobrar ahora"). Se consume y se
+        # limpia acá mismo, para que volver a entrar a Cobros no reabra siempre
+        # al mismo socio. Gemelo del ?socio=<id> de CobrosView.tsx.
+        preseleccion = app_state.socio_a_cobrar
+        if preseleccion is not None:
+            app_state.socio_a_cobrar = None
+            self._socio = next((s for s in app_state.get_socios()
+                                if s["id"] == preseleccion), None)
         # Método de pago compartido por todas las acciones de esta visita.
         self._metodo = app_state.get_metodos_pago()[0]
 

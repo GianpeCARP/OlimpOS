@@ -42,7 +42,18 @@ export function mensajeDeError(err: unknown): string {
 // Gemelo de `app/api_client.py` en la app Flet: mismo rol, mismo contrato de
 // errores. Si cambia el manejo de un status acá, mirá el otro.
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000';
+// Por defecto "/api", RELATIVO a la página: el proxy de vite.config.ts lo
+// reenvía al backend y le saca el prefijo. Así la API se ve bajo el mismo
+// host que la app y la cookie de sesión funciona.
+//
+// Antes el default era "http://127.0.0.1:8000", y eso era una trampa: si
+// faltaba el .env del frontend —pasó el 2026-09-16, se borró pensando que
+// alcanzaba con el del backend— la PWA le pegaba directo a otro host. La
+// página en localhost y la API en 127.0.0.1 son sitios distintos,
+// SameSite=lax no deja mandar la cookie, y todo respondía 401 DESPUÉS de un
+// login exitoso, sin ningún aviso de por qué. Con "/api" de default, el .env
+// pasa a ser opcional: sólo hace falta para apuntar a otro lado.
+const API_URL = import.meta.env.VITE_API_URL ?? '/api';
 
 /**
  * URL absoluta de un archivo que sirve el backend (p. ej. un video en

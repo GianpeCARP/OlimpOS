@@ -88,3 +88,39 @@ export interface SocioResumen {
 export async function obtenerSociosRecientes(): Promise<SocioResumen[]> {
   return pedir<SocioResumen[]>('/dashboard/socios-recientes');
 }
+
+// --- Ingresos por período (gráfico del Dueño) ---
+
+/** Día = últimos 30 días; mes = últimos 12 meses; año = últimos 5 años. */
+export type EscalaIngresos = 'dia' | 'mes' | 'anio';
+
+export interface PuntoIngresos {
+  /** Primer día del período, ISO. */
+  periodo: string;
+  /** "16/09", "sep 26", "2026": la arma el backend, igual para las dos apps. */
+  etiqueta: string;
+  monto: number;
+}
+
+export interface IngresosPorPeriodo {
+  escala: EscalaIngresos;
+  total: number;
+  /** Todos los períodos, incluidos los que quedaron en cero. */
+  puntos: PuntoIngresos[];
+}
+
+/**
+ * Ingresos agrupados, para el gráfico del dashboard.
+ *
+ * Sólo lo puede pedir quien tiene `verIngresos` (hoy, el Dueño): a los demás
+ * el backend les contesta 403. La vista ni siquiera dibuja el gráfico para
+ * ellos, así que ese 403 no debería verse nunca.
+ *
+ * La suma la agrupa la base: pedir los pagos y agruparlos acá sería bajarse
+ * un año de cobros para dibujar doce barras.
+ */
+export async function obtenerIngresosPorPeriodo(
+  escala: EscalaIngresos,
+): Promise<IngresosPorPeriodo> {
+  return pedir<IngresosPorPeriodo>(`/dashboard/ingresos?escala=${escala}`);
+}

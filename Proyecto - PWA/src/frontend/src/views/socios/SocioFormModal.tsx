@@ -1,28 +1,40 @@
-import { useEffect, useState, type SubmitEvent } from 'react';
+import { useState, type SubmitEvent } from 'react';
+import { useNavigate } from 'react-router';
 import { IdCard, Mail, Phone, User } from 'lucide-react';
-import { InputField, PrimaryButton, SelectField, type SelectOption } from '../../components/ui';
-import { colors } from '../../config';
+import { InputField, PrimaryButton } from '../../components/ui';
+import { PanelCredenciales } from '../../components/PanelCredenciales';
+import { Acceso, colors, Routes } from '../../config';
+import { useAccesoSeccion } from '../../hooks/usePermisos';
 import { mensajeDeError } from '../../services/api';
 import {
   crearSocio,
   actualizarSocio,
-  listarTiposMembresia,
+  type AltaSocioResultado,
   type SocioListado,
 } from '../../services/sociosService';
-import type { TipoMembresia } from '../../types';
-import { formatearMoneda } from '../../utils/format';
-import { useUiStore, SNACK_PERSISTENTE } from '../../store/uiStore';
+import { useUiStore } from '../../store/uiStore';
 
 // Equivalente de _open_form/_save_socio (estructura_socios.md), adaptado al
-// esquema real: el doc pide un solo campo "nombre" y un plan de 3 opciones
-// fijas (Básico/Premium/Anual); acá nombre/apellido van separados (así está
-// Persona en db/schema.sql) y el plan sale de Tipo_Membresia, no de un
-// literal inventado.
+// esquema real: nombre/apellido van separados (así está Persona en
+// db/schema.sql).
+//
+// SE SACÓ EL SELECTOR DE "PLAN" (2026-09-16)
+// ------------------------------------------
+// El alta dejaba elegir un plan y NO lo guardaba: el service no lo mandaba y el
+// backend no tiene ese campo. El socio quedaba sin membresía, y la pantalla
+// daba a entender lo contrario. Flet ya lo había sacado por el mismo motivo
+// (ver views/socios.py): el plan no es un dato del socio, es una Membresía, y
+// se crea COBRÁNDOLA.
+//
+// Lo que reemplaza al selector es mejor que el selector: al terminar el alta,
+// el panel de credenciales ofrece "Cobrar ahora", que abre Cobros con este
+// socio ya elegido. Ahí están todas las opciones que el alta nunca podía
+// tener —método de pago, promoción, comprobante, actividades—, sin volver a
+// buscar a la persona.
 //
 // No hay Modal genérico todavía en components/ui/ — se arma el overlay acá
 // mismo, con la misma pinta que ConfirmDialog (fondo negro/60 + card
-// centrada), porque es el único lugar que hoy necesita un formulario dentro
-// de un diálogo.
+// centrada).
 interface SocioFormModalProps {
   /** null = alta nueva. Con un socio, el formulario abre en modo edición. */
   socio: SocioListado | null;
@@ -32,43 +44,30 @@ interface SocioFormModalProps {
 
 export function SocioFormModal({ socio, onClose, onGuardado }: SocioFormModalProps) {
   const esEdicion = socio !== null;
+  const navigate = useNavigate();
+  // "Cobrar ahora" sólo se ofrece a quien puede entrar a Cobros. Hoy son los
+  // mismos que dan de alta socios (Dueño y Recepcionista), pero se chequea en
+  // vez de asumirlo: un botón que lleva a una pantalla que rebota es peor que
+  // no tenerlo.
+  const puedeCobrar = useAccesoSeccion(Routes.COBROS) !== Acceso.NINGUNO;
 
   const [dni, setDni] = useState(socio?.dni ?? '');
   const [nombre, setNombre] = useState(socio?.nombre ?? '');
   const [apellido, setApellido] = useState(socio?.apellido ?? '');
   const [email, setEmail] = useState(socio?.email ?? '');
   const [telefono, setTelefono] = useState(socio?.telefono ?? '');
-  const [idTipoMembresia, setIdTipoMembresia] = useState(
-    socio?.idTipoMembresia !== undefined ? String(socio.idTipoMembresia) : '',
-  );
 
-  const [planes, setPlanes] = useState<TipoMembresia[] | null>(null);
   const [guardando, setGuardando] = useState(false);
+  // Las credenciales del alta. Mientras hay, el modal muestra el panel de
+  // entrega en vez del formulario (mismo patrón que EmpleadoFormModal).
+  const [alta, setAlta] = useState<AltaSocioResultado | null>(null);
 
   const showSnack = useUiStore((s) => s.showSnack);
-
-  useEffect(() => {
-    let cancelado = false;
-    listarTiposMembresia().then((lista) => {
-      if (!cancelado) setPlanes(lista);
-    });
-    return () => {
-      cancelado = true;
-    };
-  }, []);
-
-  const opcionesPlan: SelectOption[] =
-    planes?.map((plan) => ({
-      value: String(plan.id_tipo_membresia),
-      label: `${plan.nombre} — ${formatearMoneda(plan.precio_actual)}`,
-    })) ?? [];
 
   const handleSubmit = async (e: SubmitEvent) => {
     e.preventDefault();
     setGuardando(true);
     try {
-      const idTipoMembresiaNum = idTipoMembresia === '' ? undefined : Number(idTipoMembresia);
-
       if (socio) {
         // Editar NO toca la membresía: cambiar de plan es una acción con
         // cobro asociado y va por la sección Cobros. Ver el comentario en
@@ -82,39 +81,60 @@ export function SocioFormModal({ socio, onClose, onGuardado }: SocioFormModalPro
         });
         showSnack('Socio actualizado correctamente', colors.statusOk);
         onGuardado(actualizado);
-      } else {
-        const alta = await crearSocio({
-          dni,
-          nombre,
-          apellido,
-          email,
-          telefono,
-          idTipoMembresia: idTipoMembresiaNum,
-        });
-
-        // Las credenciales se muestran UNA sola vez: el backend guarda solo
-        // el hash, así que si el operador no las copia ahora hay que
-        // resetearlas. Por eso el mensaje no se cierra solo.
-        if (alta.passwordTemporal) {
-          showSnack(
-            `Socio creado. Usuario: ${alta.username} — Contraseña temporal: ` +
-              `${alta.passwordTemporal} (anotala, no se vuelve a mostrar)`,
-            colors.statusOk,
-            SNACK_PERSISTENTE,
-          );
-        } else {
-          showSnack(alta.mensaje, colors.statusOk);
-        }
-        onGuardado(alta.socio);
+        onClose();
+        return;
       }
 
-      onClose();
+      const resultado = await crearSocio({ dni, nombre, apellido, email, telefono });
+      // La tabla se actualiza YA, aunque el modal siga abierto con las
+      // credenciales: el socio existe desde este momento.
+      onGuardado(resultado.socio);
+
+      if (resultado.username && resultado.passwordTemporal) {
+        // Antes esto era un snack persistente con la clave adentro, que había
+        // que copiar a mano. Ahora es el mismo panel del alta de personal,
+        // con los botones para mandarla por mail o WhatsApp.
+        setAlta(resultado);
+      } else {
+        showSnack(resultado.mensaje, colors.statusOk);
+        onClose();
+      }
     } catch (err) {
       showSnack(mensajeDeError(err), colors.statusDanger);
     } finally {
       setGuardando(false);
     }
   };
+
+  if (alta?.username && alta.passwordTemporal) {
+    return (
+      <PanelCredenciales
+        titulo="Socio dado de alta"
+        mensaje={alta.mensaje}
+        username={alta.username}
+        passwordTemporal={alta.passwordTemporal}
+        textoCredenciales={alta.textoCredenciales}
+        emailEnviado={alta.emailEnviado}
+        email={email.trim()}
+        telefono={telefono.trim()}
+        onClose={onClose}
+        accionPrincipal={
+          puedeCobrar
+            ? {
+                label: 'Cobrar ahora',
+                // El socio viaja en la URL y no en memoria: así Cobros no
+                // depende de esta pantalla, y un F5 no pierde a quién se le
+                // estaba cobrando. Cobros lo lee, lo elige y limpia la URL.
+                onClick: () => {
+                  onClose();
+                  navigate(`/${Routes.COBROS}?socio=${alta.socio.idSocio}`);
+                },
+              }
+            : undefined
+        }
+      />
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
@@ -145,18 +165,11 @@ export function SocioFormModal({ socio, onClose, onGuardado }: SocioFormModalPro
           <InputField label="Email" value={email} onChange={setEmail} icon={Mail} type="email" name="email" />
           <InputField label="Teléfono" value={telefono} onChange={setTelefono} icon={Phone} type="tel" name="telefono" />
 
-          {/* El plan solo se elige en el ALTA. Al editar no aparece porque
-              cambiar de plan implica un cobro y va por la sección Cobros:
-              dejarlo acá prometía algo que este formulario ya no hace. */}
           {!esEdicion && (
-            <SelectField
-              label="Plan"
-              value={idTipoMembresia}
-              onChange={setIdTipoMembresia}
-              options={opcionesPlan}
-              placeholder="Sin plan asignado"
-              name="plan"
-            />
+            <p className="font-body text-xs text-text-muted">
+              El plan no se elige acá: se cobra. Al guardar vas a poder ir a Cobros con este
+              socio ya seleccionado.
+            </p>
           )}
         </div>
 
@@ -171,7 +184,7 @@ export function SocioFormModal({ socio, onClose, onGuardado }: SocioFormModalPro
           <PrimaryButton
             label={guardando ? 'Guardando…' : 'Guardar'}
             type="submit"
-            disabled={guardando || planes === null}
+            disabled={guardando}
           />
         </div>
       </form>

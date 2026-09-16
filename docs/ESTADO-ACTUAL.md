@@ -167,8 +167,11 @@ cada arreglo en Flet**, porque casi todo lo que aparece probando la PWA aplica i
 
 Reglas vigentes mientras dure esta etapa:
 
-- **NO vaciar ni recargar la base.** Está en modo DEMO y el dueño tiene datos de prueba
-  a medio hacer. Nada de `vaciar_base.py --si` ni `escenario_demo.py` sin que lo pida.
+- **NO vaciar ni recargar la base.** El 2026-09-16, a pedido del dueño, se dejó en
+  **estado de ENTREGA** (9 filas: la cuenta `dueno`, la sede, 2 planes y las 3 franjas
+  laborales, que se sumaron ese mismo día) y él carga todo a mano desde
+  las pantallas. Esos datos son suyos: nada de `vaciar_base.py --si` ni
+  `escenario_demo.py` sin que lo pida.
   Si hace falta probar un endpoint contra la base real, el script tiene que **restaurar
   lo que tocó** (hay un ejemplo de eso en la tanda de teléfonos).
 - **La PWA es la referencia y Flet la copia.** Si las dos difieren, la que está bien es
@@ -399,6 +402,42 @@ bajas de acá en adelante, no para las que ya ocurrieron.
 
 ---
 
+### 12. Base entregada y tercera tanda — 2026-09-16, commiteada en `desarrollo`
+
+- **Base vaciada a pedido del dueño** (estado de ENTREGA) para cargar todo a mano. El
+  estado de entrega ahora son **9 filas**: `vaciar_base.py` crea también las 3 franjas
+  laborales (Mañana/Tarde/Noche). Sin ellas no se puede dar de alta un Recepcionista y
+  no hay pantalla para crearlas. `db/seed.sql` ya las tenía; el que faltaba era el reset.
+- **El `.env` del frontend dejó de ser obligatorio.** Se borró pensando que alcanzaba
+  con el del backend y la PWA quedó dando 401 después de un login exitoso: sin
+  `VITE_API_URL`, `api.ts` le pegaba directo a `127.0.0.1:8000`, la página en
+  `localhost` y la API quedaban en sitios distintos y `SameSite=lax` no mandaba la
+  cookie. El default de `api.ts` pasó a `/api`. **Son dos `.env` distintos a propósito**:
+  el del backend tiene secretos; el del frontend termina en el bundle del navegador y
+  no puede tener nada privado. Ver `.env.example` del frontend.
+- **Catálogo de ejercicios desde Rutinas daba 403 al Dueño**: `CatalogoEjercicios`
+  pedía el endpoint del PORTAL (`/portal/mi-rutina/ejercicios`, sección MI_RUTINA).
+  Ahora recibe de dónde cargar, y Rutinas le pasa el de gestión (`/rutinas/ejercicios`).
+- **Alta de socio**: se sacó el selector de "Plan", que **no se guardaba nunca** (el
+  service no lo mandaba y el backend no tiene el campo; Flet ya lo había sacado). En su
+  lugar el alta muestra el panel de credenciales (mail/WhatsApp, como el de personal) y
+  **"Cobrar ahora"**, que abre Cobros con el socio ya elegido — `?socio=<id>` en la PWA,
+  `app_state.socio_a_cobrar` en Flet.
+- **Reseteo de contraseña en Flet** con los botones de envío (sólo estaba en la PWA).
+- **"Nuevo usuario" en Usuarios**: sin el parpadeo del formulario mientras carga, y con
+  un mensaje que explica que esa pantalla no crea personas — la cuenta se crea sola al
+  dar de alta en Socios o Personal.
+- **Gráfico de ingresos del Dueño** en el dashboard, en las dos apps:
+  `GET /dashboard/ingresos?escala=dia|mes|anio` (30 días / 12 meses / 5 años), protegido
+  por la acción `verIngresos`. Agrupa la base (`date_trunc`), devuelve también los
+  períodos en cero y arma los rótulos para que las dos apps digan lo mismo. Barras
+  hechas a mano en las dos: sin librería en la PWA, y Flet 0.84 no trae gráficos.
+- **Sin probar en pantalla**: el alta de socio con "Cobrar ahora" (no se cargaron datos
+  de prueba en la base del dueño) y que el Recepcionista no vea el gráfico (hoy no hay
+  cuenta de Recepcionista).
+
+---
+
 ## Modelo de datos: "registros" vs "planes" (importante, no se ve en el código)
 
 - **Registros** (`Registro_Comida`, `Registro_Ejercicio`, `Registro_Salud`): son un
@@ -522,7 +561,7 @@ Comandos completos en `CLAUDE.md`. Lo esencial:
   de esta tanda ya se aplicaron a Neon a mano (Rutina/Dieta/Comida nullables +
   `Comida.descripcion` + `Registro_Comida` con `momento` y macros). Si reconstruís desde
   `db/schema.sql`, ya está todo.
-- **Dos estados de la base:** ENTREGA (6 filas) y DEMO (~70). Ver en cuál estás con
+- **Dos estados de la base:** ENTREGA (9 filas, con las 3 franjas laborales) y DEMO (~70). Ver en cuál estás con
   `pruebas/vaciar_base.py` (sin `--si` sólo informa). Credenciales demo: todas `Demo2026!`.
 - **Casi todos los bugs aparecen CORRIENDO, no leyendo.** `tsc`/`oxlint`/`compileall`
   no bastan; hay que ejecutar la vista/endpoint con datos reales.

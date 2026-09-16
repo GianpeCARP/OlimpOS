@@ -12,6 +12,7 @@ from app.state import app_state               # Estado global con los datos de s
 from app.components.ui import (build_topbar, status_badge, primary_button,
                                input_field, show_snack, open_dialog,
                                close_dialog)
+from app.contacto import ASUNTO_CREDENCIALES, link_mail, link_whatsapp
 
 
 class SociosView:
@@ -432,13 +433,15 @@ class SociosView:
         close_dialog(self.page, dlg)
 
         if id_socio is None and resultado.get("password_temporal"):
-            self._mostrar_credenciales(resultado)
+            self._mostrar_credenciales(resultado, email=datos["email"],
+                                       telefono=datos["telefono"])
         else:
             show_snack(self.page, resultado["mensaje"], Colors.SUCCESS)
 
         self.router.navigate(Routes.SOCIOS)
 
-    def _mostrar_credenciales(self, resultado: dict):
+    def _mostrar_credenciales(self, resultado: dict, email: str = "",
+                              telefono: str = ""):
         """
         Muestra el número de socio y las credenciales del alta.
 
@@ -449,8 +452,45 @@ class SociosView:
         `texto_credenciales` viene armado por el backend para mandar por
         WhatsApp cuando el mail no salió, que es la alternativa que contempla
         la consigna.
+
+        Además de mostrarlas, las MANDA (mail o WhatsApp, igual que el alta de
+        personal) y ofrece "Cobrar ahora": un socio recién cargado no tiene
+        membresía, y cobrarla en el mismo momento es el paso siguiente. Gemelo
+        de SocioFormModal.tsx.
         """
-        texto = resultado.get("texto_credenciales")
+        texto = resultado.get("texto_credenciales") or (
+            f"Usuario: {resultado.get('usuario', '—')} — "
+            f"Contraseña temporal: {resultado.get('password_temporal', '—')}")
+
+        # El mail primero cuando existe; si sólo dejó teléfono, WhatsApp es la
+        # única vía. Misma regla que el alta de personal.
+        acciones = []
+        if email:
+            acciones.append(ft.TextButton(
+                "Enviar por mail",
+                style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                on_click=lambda e: self.page.launch_url(
+                    link_mail(email, ASUNTO_CREDENCIALES, texto)),
+            ))
+        if telefono:
+            acciones.append(ft.TextButton(
+                "Enviar por WhatsApp",
+                style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                on_click=lambda e: self.page.launch_url(
+                    link_whatsapp(telefono, texto)),
+            ))
+
+        def cobrar_ahora(e):
+            # El socio viaja por app_state porque navigate() sólo recibe la
+            # ruta. CobrosView lo lee al construirse y lo limpia.
+            close_dialog(self.page, dlg)
+            app_state.socio_a_cobrar = resultado.get("id_socio")
+            self.router.navigate(Routes.COBROS)
+
+        # Sólo a quien puede entrar a Cobros: un botón que lleva a una pantalla
+        # que rebota es peor que no tenerlo.
+        puede_cobrar = (resultado.get("id_socio") is not None
+                        and app_state.puede_ver(Routes.COBROS))
         dlg = ft.AlertDialog(
             modal=True,
             title=ft.Text("Socio dado de alta",
@@ -489,9 +529,15 @@ class SociosView:
                 height=340,
             ),
             actions=[
+                *acciones,
                 ft.TextButton("Listo",
-                              style=ft.ButtonStyle(color=Colors.ACCENT),
+                              style=ft.ButtonStyle(
+                                  color=Colors.TEXT_SECONDARY if puede_cobrar
+                                  else Colors.ACCENT),
                               on_click=lambda e: close_dialog(self.page, dlg)),
+                *([ft.TextButton("Cobrar ahora",
+                                 style=ft.ButtonStyle(color=Colors.ACCENT),
+                                 on_click=cobrar_ahora)] if puede_cobrar else []),
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )

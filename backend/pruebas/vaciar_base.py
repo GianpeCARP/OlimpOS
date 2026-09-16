@@ -1,5 +1,5 @@
 """
-Deja la base en el estado de ENTREGA: 6 filas y nada mas.
+Deja la base en el estado de ENTREGA: 9 filas y nada mas.
 
     .venv/Scripts/python.exe pruebas/vaciar_base.py         # muestra que haria
     .venv/Scripts/python.exe pruebas/vaciar_base.py --si    # lo hace
@@ -13,11 +13,12 @@ distinto: una corrida a medias deja tres Patologias y dos Empleados, la
 siguiente suite choca contra un DNI repetido y el fallo parece un bug del
 codigo que se acaba de escribir.
 
-Las 6 filas que quedan son las que describe el CLAUDE.md:
+Las 9 filas que quedan son las que describe el CLAUDE.md:
 
     Persona + Dueno del titular   (DNI 00000000)
     Sede Central
     2 Tipo_Membresia
+    3 Franja_Laboral              (Mañana/Tarde/Noche — ver FRANJAS abajo)
     la cuenta 'dueno'
 
 POR QUE TRUNCATE Y NO DELETE
@@ -70,6 +71,23 @@ PLANES = [
     ("Trimestral", 90, 78000.00),
 ]
 
+# Las franjas laborales. Van en el estado de ENTREGA —no sólo en el demo—
+# porque no hay pantalla para crearlas (el backend sólo las lista) y el alta de
+# un Recepcionista pide elegir una: sin ellas, una base recién entregada no
+# deja dar de alta al mostrador. Mismos valores que db/seed.sql, sección 2.4.
+# Se agregaron el 2026-09-16, cuando el dueño vació la base para cargar todo a
+# mano y se encontró con el selector vacío.
+FRANJAS = [
+    ("Mañana", "06:00", "14:00"),
+    ("Tarde", "14:00", "22:00"),
+    ("Noche", "22:00", "06:00"),
+]
+
+# Filas que tiene que dejar: Persona + Dueno + Sede + la cuenta, más los planes
+# y las franjas. Se calcula en vez de escribir "9" para que agregar un catálogo
+# fijo no deje el chequeo final mintiendo.
+FILAS_ESPERADAS = 4 + len(PLANES) + len(FRANJAS)
+
 
 def main() -> int:
     if not USERNAME or not PASSWORD:
@@ -95,7 +113,7 @@ def main() -> int:
             print(f"   {t:<26} {n}")
 
         if "--si" not in sys.argv:
-            print("\nEsto BORRA todo lo de arriba y deja 6 filas.")
+            print(f"\nEsto BORRA todo lo de arriba y deja {FILAS_ESPERADAS} filas.")
             print("Volvé a correrlo con --si si es lo que querés.")
             return 0
 
@@ -121,6 +139,11 @@ def main() -> int:
                 'INSERT INTO "Tipo_Membresia" (nombre, duracion_dias, precio_actual, activo) '
                 "VALUES (:n, :d, :p, true)"
             ), {"n": nombre, "d": dias, "p": precio})
+        for nombre, desde, hasta in FRANJAS:
+            db.execute(text(
+                'INSERT INTO "Franja_Laboral" (nombre, hora_desde, hora_hasta, activo) '
+                "VALUES (:n, :d, :h, true)"
+            ), {"n": nombre, "d": desde, "h": hasta})
         db.execute(text(
             'INSERT INTO "Usuario" (id_persona, username, password_hash, '
             "debe_cambiar_password, activo) "
@@ -132,10 +155,10 @@ def main() -> int:
         total = sum(
             db.execute(text(f'SELECT COUNT(*) FROM "{t}"')).scalar() for t in tablas
         )
-        print(f"\nListo. Quedaron {total} filas (se esperaban 6).")
+        print(f"\nListo. Quedaron {total} filas (se esperaban {FILAS_ESPERADAS}).")
         print(f"Cuenta '{USERNAME}' con la contraseña de DUENO_INICIAL_PASSWORD,")
         print("y el primer ingreso va a pedir cambiarla.")
-        return 0 if total == 6 else 1
+        return 0 if total == FILAS_ESPERADAS else 1
     finally:
         db.close()
 

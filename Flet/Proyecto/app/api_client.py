@@ -745,6 +745,17 @@ def obtener_socios_recientes() -> dict:
     return _get("/dashboard/socios-recientes")
 
 
+def obtener_ingresos_por_periodo(escala: str = "dia") -> dict:
+    """
+    Ingresos agrupados por "dia", "mes" o "anio". Sólo para quien tiene
+    verIngresos: a los demás el backend les contesta 403.
+
+    No va en RUTAS_A_PRECARGAR a propósito: la precarga corre para cualquier
+    rol, y para todos menos el Dueño esto sería un pedido que vuelve 403.
+    """
+    return _get(f"/dashboard/ingresos?escala={escala}")
+
+
 # =============================================================================
 # PANEL DE RECEPCIÓN
 # =============================================================================

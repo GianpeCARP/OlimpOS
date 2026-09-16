@@ -336,8 +336,14 @@ class UsuariosView:
         personas = app_state.get_personas_sin_cuenta()
 
         if not personas:
+            # Mismo texto que UsuarioFormModal.tsx. El viejo ("todas las
+            # personas cargadas ya tienen cuenta") era cierto pero no decía
+            # dónde se crea una persona, y con la base recién entregada se
+            # leía como un error.
             show_snack(self.page,
-                       "Todas las personas cargadas ya tienen cuenta.",
+                       "No hay nadie a quien darle acceso: todas las personas "
+                       "cargadas ya tienen cuenta. Las cuentas se crean al dar "
+                       "de alta en Socios o Personal.",
                        Colors.INFO)
             return
 

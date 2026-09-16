@@ -35,6 +35,14 @@ interface PanelCredencialesProps {
   email: string;
   telefono: string;
   onClose: () => void;
+  /**
+   * Lo que sigue naturalmente después de entregar las credenciales. La usa el
+   * alta de socio para "Cobrar ahora": un socio recién cargado no tiene
+   * membresía, y cobrarla en el mismo momento —con la persona enfrente— es el
+   * paso siguiente. Si viene, pasa a ser el botón principal y "Listo" queda
+   * como secundario.
+   */
+  accionPrincipal?: { label: string; onClick: () => void };
 }
 
 export function PanelCredenciales({
@@ -47,6 +55,7 @@ export function PanelCredenciales({
   email,
   telefono,
   onClose,
+  accionPrincipal,
 }: PanelCredencialesProps) {
   const showSnack = useUiStore((s) => s.showSnack);
   const texto =
@@ -120,8 +129,21 @@ export function PanelCredenciales({
           </button>
         </div>
 
-        <div className="mt-6 flex justify-end">
-          <PrimaryButton label="Listo" onClick={onClose} />
+        <div className="mt-6 flex flex-wrap justify-end gap-3">
+          {accionPrincipal ? (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                className="shrink-0 rounded-md px-4 py-2 font-body text-sm whitespace-nowrap text-text-secondary hover:text-text-main"
+              >
+                Listo
+              </button>
+              <PrimaryButton label={accionPrincipal.label} onClick={accionPrincipal.onClick} />
+            </>
+          ) : (
+            <PrimaryButton label="Listo" onClick={onClose} />
+          )}
         </div>
       </div>
     </div>

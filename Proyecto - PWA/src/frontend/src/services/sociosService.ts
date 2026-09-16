@@ -204,7 +204,10 @@ export interface CrearSocioInput {
   // contacto después.
   email?: string;
   telefono?: string;
-  idTipoMembresia?: number;
+  // Acá había `idTipoMembresia`, y no se mandaba nunca: el formulario dejaba
+  // elegir un plan y el socio quedaba SIN membresía, sin ningún aviso. Se sacó
+  // el 2026-09-16. El plan no es un dato del socio: es una Membresía, y se
+  // crea cobrándola (Cobros). El alta ofrece "Cobrar ahora" para eso.
 }
 
 /**

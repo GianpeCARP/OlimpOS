@@ -107,6 +107,12 @@ export function UsuarioFormModal({ usuario, onClose, onGuardado }: UsuarioFormMo
     }
   };
 
+  // Mientras llega la lista NO se dibuja el formulario. Antes sí se dibujaba,
+  // con el selector vacío, y si la respuesta venía sin candidatos el modal
+  // saltaba al aviso de abajo: se veía un formulario que aparecía y
+  // desaparecía en un instante, que parece un bug aunque no lo sea.
+  const cargando = !esEdicion && candidatos === null;
+
   // Sin personas pendientes de acceso, el alta no tiene qué hacer — se
   // avisa en vez de mostrar un formulario que no se puede enviar.
   const sinCandidatos = !esEdicion && candidatos !== null && candidatos.length === 0;
@@ -121,10 +127,23 @@ export function UsuarioFormModal({ usuario, onClose, onGuardado }: UsuarioFormMo
           {esEdicion ? 'Editar usuario' : 'Nuevo usuario'}
         </h2>
 
-        {sinCandidatos ? (
-          <p className="mt-4 font-body text-sm text-text-secondary">
-            Todos los socios y empleados activos ya tienen una cuenta de acceso.
-          </p>
+        {cargando ? (
+          <p className="mt-4 font-body text-sm text-text-muted">Buscando personas sin cuenta…</p>
+        ) : sinCandidatos ? (
+          // El mensaje viejo ("todos los socios y empleados activos ya tienen
+          // cuenta") era cierto pero no explicaba nada, y con la base recién
+          // entregada —donde no hay NADIE cargado— se leía como un error.
+          // Lo que falta decir es qué hace esta pantalla y dónde se crea una
+          // persona, que es lo que alguien busca cuando toca "Nuevo usuario".
+          <div className="mt-4 flex flex-col gap-2 font-body text-sm text-text-secondary">
+            <p>No hay nadie a quien darle acceso: todas las personas cargadas ya tienen cuenta.</p>
+            <p>
+              Esta pantalla no crea personas. La cuenta se crea sola al dar de alta a alguien en{' '}
+              <span className="text-text-main">Socios</span> o en{' '}
+              <span className="text-text-main">Personal</span>. Acá sólo se le da acceso a alguien
+              que haya quedado cargado sin cuenta.
+            </p>
+          </div>
         ) : (
           <div className="mt-4 flex flex-col gap-4">
             {esEdicion ? (

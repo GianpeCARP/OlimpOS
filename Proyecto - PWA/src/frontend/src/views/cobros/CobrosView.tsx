@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { Search, Tag, Wallet } from 'lucide-react';
 import { PrimaryButton, SectionCard, SelectField, StatusBadge, Topbar, type SelectOption } from '../../components/ui';
 import { colors, EstadoPago } from '../../config';
@@ -145,6 +146,30 @@ export function CobrosView() {
     setCuenta(null);
     setInscripcionesActivas([]);
   }, []);
+
+  // Socio preseleccionado por URL (?socio=<id>). Lo usa el alta de socio con
+  // "Cobrar ahora": el socio recién cargado no tiene membresía y lo lógico es
+  // cobrársela en el mismo momento, sin tener que volver a buscarlo.
+  //
+  // Va DESPUÉS de seleccionarSocio a propósito: el array de dependencias se
+  // evalúa durante el render, y leer una const declarada más abajo revienta
+  // con un ReferenceError que tsc no ve (ver CLAUDE.md, trampa de TDZ).
+  //
+  // Espera a que estén los socios Y los tipos de membresía: seleccionarSocio
+  // usa los tipos para elegir el plan por defecto. Después limpia el parámetro
+  // para que volver a entrar a Cobros no reabra siempre al mismo socio.
+  const [parametros, setParametros] = useSearchParams();
+  const idSocioPreseleccionado = parametros.get('socio');
+  useEffect(() => {
+    if (!idSocioPreseleccionado || !socios || !tiposMembresia) return;
+    const encontrado = socios.find((s) => String(s.idSocio) === idSocioPreseleccionado);
+    if (encontrado) {
+      seleccionarSocio(encontrado);
+    } else {
+      showSnack('No se encontró el socio a cobrar. Buscalo en la lista.', colors.statusWarn);
+    }
+    setParametros({}, { replace: true });
+  }, [idSocioPreseleccionado, socios, tiposMembresia, seleccionarSocio, setParametros, showSnack]);
 
   // Promociones VIGENTES nada más: el mostrador no tiene por qué poder elegir
   // una de enero en marzo. El backend igual la rechazaría, pero ofrecerla y

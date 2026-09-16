@@ -338,8 +338,10 @@ siguiente y fallan por el escenario, no por un bug. Ya no se hace a mano:
 .venv/Scripts/python.exe pruebas/vaciar_base.py --si   # lo hace
 ```
 
-La base "vacía" son 6 filas: Persona + Dueno del titular, Sede Central, 2 tipos
-de membresía y la cuenta `dueno` (que nace con `debe_cambiar_password`, así que
+La base "vacía" son 9 filas: Persona + Dueno del titular, Sede Central, 2 tipos
+de membresía, las 3 franjas laborales (Mañana/Tarde/Noche — sin ellas no se puede
+dar de alta un Recepcionista, y no hay pantalla para crearlas) y la cuenta
+`dueno` (que nace con `debe_cambiar_password`, así que
 el primer login pide cambiarla — la inicial está en `DUENO_INICIAL_PASSWORD` del
 `.env`).
 
@@ -435,7 +437,7 @@ estar, y confundirlos hace perder tiempo o pisar trabajo ajeno.
 
 | | Cuándo | Cómo se ve |
 |---|---|---|
-| **Entrega** | 6 filas | Las pantallas están vacías. Sólo existe la cuenta `dueno` |
+| **Entrega** | 9 filas | Las pantallas están vacías. Sólo existe la cuenta `dueno` (más las 3 franjas) |
 | **Demo** | ~70 filas | 4 empleados, 3 socios, rutina, patologías, promociones |
 
 Para saber en cuál estás, desde `backend/`:
@@ -444,7 +446,7 @@ Para saber en cuál estás, desde `backend/`:
 .venv/Scripts/python.exe pruebas/vaciar_base.py     # SIN --si: sólo informa
 ```
 
-Lista las tablas con datos y no toca nada. Con `--si` la deja en las 6 filas
+Lista las tablas con datos y no toca nada. Con `--si` la deja en las 9 filas
 de entrega; `pruebas/escenario_demo.py` la vuelve a llenar.
 
 > **Las suites necesitan la base VACÍA y la dejan escrita.** Hay que vaciar

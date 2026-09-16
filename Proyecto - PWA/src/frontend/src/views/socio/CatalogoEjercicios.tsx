@@ -17,9 +17,23 @@ import { VerTecnica } from './VerTecnica';
 
 interface CatalogoEjerciciosProps {
   onCerrar: () => void;
+  /**
+   * De dónde se trae el catálogo. Por defecto, el endpoint del PORTAL
+   * (/portal/mi-rutina/ejercicios), que exige la sección MI_RUTINA.
+   *
+   * Existe porque este componente también lo abre el PERSONAL desde Rutinas,
+   * y ahí el del portal contesta 403: el Dueño o el Entrenador no tienen
+   * "Mi rutina", que es una pantalla del socio. Rutinas le pasa el endpoint de
+   * gestión (/rutinas/ejercicios), que devuelve lo mismo pero exige la sección
+   * RUTINAS. Mismo catálogo, dos puertas, cada rol por la suya.
+   */
+  cargar?: () => Promise<EjercicioCatalogo[]>;
 }
 
-export function CatalogoEjercicios({ onCerrar }: CatalogoEjerciciosProps) {
+export function CatalogoEjercicios({
+  onCerrar,
+  cargar = listarEjerciciosCatalogo,
+}: CatalogoEjerciciosProps) {
   const [catalogo, setCatalogo] = useState<EjercicioCatalogo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState('');
@@ -28,11 +42,11 @@ export function CatalogoEjercicios({ onCerrar }: CatalogoEjerciciosProps) {
 
   useEffect(() => {
     let cancelado = false;
-    listarEjerciciosCatalogo()
+    cargar()
       .then((c) => { if (!cancelado) setCatalogo(c); })
       .catch((e: unknown) => { if (!cancelado) setError(mensajeDeError(e)); });
     return () => { cancelado = true; };
-  }, []);
+  }, [cargar]);
 
   const grupos = useMemo(() => agruparCatalogo(catalogo, busqueda), [catalogo, busqueda]);
 

@@ -25,6 +25,7 @@ infinito, y mostrar "+100%" cuando se pasó de 0 a 1 socio es engañoso.
 """
 
 from datetime import date, datetime, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func
@@ -33,8 +34,10 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import Membresia, Pago, Persona, Socio, Turno
 from permisos import Accion, Seccion
-from schemas import DashboardStats, EventoActividad, Metrica, SocioResumen
-from security import Sesion, obtener_sesion, requiere_seccion
+from schemas import (
+    DashboardStats, EventoActividad, IngresosPorPeriodo, Metrica, PuntoIngresos, SocioResumen,
+)
+from security import Sesion, obtener_sesion, requiere_accion, requiere_seccion
 from permisos import puede_accion
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
@@ -150,6 +153,88 @@ def estadisticas(
         clasesHoy=Metrica(valor=clases_hoy, deltaPorcentual=_delta(clases_hoy, clases_ayer)),
         nuevosMes=Metrica(valor=nuevos, deltaPorcentual=_delta(nuevos, nuevos_previo)),
     )
+
+
+# =============================================================================
+# INGRESOS POR PERÍODO — el gráfico del Dueño
+# =============================================================================
+
+# Cuántas barras muestra cada escala. Es lo que se mira en un dashboard: el
+# último mes día por día, el último año mes por mes, y los últimos años. Un
+# período más largo no entra legible en una tarjeta.
+PERIODOS_POR_ESCALA = {"dia": 30, "mes": 12, "anio": 5}
+
+MESES_CORTOS = ["ene", "feb", "mar", "abr", "may", "jun",
+                "jul", "ago", "sep", "oct", "nov", "dic"]
+
+
+def _restar_meses(referencia: date, meses: int) -> date:
+    """Primer día del mes que está `meses` meses antes de `referencia`."""
+    total = referencia.year * 12 + (referencia.month - 1) - meses
+    return date(total // 12, total % 12 + 1, 1)
+
+
+@router.get("/ingresos", response_model=IngresosPorPeriodo)
+def ingresos_por_periodo(
+    escala: Literal["dia", "mes", "anio"] = "dia",
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.VER_INGRESOS)),
+):
+    """
+    Ingresos agrupados por día, mes o año, para el gráfico del dashboard.
+
+    Protegido por la ACCIÓN `verIngresos` y no sólo por la sección: el
+    Recepcionista entra al dashboard, pero la facturación es dato de negocio.
+    Mismo criterio que `ingresosMes` en /stats, sólo que acá no hay nada que
+    mostrarle en cero, así que directamente se le niega.
+
+    Mismo criterio de suma que /stats: sólo pagos CONFIRMADOS. Uno pendiente o
+    reembolsado no es plata que entró.
+
+    La agrupación la hace la BASE (date_trunc + group by) y no Python: con un
+    año de pagos serían miles de filas viajando desde São Paulo para devolver
+    doce números.
+    """
+    hoy = date.today()
+    cantidad = PERIODOS_POR_ESCALA[escala]
+
+    # Los inicios de cada período, del más viejo al más nuevo.
+    if escala == "dia":
+        inicios = [hoy - timedelta(days=i) for i in range(cantidad - 1, -1, -1)]
+        unidad = "day"
+    elif escala == "mes":
+        inicios = [_restar_meses(hoy, i) for i in range(cantidad - 1, -1, -1)]
+        unidad = "month"
+    else:
+        inicios = [date(hoy.year - i, 1, 1) for i in range(cantidad - 1, -1, -1)]
+        unidad = "year"
+
+    periodo = func.date_trunc(unidad, Pago.fecha_pago)
+    filas = (
+        db.query(periodo, func.sum(Pago.monto))
+        .filter(Pago.estado == "CONFIRMADO",
+                Pago.fecha_pago >= datetime.combine(inicios[0], datetime.min.time()))
+        .group_by(periodo)
+        .all()
+    )
+    monto_por_inicio = {inicio.date(): float(monto or 0) for inicio, monto in filas}
+
+    def etiqueta(d: date) -> str:
+        if escala == "dia":
+            return f"{d.day:02d}/{d.month:02d}"
+        if escala == "mes":
+            return f"{MESES_CORTOS[d.month - 1]} {d.year % 100:02d}"
+        return str(d.year)
+
+    # Todos los períodos, también los que quedaron en cero: ver el comentario
+    # de IngresosPorPeriodo.puntos.
+    puntos = [PuntoIngresos(periodo=d, etiqueta=etiqueta(d),
+                            monto=monto_por_inicio.get(d, 0.0))
+              for d in inicios]
+
+    return IngresosPorPeriodo(escala=escala,
+                              total=round(sum(p.monto for p in puntos), 2),
+                              puntos=puntos)
 
 
 @router.get("/actividad", response_model=list[EventoActividad])

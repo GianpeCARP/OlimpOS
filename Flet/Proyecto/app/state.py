@@ -55,6 +55,12 @@ class AppState:
         # momento NO hay sesión ni token: la API negó el acceso a propósito.
         self.username_pendiente_cambio: str | None = None
 
+        # Socio a abrir en Cobros al entrar. Lo escribe el alta de socio con
+        # "Cobrar ahora" y lo consume CobrosView en su __init__, que lo vuelve
+        # a None. Vive acá y no como argumento de navigate() porque el router
+        # sólo recibe la ruta. Gemelo del ?socio=<id> de la PWA.
+        self.socio_a_cobrar: int | None = None
+
     # ── Autenticación ─────────────────────────────────────────────────────────
 
     def login(self, username: str, password: str) -> dict:
@@ -572,6 +578,23 @@ class AppState:
 
     # ── Dashboard ─────────────────────────────────────────────────────────────
 
+    def get_ingresos_por_periodo(self, escala: str = "dia") -> dict:
+        """
+        Ingresos agrupados para el gráfico del dashboard (sólo el Dueño).
+
+        Si el pedido falla devuelve una forma vacía y NO None: la vista hace
+        cuentas con los puntos (el máximo, la altura de cada barra), y con None
+        reventaría al construirse — la trampa 7 del CLAUDE.md.
+        """
+        datos = self._datos(api_client.obtener_ingresos_por_periodo(escala), None)
+        if not datos:
+            return {"total": 0, "puntos": []}
+        return {
+            "total": datos.get("total", 0),
+            "puntos": [{"etiqueta": p.get("etiqueta", ""), "monto": p.get("monto", 0)}
+                       for p in datos.get("puntos", [])],
+        }
+
     def get_dashboard_stats(self) -> dict:
         """
         Las cuatro métricas de la portada.
@@ -1050,6 +1073,9 @@ class AppState:
             "password_temporal": d.get("password_temporal"),
             "texto_credenciales": d.get("texto_credenciales"),
             "numero_socio": d.get("numero_socio"),
+            # Para "Cobrar ahora": Cobros necesita saber a quién abrir.
+            "id_socio": d.get("id_socio"),
+            "email_enviado": d.get("email_enviado", False),
         }
 
     def dar_de_baja_socio(self, id_socio: int, tipo: str = "VOLUNTARIA",
