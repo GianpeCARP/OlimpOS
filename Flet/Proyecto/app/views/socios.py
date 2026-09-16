@@ -2,6 +2,8 @@
 # views/socios.py — Gestión de socios del gimnasio (CON FILTRADO ACTIVO)
 # =============================================================================
 
+from datetime import date
+
 import flet as ft
 from app.config import Colors, Radius, Routes  # Paleta, radios y rutas
 from app.permisos import Accion                # Qué botones se dibujan (espejo de SociosView.tsx)
@@ -257,6 +259,16 @@ class SociosView:
                     ft.IconButton(ft.Icons.FITNESS_CENTER_ROUNDED, icon_color=Colors.PRIMARY_VOLT,
                                   icon_size=18, tooltip="Entrenadores a cargo",
                                   on_click=lambda e, x=s: self._entrenadores(x)),
+                    # Los teléfonos los ve todo el que llega a la grilla: saber
+                    # cómo llamar a un socio no es un dato reservado, y el
+                    # entrenador que lo tiene a cargo es justamente quien más
+                    # lo necesita. Lo que se restringe son los controles de
+                    # agregar y borrar, adentro del diálogo.
+                    ft.IconButton(
+                        ft.Icons.PHONE_ROUNDED, icon_color=Colors.INFO,
+                        icon_size=18, tooltip="Teléfonos",
+                        on_click=lambda e, x=s: self._telefonos(x),
+                    ),
                     # El botón se OMITE, no se deshabilita, para quien no tenga
                     # la acción. Un botón gris que no responde igual delata que
                     # el socio tiene algo cargado, y el punto de que el
@@ -712,6 +724,164 @@ class SociosView:
         show_snack(self.page, resultado["mensaje"], Colors.SUCCESS)
         self._entrenadores(socio)
 
+    # ── Teléfonos ─────────────────────────────────────────────────────────────
+    #
+    # Gemelo de TelefonosModal.tsx. La tabla Telefono existe desde el primer
+    # día justamente porque una persona tiene varios números —el celular, el de
+    # la casa, el del trabajo— pero la ficha tenía UN campo y el backend le
+    # pisaba el principal al guardar.
+    #
+    # Va aparte del formulario de la ficha porque cargar un segundo número pasa
+    # en otro momento —el socio lo dicta en el mostrador— y no tiene por qué
+    # reenviar nombre, email y objetivo en el mismo pedido, que es como se
+    # pisan datos sin querer.
+
+    def _telefonos(self, socio: dict):
+        telefonos = app_state.get_telefonos_de_socio(socio["id"])
+        puede = app_state.puede(Accion.ALTA_BAJA_SOCIOS)
+
+        numero_ref = ft.Ref[ft.TextField]()
+        tipo_ref   = ft.Ref[ft.Dropdown]()
+
+        contenido = [
+            ft.Text("El principal es el que aparece en la ficha y al que se "
+                    "llama primero.", color=Colors.TEXT_SECONDARY, size=12),
+            ft.Container(height=8),
+        ]
+
+        if not telefonos:
+            contenido.append(ft.Text("No tiene ningún teléfono cargado.",
+                                     color=Colors.TEXT_SECONDARY, size=13))
+
+        for t in telefonos:
+            acciones = []
+            if puede and not t["principal"]:
+                acciones.append(ft.IconButton(
+                    ft.Icons.STAR_OUTLINE_ROUNDED, icon_color=Colors.TEXT_MUTED,
+                    icon_size=16, tooltip="Marcarlo como principal",
+                    on_click=lambda e, x=t: self._resolver_telefonos(
+                        app_state.marcar_telefono_principal(socio["id"], x),
+                        dlg, socio),
+                ))
+            if puede:
+                acciones.append(ft.IconButton(
+                    ft.Icons.DELETE_OUTLINE_ROUNDED, icon_color=Colors.TEXT_MUTED,
+                    icon_size=16, tooltip="Borrarlo de la ficha",
+                    on_click=lambda e, x=t: self._confirmar_borrar_telefono(socio, x, dlg),
+                ))
+
+            contenido.append(ft.Row([
+                ft.Icon(ft.Icons.PHONE_ROUNDED, color=Colors.INFO, size=16),
+                ft.Column([
+                    ft.Text(t["numero"], color=Colors.TEXT_PRIMARY, size=14),
+                    ft.Text(("Fijo" if t["tipo"] == "FIJO" else "Celular")
+                            + (" · principal" if t["principal"] else ""),
+                            color=Colors.TEXT_SECONDARY, size=12),
+                ], spacing=1, tight=True, expand=True),
+                *acciones,
+            ], spacing=8))
+
+        if puede:
+            contenido += [
+                ft.Container(height=12),
+                input_field("Agregar teléfono", "Ej: 3415551234",
+                            ref=numero_ref, icon=ft.Icons.PHONE_OUTLINED),
+                ft.Container(height=8),
+                ft.Dropdown(
+                    ref=tipo_ref,
+                    label="Tipo",
+                    options=[ft.dropdown.Option(key="CELULAR", text="Celular"),
+                             ft.dropdown.Option(key="FIJO", text="Fijo")],
+                    value="CELULAR",
+                    color=Colors.TEXT_PRIMARY, bgcolor=Colors.BG_INPUT,
+                    border_color=Colors.BORDER, focused_border_color=Colors.ACCENT,
+                    border_radius=10,
+                ),
+            ]
+
+        acciones_dlg = []
+        if puede:
+            acciones_dlg.append(ft.TextButton(
+                "Agregar", style=ft.ButtonStyle(color=Colors.ACCENT),
+                on_click=lambda e: self._agregar_telefono(socio, numero_ref,
+                                                          tipo_ref, dlg)))
+        acciones_dlg.append(ft.TextButton(
+            "Cerrar", style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+            on_click=lambda e: close_dialog(self.page, dlg)))
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f"Teléfonos de {socio['nombre']}",
+                          color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
+            bgcolor=Colors.BG_CARD,
+            content=ft.Container(
+                width=440,
+                height=420,
+                content=ft.Column(contenido, spacing=8, tight=True,
+                                  scroll=ft.ScrollMode.AUTO),
+            ),
+            actions=acciones_dlg,
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        open_dialog(self.page, dlg)
+
+    def _agregar_telefono(self, socio: dict, numero_ref, tipo_ref, dlg):
+        numero = self._texto(numero_ref)
+        if not numero:
+            show_snack(self.page, "Escribí un número.", Colors.STATUS_DANGER)
+            return
+        # `principal` no se manda: el backend marca principal al PRIMERO de la
+        # ficha aunque nadie se lo pida, porque una ficha con teléfonos donde
+        # ninguno es el principal no muestra ninguno.
+        tipo = (tipo_ref.current.value if tipo_ref.current else None) or "CELULAR"
+        self._resolver_telefonos(
+            app_state.agregar_telefono(socio["id"], numero, tipo), dlg, socio)
+
+    def _confirmar_borrar_telefono(self, socio: dict, telefono: dict, padre):
+        close_dialog(self.page, padre)
+
+        confirmacion = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f"¿Borrar el {telefono['numero']}?",
+                          color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
+            bgcolor=Colors.BG_CARD,
+            content=ft.Text(
+                "Es el teléfono principal. Si quedan otros cargados, el más "
+                "viejo pasa a ocupar su lugar."
+                if telefono["principal"] else "Se saca el número de la ficha.",
+                color=Colors.TEXT_SECONDARY, size=14),
+            actions=[
+                ft.TextButton("Cancelar",
+                              style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                              on_click=lambda e: self._volver_a_telefonos(confirmacion, socio)),
+                ft.TextButton("Borrar",
+                              style=ft.ButtonStyle(color=Colors.DANGER),
+                              on_click=lambda e: self._resolver_telefonos(
+                                  app_state.borrar_telefono(socio["id"], telefono["id"]),
+                                  confirmacion, socio)),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        open_dialog(self.page, confirmacion)
+
+    def _volver_a_telefonos(self, dlg, socio: dict):
+        """Cancelar en la confirmación devuelve a la lista, no a la grilla."""
+        close_dialog(self.page, dlg)
+        self._telefonos(socio)
+
+    def _resolver_telefonos(self, resultado: dict, dlg, socio: dict):
+        """
+        Muestra el resultado y REABRE la lista con los datos frescos.
+
+        Igual que con entrenadores y patologías: cargar teléfonos es una tarea
+        de a varios —se agrega el celular y después el de la casa— y cerrar la
+        ventana en cada paso obligaría a volver a buscar al socio en la grilla.
+        """
+        close_dialog(self.page, dlg)
+        show_snack(self.page, resultado["mensaje"],
+                   Colors.SUCCESS if resultado["ok"] else Colors.STATUS_DANGER)
+        self._telefonos(socio)
+
     # ── Historial médico ──────────────────────────────────────────────────────
     #
     # Esta pantalla no la ve todo el que llega a Socios. El Recepcionista entra
@@ -754,6 +924,15 @@ class SociosView:
             fecha = self._fecha_iso(self._texto(fecha_ref))
             if fecha is False:
                 show_snack(self.page, "La fecha va como dd/mm/aaaa.",
+                           Colors.STATUS_DANGER)
+                return
+            # No se diagnostica algo que todavía no pasó. El backend lo
+            # rechaza igual; avisar acá evita el viaje y da un mensaje que
+            # dice QUÉ está mal, en vez del error de formato genérico.
+            # Las dos fechas son ISO con ceros a la izquierda, así que
+            # compararlas como texto ordena igual que como fechas.
+            if fecha and fecha > date.today().isoformat():
+                show_snack(self.page, "La fecha de diagnóstico no puede ser futura.",
                            Colors.STATUS_DANGER)
                 return
             self._resolver_patologias(
@@ -883,6 +1062,11 @@ class SociosView:
             fecha = self._fecha_iso(self._texto(fecha_ref))
             if fecha is False:
                 show_snack(self.page, "La fecha va como dd/mm/aaaa.",
+                           Colors.STATUS_DANGER)
+                return
+            # Misma regla que al agregarla: no puede ser futura.
+            if fecha and fecha > date.today().isoformat():
+                show_snack(self.page, "La fecha de diagnóstico no puede ser futura.",
                            Colors.STATUS_DANGER)
                 return
             resultado = app_state.editar_patologia_de_socio(

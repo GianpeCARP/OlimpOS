@@ -11,7 +11,11 @@ export function ConfirmDialog() {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    // z-[70] y no z-50: los modales de las pantallas (fichas, formularios) son
+    // z-50 y se montan DESPUÉS en el DOM, así que con el mismo z el diálogo
+    // quedaba DETRÁS — "¿Quitar X de la ficha?" aparecía tapado por la ficha y
+    // había que cerrarla para poder confirmar.
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60">
       <div className="w-full max-w-sm rounded-lg border border-border-idle bg-surface-card p-6">
         <h2 className="font-heading text-lg font-semibold text-text-main">{title}</h2>
         <p className="mt-2 font-body text-sm text-text-secondary">{message}</p>

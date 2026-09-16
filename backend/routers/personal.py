@@ -92,6 +92,13 @@ def _especialidad_de(empleado: Empleado):
     return None, None
 
 
+def _telefono_principal(persona) -> str | None:
+    """El principal de la persona (o el primero que tenga), o None."""
+    telefonos = sorted(persona.telefonos or [],
+                       key=lambda t: (not bool(t.principal), t.id_telefono))
+    return telefonos[0].numero if telefonos else None
+
+
 def _a_empleado_out(empleado: Empleado) -> EmpleadoOut:
     persona = empleado.persona
     rol, fila = _especialidad_de(empleado)
@@ -120,6 +127,7 @@ def _a_empleado_out(empleado: Empleado) -> EmpleadoOut:
         nombre=persona.nombre,
         apellido=persona.apellido,
         email=persona.email,
+        telefono=_telefono_principal(persona),
         tiene_cuenta=persona.usuario is not None,
     )
 
@@ -139,7 +147,7 @@ def listar_personal(
     # routers/usuarios.py.
     empleados = (db.query(Empleado)
                  .options(
-                     selectinload(Empleado.persona),
+                     selectinload(Empleado.persona).selectinload(Persona.telefonos),
                      selectinload(Empleado.entrenador),
                      selectinload(Empleado.nutricionista),
                      selectinload(Empleado.recepcionista),

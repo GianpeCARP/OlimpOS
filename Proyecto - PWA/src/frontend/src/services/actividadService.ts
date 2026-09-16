@@ -110,6 +110,9 @@ interface AsistenciaApi {
   fecha_hora_ingreso: string;
   fecha_hora_egreso?: string | null;
   metodo_registro: 'RFID' | 'MANUAL';
+  // Qué número de ingreso del día es para ese socio (1 = el primero). Lo
+  // cuenta el backend al responder; no hay columna. Ver AsistenciaView.tsx.
+  ingreso_numero?: number | null;
 }
 
 interface PuedeComprarApi {
@@ -653,6 +656,8 @@ export interface AsistenciaRegistrada {
   nombreSocio: string;
   fechaHoraIngreso: string;
   metodoRegistro: 'RFID' | 'MANUAL';
+  /** 1 = el primer ingreso del día de ese socio; 2, 3… los repetidos. */
+  ingresoNumero: number | null;
 }
 
 function aAsistenciaRegistrada(a: AsistenciaApi): AsistenciaRegistrada {
@@ -661,6 +666,7 @@ function aAsistenciaRegistrada(a: AsistenciaApi): AsistenciaRegistrada {
     nombreSocio: a.socio,
     fechaHoraIngreso: a.fecha_hora_ingreso,
     metodoRegistro: a.metodo_registro,
+    ingresoNumero: a.ingreso_numero ?? null,
   };
 }
 
@@ -671,23 +677,23 @@ export async function getAsistenciasDeHoy(): Promise<AsistenciaRegistrada[]> {
 }
 
 /**
- * Fichaje por tarjeta.
+ * Registra un ingreso.
+ *
+ * Es la ÚNICA forma de fichar: el fichaje por tarjeta se retiró de las dos
+ * apps (ver el encabezado de AsistenciaView.tsx). El backend todavía acepta
+ * `codigo_rfid`, pero ninguna pantalla lo manda.
  *
  * Ojo: el backend registra el ingreso AUNQUE el socio tenga deuda o la cuota
  * vencida, y devuelve una advertencia. Es una decisión de negocio — dejar a
  * alguien afuera lo decide una persona en el mostrador, no un torniquete — y
  * además, si no se registrara, el gimnasio perdería el dato de que esa
  * persona estuvo.
+ *
+ * Tampoco rechaza el ingreso repetido: no hay tope diario ni anti-duplicado.
+ * El repetido se registra igual y vuelve con `ingresoNumero` en 2, 3… para que
+ * la pantalla lo marque al lado del nombre. Ver el comentario de
+ * routers/asistencia.py.
  */
-export async function ficharRFID(codigoRfid: string): Promise<AsistenciaRegistrada> {
-  const datos = await pedir<{ asistencia: AsistenciaApi }>('/asistencia/fichar', {
-    metodo: 'POST',
-    cuerpo: { codigo_rfid: codigoRfid },
-  });
-  return aAsistenciaRegistrada(datos.asistencia);
-}
-
-/** Carga manual, para quien se olvidó la tarjeta. */
 export async function registrarAsistenciaManual(
   idSocio: number,
   _idUsuarioActor?: number,
@@ -697,4 +703,14 @@ export async function registrarAsistenciaManual(
     cuerpo: { id_socio: idSocio },
   });
   return aAsistenciaRegistrada(datos.asistencia);
+}
+
+/**
+ * Borra un ingreso mal cargado ("desfichar").
+ *
+ * El backend sólo deja borrar los de HOY: corregir el error del momento es
+ * trabajo de mostrador, reescribir la asistencia de la semana pasada no.
+ */
+export async function deshacerFichaje(idAsistencia: number): Promise<void> {
+  await pedir<void>(`/asistencia/${idAsistencia}`, { metodo: 'DELETE' });
 }

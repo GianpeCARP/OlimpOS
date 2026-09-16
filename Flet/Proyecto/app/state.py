@@ -424,6 +424,10 @@ class AppState:
                 "apellido": e["apellido"],
                 "dni": e.get("dni", ""),
                 "email": e.get("email") or "",
+                # El backend lo devuelve aplanado desde la tabla Telefono. Sin
+                # esto, editar un empleado reabría el campo vacío y guardar de
+                # nuevo le borraba el teléfono.
+                "telefono": e.get("telefono") or "",
                 "titulo": e.get("titulo") or "",
                 "especialidad": e.get("especialidad") or "",
                 "matricula": e.get("matricula") or "",
@@ -735,6 +739,9 @@ class AppState:
                 "socio": a.get("socio", "—"),
                 "hora": self._hora(a.get("fecha_hora_ingreso")),
                 "metodo": "RFID" if a.get("metodo_registro") == "RFID" else "Manual",
+                # Qué número de ingreso del día es: 1 el primero, 2 y 3 los
+                # repetidos, que la pantalla marca al lado del nombre.
+                "numero": a.get("ingreso_numero"),
             }
             for a in datos
         ]
@@ -824,25 +831,33 @@ class AppState:
 
     # ── Asistencia ────────────────────────────────────────────────────────────
 
-    def fichar_rfid(self, codigo: str) -> dict:
+    def fichar_manual(self, id_socio: int) -> dict:
         """
-        Ficha por tarjeta.
+        Registra un ingreso. Es la única forma de fichar: el fichaje por
+        tarjeta se retiró de las dos apps (ver views/asistencia.py).
 
         Puede volver ok=True con una `advertencia`: el backend registra el
         ingreso AUNQUE el socio deba o tenga la cuota vencida. Es una decisión
         de negocio — dejar a alguien afuera lo decide una persona en el
         mostrador, no un torniquete — y además, si no se registrara, el
         gimnasio perdería el dato de que esa persona estuvo.
-        """
-        return self._fichaje(api_client.fichar_rfid(codigo))
 
-    def fichar_manual(self, id_socio: int) -> dict:
-        """Carga manual, para quien se olvidó la tarjeta."""
+        Lo mismo vale para el ingreso repetido: tampoco se rechaza. Vuelve con
+        `numero` en 2, 3… y la pantalla lo marca al lado del nombre.
+        """
         return self._fichaje(api_client.fichar_manual(id_socio))
+
+    def deshacer_fichaje(self, id_asistencia: int) -> dict:
+        """Borra un ingreso mal cargado. El backend sólo deja los de hoy."""
+        return self._resultado(api_client.deshacer_fichaje(id_asistencia),
+                               "Ingreso borrado.")
 
     def _fichaje(self, respuesta: dict) -> dict:
         if not respuesta.get("ok"):
-            return {"ok": False, "mensaje": respuesta.get("error", "No se pudo fichar.")}
+            return {
+                "ok": False,
+                "mensaje": respuesta.get("error", "No se pudo fichar."),
+            }
 
         datos = respuesta["data"]
         a = datos.get("asistencia", {})
@@ -856,6 +871,7 @@ class AppState:
                 "socio": a.get("socio", "—"),
                 "hora": self._hora(a.get("fecha_hora_ingreso")),
                 "metodo": "RFID" if a.get("metodo_registro") == "RFID" else "Manual",
+                "numero": a.get("ingreso_numero"),
             },
         }
 
@@ -1038,6 +1054,48 @@ class AppState:
     def reactivar_socio(self, id_socio: int) -> dict:
         return self._resultado(api_client.reactivar_socio(id_socio), "Socio reactivado.")
 
+    # ── Teléfonos de la ficha ─────────────────────────────────────────────────
+
+    def get_telefonos_de_socio(self, id_socio: int) -> list[dict]:
+        """
+        Todos los números del socio, el principal primero (el orden lo decide
+        el backend). `SocioOut.telefono` trae sólo el principal, aplanado para
+        la grilla; esto es la lista completa.
+        """
+        datos = self._datos(api_client.telefonos_de_socio(id_socio), [])
+        return [{
+            "id": t["id_telefono"],
+            "numero": t.get("numero", ""),
+            # La columna admite null: se muestra como celular, que es el caso
+            # común y el único al que se le puede mandar un WhatsApp.
+            "tipo": t.get("tipo") or "CELULAR",
+            "principal": bool(t.get("principal")),
+        } for t in datos]
+
+    def agregar_telefono(self, id_socio: int, numero: str,
+                         tipo: str = "CELULAR") -> dict:
+        return self._resultado(
+            api_client.agregar_telefono(id_socio, {"numero": numero, "tipo": tipo,
+                                                   "principal": False}),
+            "Teléfono agregado.")
+
+    def marcar_telefono_principal(self, id_socio: int, telefono: dict) -> dict:
+        """
+        El PUT pide el cuerpo completo, así que se reenvían número y tipo tal
+        como están: lo único que cambia es cuál queda marcado.
+        """
+        return self._resultado(
+            api_client.editar_telefono(id_socio, telefono["id"], {
+                "numero": telefono["numero"],
+                "tipo": telefono["tipo"],
+                "principal": True,
+            }),
+            "Ahora es el teléfono principal.")
+
+    def borrar_telefono(self, id_socio: int, id_telefono: int) -> dict:
+        return self._resultado(api_client.borrar_telefono(id_socio, id_telefono),
+                               "Teléfono borrado.")
+
     # ── Personal ──────────────────────────────────────────────────────────────
 
     def alta_empleado(self, datos: dict) -> dict:
@@ -1051,6 +1109,13 @@ class AppState:
             "usuario": d.get("username"),
             "password_temporal": d.get("password_temporal"),
             "legajo": d.get("legajo"),
+            # El mensaje ya redactado que recibe el empleado (notificaciones.py).
+            # Es el mismo que el backend manda por mail, y la pantalla lo usa
+            # para el botón de WhatsApp: así el texto —incluida la advertencia
+            # de que la contraseña es de un solo uso— no se reescribe en cada
+            # app por su cuenta.
+            "texto_credenciales": d.get("texto_credenciales"),
+            "email_enviado": d.get("email_enviado", False),
         }
 
     def get_entrenadores(self) -> list[dict]:

@@ -4,6 +4,8 @@ import { useUiStore } from '../../store/uiStore';
 // AppLayout: LoginView no pasa por ese layout y también necesita mostrar
 // mensajes — los errores de credenciales salen por acá) y lee del uiStore
 // global — equivalente a page.snack_bar en Flet.
+// Por encima de todo (modales z-50, ConfirmDialog z-[70]): un aviso que
+// aparece detrás del panel que lo disparó no se lee.
 export function Snackbar() {
   const { open, message, color } = useUiStore((s) => s.snackbar);
   const closeSnack = useUiStore((s) => s.closeSnack);

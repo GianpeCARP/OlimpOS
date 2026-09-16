@@ -39,6 +39,11 @@ juan.perez            Demo2026!             Socio          Dos entrenadores a la
 lucia.marino          Demo2026!             Socio          Uno activo y uno finalizado.
 nico.sosa             Demo2026!             Socio          Dos patologías cargadas.
 
+CUENTAS CREADAS A MANO DURANTE LAS PRUEBAS (2026-09-15)
+-------------------------------------------------------
+pato.toranzo           GobyRzwsHegDWd93   Empleado (contraseña TEMPORAL: el
+                                          primer ingreso pide cambiarla)
+
 Todas menos `dueno` las crea pruebas/escenario_demo.py, y desaparecen al vaciar
 la base. Volver a cargarlas es correr ese script de nuevo (necesita la base
 recién vaciada; si encuentra socios, avisa y no hace nada).

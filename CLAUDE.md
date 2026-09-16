@@ -36,10 +36,15 @@
 >   derivan de las fechas. Nuevas tablas: `Contacto_Emergencia`, `Franja_Laboral`,
 >   `Registro_Ejercicio`, `Catalogo_Comida`, `Registro_Comida`.
 >
-> **Estado**: backend sincronizado, booteando, con las **8 suites en verde**
-> (`test_deudas` se retiró: probaba una feature eliminada). **Flet y PWA todavía NO
-> están adaptados** a estos cambios de contrato — es lo que queda pendiente.
-> El detalle del recorrido está en `docs/RESUMEN-PARA-CLAUDE-CODE.md`.
+> **Estado (revisado el 2026-09-15)**: backend sincronizado y booteando.
+> **Flet y la PWA YA ESTÁN adaptados** a estos cambios de contrato. La nota vieja
+> decía lo contrario y era cierta el 2026-09-12, pero se hizo después: hoy las dos
+> apps están completas y el trabajo es corregir lo que aparece probándolas.
+> (`test_deudas` se retiró: probaba una feature eliminada, y el archivo ya no existe.)
+>
+> El porqué del esquema está en `docs/RESUMEN-PARA-CLAUDE-CODE.md`. **Qué falta HOY
+> y dónde estamos parados vive en `docs/ESTADO-ACTUAL.md`**, que es la única fuente
+> que se mantiene al día — este archivo es contexto permanente y envejece mal para eso.
 
 ---
 
@@ -106,8 +111,9 @@ componente `.tsx` de la PWA es gemelo. Si tocás uno, mirá el otro.
 
 **El backend ya existe** y las dos apps están cableadas contra él. Es **Python +
 FastAPI** sobre Neon (decisión ya tomada, no revisitar; no va a ser Node), en
-`backend/`, con **~135 endpoints** y **41 tablas** modeladas (ver el bloque de
-actualización del 2026-09-12 arriba). El DDL (`db/schema.sql`) y Neon coinciden
+`backend/`, con **153 endpoints repartidos en 122 rutas** y **41 tablas** modeladas
+(contado el 2026-09-15 sobre `/openapi.json`; el comando para recontarlo está abajo,
+en "Cómo verificar los cambios"). El DDL (`db/schema.sql`) y Neon coinciden
 nombre por nombre: si agregás una tabla en uno, va en el otro.
 
 Las tres cosas que este archivo daba por pendientes YA NO LO ESTÁN, y conviene
@@ -131,13 +137,13 @@ saberlo porque las notas viejas pedían explícitamente no tocarlas:
   sino una lista suelta — y estaba mal para los cuatro roles. Ahora se deriva.
   Si necesitás mostrar permisos en pantalla, **derivalos**; no los escribas.
 
-Lo que sí falta está en `backend/BITACORA.md` **§13**: sólo Mercado Pago, y no
-depende del código (falta el token, el secreto del webhook y una URL pública).
-El trabajo de rendimiento está en la **§14**, y el circuito más todo lo de
-mobile en la **§15**.
-Los cuatro pendientes que listaba la §12 —UI de patologías, entrenador a cargo
-en la PWA, `Promocion` sin usar y la divergencia de `Consulta_Cruzada`— están
-cerrados.
+**Qué falta se lleva en `docs/ESTADO-ACTUAL.md`**, no acá. En una línea, para que
+no haya que abrirlo si sólo querés el panorama: terminar la lista de correcciones
+que el dueño va anotando mientras prueba (`A CORREGIR PWA .txt`), el **coach con
+IA** (decidido, sin implementar), **Mercado Pago** (falta el token, el secreto del
+webhook y una URL pública — no depende del código) y tres ítems de seguridad que
+quedaron **a propósito** (V-08, V-10 y V-11 en `docs/vulnerabilidades a arreglar.md`;
+las otras están resueltas). El trabajo de rendimiento está más abajo, en su sección.
 
 ---
 
@@ -257,7 +263,7 @@ mismos 44 ms. Las dos únicas palancas son **preguntar menos veces** y **no
 esperar la respuesta**. (Por lo mismo el GIL no molesta: los hilos de precarga
 y refresco esperan red.)
 
-Cuatro cosas ya implementadas que **no hay que desarmar sin leer la §14**:
+Cuatro cosas ya implementadas que **no hay que desarmar sin leer lo de arriba**:
 
 1. **El pool** (`backend/database.py`): `pool_recycle=240` + keepalives de TCP.
    Sin esto las conexiones mueren solas y una request cualquiera paga 825 ms —
@@ -296,9 +302,10 @@ global — el global no tiene las dependencias y da errores que parecen bugs:
 .venv/Scripts/python.exe check_permisos.py         # las 3 copias de la matriz de permisos
 ```
 
-**Las 9 suites de integración** viven en `backend/pruebas/`. No son unitarias:
+**Las 11 suites de integración** viven en `backend/pruebas/`. No son unitarias:
 corren contra Neon de verdad, con el backend levantado y **la base vacía**.
-Cada una arma su propio escenario.
+Cada una arma su propio escenario. (`vaciar_base.py` y `escenario_demo.py` están
+en la misma carpeta y NO son suites.)
 
 > **Antes de correr una suite, verificá contra QUÉ backend estás corriendo.**
 > Un `uvicorn` que no pudo tomar el puerto 8000 muere en silencio y el proceso
@@ -311,12 +318,14 @@ Cada una arma su propio escenario.
 .venv/Scripts/python.exe pruebas/test_una_sola_activa.py
 .venv/Scripts/python.exe pruebas/test_patologias.py
 .venv/Scripts/python.exe pruebas/test_entrenador_a_cargo.py
-.venv/Scripts/python.exe pruebas/test_deudas.py
 .venv/Scripts/python.exe pruebas/test_pago_online.py
 .venv/Scripts/python.exe pruebas/test_portal_socio.py
 .venv/Scripts/python.exe pruebas/test_mi_membresia.py
 .venv/Scripts/python.exe pruebas/test_extension_congelamiento.py
 .venv/Scripts/python.exe pruebas/test_promociones.py
+.venv/Scripts/python.exe pruebas/test_rutina_propia.py
+.venv/Scripts/python.exe pruebas/test_dieta_propia.py
+.venv/Scripts/python.exe pruebas/test_registro_ejercicio.py
 ```
 Ojo: `test_extension_congelamiento` **no imprime** la línea "TODOS LOS CHEQUEOS
 PASARON" — usa otro formato. Mirá su código de salida, no grepées el texto.
@@ -503,12 +512,19 @@ git push origin main
 
 Este archivo es el resumen. El detalle fino vive en varios lugares:
 
-- **`docs/ESTADO-ACTUAL.md`** — ARRANCÁ POR ACÁ: qué se hizo último (portal del
-  socio autosuficiente: contador de reps, rutina/dieta propia, registro de comida,
-  progreso) y qué sigue (coach IA). Es el equivalente versionado de la memoria de
-  Claude Code, que es local a cada máquina y no viaja con el repo.
+- **`docs/ESTADO-ACTUAL.md`** — **ARRANCÁ POR ACÁ, y sobre todo después de un
+  `/clear`.** Tiene índice y cuatro cosas que NO se deducen del código:
+  **"Cómo se maneja el negocio"** (quién cobra qué y por qué existe la caja si el
+  socio paga solo, cuándo un socio queda "vencido", qué decide una persona y qué
+  decide el sistema — leerlo ANTES de proponer cambios de producto, porque varias
+  de esas reglas parecen bugs si no se conocen); **"Cómo estamos trabajando"** (el
+  método actual y las reglas vigentes de la etapa, como no vaciar la base mientras
+  el dueño está probando); qué está hecho y dónde vive; y qué falta. Es el
+  equivalente versionado de la memoria de Claude Code, que es local a cada máquina
+  y no viaja con el repo.
 - **`docs/RESUMEN-PARA-CLAUDE-CODE.md`** — qué cambió en el esquema nuevo y por qué.
-- **`backend/BITACORA.md`** — el recorrido completo del backend (secciones §1–§15).
+- **`docs/olimpos_schema_actual.dbml`** — el esquema de hoy, para abrir en dbdiagram.
+  Verificado contra Neon y contra `db/schema.sql`.
 - La **memoria de Claude Code**, en `C:\Users\Pardini\.claude\projects\<carpeta>\memory\`,
   donde `<carpeta>` deriva del directorio donde abrís la sesión (p. ej.
   `D--OlimpOs` si abrís en `D:\OlimpOs`). OJO: la memoria vieja bajo

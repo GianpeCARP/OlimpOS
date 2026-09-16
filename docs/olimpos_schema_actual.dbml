@@ -1,0 +1,952 @@
+// ============================================================================
+// OlimpOS — esquema REAL de la base (Neon), generado el 2026-09-15
+// leyendo information_schema/pg_catalog. Pegar en https://dbdiagram.io
+// 41 tablas · 13 enums · 66 relaciones
+// ============================================================================
+
+Project OlimpOS {
+  database_type: 'PostgreSQL'
+  Note: 'Sistema de gestión de gimnasio. Fuente de verdad del DDL: db/schema.sql.'
+}
+
+Enum "estado_asignacion" {
+  "ACTIVA"
+  "FINALIZADA"
+  "CANCELADA"
+}
+
+Enum "estado_congelamiento" {
+  "ACTIVO"
+  "FINALIZADO"
+  "CANCELADO"
+}
+
+Enum "estado_inscripcion" {
+  "ACTIVA"
+  "VENCIDA"
+  "CANCELADA"
+}
+
+Enum "estado_membresia" {
+  "ACTIVA"
+  "VENCIDA"
+  "SUSPENDIDA"
+  "CANCELADA"
+}
+
+Enum "estado_pago" {
+  "CONFIRMADO"
+  "PENDIENTE"
+  "CANCELADO"
+  "REEMBOLSADO"
+}
+
+Enum "estado_reserva" {
+  "RESERVADA"
+  "EN_ESPERA"
+  "CANCELADA_SOCIO"
+  "CANCELADA_GIMNASIO"
+}
+
+Enum "estado_turno" {
+  "HABILITADO"
+  "CANCELADO"
+}
+
+Enum "metodo_pago" {
+  "EFECTIVO"
+  "DEBITO"
+  "CREDITO"
+  "TRANSFERENCIA"
+  "BILLETERA_VIRTUAL"
+}
+
+Enum "metodo_registro" {
+  "RFID"
+  "MANUAL"
+}
+
+Enum "origen_congelamiento" {
+  "SOCIO"
+  "GIMNASIO"
+}
+
+Enum "tipo_baja" {
+  "VOLUNTARIA"
+  "MORA"
+  "ADMINISTRATIVA"
+}
+
+Enum "tipo_limite" {
+  "POR_SEMANA"
+  "POR_MES"
+  "CLASE_SUELTA"
+}
+
+Enum "tipo_telefono" {
+  "CELULAR"
+  "FIJO"
+}
+
+Table "Actividad" {
+  "id_actividad" integer [pk, increment]
+  "nombre" varchar(80) [not null, unique]
+  "descripcion" text
+  "cupo_default" integer [not null]
+  "horas_anticipacion_cancelacion" integer [not null, default: 0]
+  "minutos_tolerancia" integer [not null, default: 15]
+  "activo" boolean [default: true]
+
+  Note: '''Catalogo de lo que se puede reservar en un Turno.
+Musculacion es una fila MAS aca, no un caso aparte: asi todo el sistema de turnos,
+reservas e inscripciones funciona igual para las tres actividades sin duplicar
+logica. Sus particularidades se expresan como DATOS: 0 horas de anticipacion
+(acceso libre) y turnos que pueden no tener nadie a cargo.
+
+minutos_tolerancia y horas_anticipacion_cancelacion son COLUMNAS y no constantes del
+codigo: si el dueno tiene que llamar a un programador para cambiar algo suyo, el
+dato esta mal ubicado.
+
+ABIERTO: hoy el codigo detecta el acceso libre por el NOMBRE Musculacion, que es
+fragil. Alternativas: usar horas_anticipacion_cancelacion = 0, o agregar una columna
+es_acceso_libre configurable desde la app.
+CHECKs:
+- chk_actividad_tolerancia: CHECK (((minutos_tolerancia >= 0) AND (minutos_tolerancia <= 180)))'''
+}
+
+Table "Asignacion_Dieta" {
+  "id_asignacion_dieta" integer [pk, increment]
+  "id_socio" integer [not null]
+  "id_dieta" integer [not null]
+  "fecha_inicio" date [not null]
+  "fecha_fin" date
+  "estado" "estado_asignacion" [not null, default: 'ACTIVA']
+  "observaciones" text
+
+  indexes {
+    ("id_socio", "estado") [name: 'Asignacion_Dieta_id_socio_estado_idx']
+    ("id_socio", "id_dieta", "fecha_inicio") [unique, name: 'asignacion_dieta_socio_dieta_fecha_uidx']
+    "id_socio" [unique, name: 'asignacion_dieta_una_activa_uidx', note: '''WHERE (estado = 'ACTIVA'::estado_asignacion)''']
+  }
+
+  Note: '''Almacen "Dietas asignadas" del DFD 4.2. Entidad asociativa HISTORIZADA entre Socio y
+Dieta: no es una N:M pura porque tiene PK subrogada y atributos propios (vigencia,
+estado, observaciones), lo que permite conservar el historial de asignaciones y no
+solo el vinculo actual.'''
+}
+
+Table "Asignacion_Entrenador" {
+  "id_asignacion_entrenador" integer [pk, increment]
+  "id_socio" integer [not null]
+  "id_entrenador" integer [not null]
+  "fecha_inicio" date [not null]
+  "fecha_fin" date
+  "estado" "estado_asignacion" [not null, default: 'ACTIVA']
+
+  indexes {
+    ("id_socio", "id_entrenador", "fecha_inicio") [unique, name: 'asignacion_entrenador_socio_entrenador_fecha_uidx']
+    ("id_socio", "estado") [name: 'asignacion_entrenador_socio_estado_idx']
+  }
+
+  Note: '''Historiza el vinculo Socio - Entrenador.
+ASIMETRIA DELIBERADA: a diferencia de Asignacion_Rutina y Asignacion_Dieta, NO tiene
+indice de "una sola activa por socio". Un socio SI puede tener varios entrenadores a
+la vez (musculacion + funcional). No es un olvido.'''
+}
+
+Table "Asignacion_Rutina" {
+  "id_asignacion_rutina" integer [pk, increment]
+  "id_socio" integer [not null]
+  "id_rutina" integer [not null]
+  "fecha_inicio" date [not null]
+  "fecha_fin" date
+  "estado" "estado_asignacion" [not null, default: 'ACTIVA']
+
+  indexes {
+    ("id_socio", "estado") [name: 'Asignacion_Rutina_id_socio_estado_idx']
+    ("id_socio", "id_rutina", "fecha_inicio") [unique, name: 'Asignacion_Rutina_id_socio_id_rutina_fecha_inicio_idx']
+    "id_socio" [unique, name: 'asignacion_rutina_una_activa_uidx', note: '''WHERE (estado = 'ACTIVA'::estado_asignacion)''']
+  }
+
+  Note: '''PK subrogada: permite historial y varias rutinas por socio a lo largo del tiempo.
+INDICE PARCIAL asignacion_rutina_una_activa_uidx: un socio no puede tener dos rutinas
+VIGENTES a la vez. El historial no cuenta, para eso el indice es parcial. Sin el
+WHERE diria "una sola rutina en toda su vida", que seria absurdo.'''
+}
+
+Table "Asistencia" {
+  "id_asistencia" integer [pk, increment]
+  "id_socio" integer [not null]
+  "id_sede" integer [not null]
+  "id_reserva" integer
+  "fecha_hora_ingreso" timestamp [not null]
+  "fecha_hora_egreso" timestamp
+  "metodo_registro" "metodo_registro" [not null, default: 'MANUAL']
+  "id_registrado_por" integer
+
+  indexes {
+    ("id_sede", "fecha_hora_ingreso") [name: 'Asistencia_id_sede_fecha_hora_ingreso_idx']
+    ("id_socio", "fecha_hora_ingreso") [name: 'Asistencia_id_socio_fecha_hora_ingreso_idx']
+    "id_reserva" [name: 'asistencia_reserva_idx', note: 'WHERE (id_reserva IS NOT NULL)']
+  }
+
+  Note: '''1:N con Reserva: el socio puede entrar y salir varias veces por dia.
+No existen estados ASISTIO / AUSENTE: se DEDUCEN de si hay o no fila aca.
+ABIERTO — id_sede es TRIPLEMENTE derivable: de Socio.id_sede y, cuando hay reserva,
+de Turno.id_sede. Tres fuentes para el mismo hecho, ninguna atada a las otras.
+ABIERTO — contradiccion de politica: hay un docstring en backend/routers/asistencia.py
+("EL SISTEMA INFORMA, NO JUZGA") que registra el ingreso igual con la cuota vencida.
+Eso describe un modelo de FIADO y contradice la politica de que sin membresia activa
+no hay acceso. Es la contradiccion mas importante que queda sin resolver.'''
+}
+
+Table "Baja" {
+  "id_baja" integer [pk, increment]
+  "id_socio" integer [not null]
+  "fecha_baja" date [not null]
+  "tipo" "tipo_baja"
+  "motivo" varchar(250)
+
+  Note: '''DFD 1.1.3 / 6.3.2. Un socio puede reinscribirse, asi que la baja es un HECHO con
+fecha y no un booleano de Socio. Nada se borra: las bajas se marcan.
+PENDIENTE: tipo admite NULL, pero toda baja tiene necesariamente un tipo.'''
+}
+
+Table "Catalogo_Comida" {
+  "id_catalogo_comida" integer [pk, increment]
+  "nombre" varchar(120) [not null, unique]
+  "descripcion" text
+  "calorias" integer
+  "activo" boolean [default: true]
+
+  Note: '''Catalogo de platos. Las calorias, el nombre y la descripcion viven ACA porque
+dependen del PLATO, no de la dieta ni del dia en que aparece. Es exactamente la
+razon por la que Comida.calorias y Comida.descripcion fueron eliminadas.'''
+}
+
+Table "Comida" {
+  "id_comida" integer [pk, increment]
+  "id_dieta" integer [not null]
+  "dia" integer
+  "momento" varchar(30)
+  "id_catalogo_comida" integer
+  "descripcion" varchar(200)
+
+  indexes {
+    ("id_dieta", "dia") [name: 'Comida_id_dieta_dia_idx']
+  }
+
+  Note: '''1FN: una dieta tiene varias comidas, asi que no pueden ser columnas.
+El plato SIEMPRE sale de Catalogo_Comida (id_catalogo_comida es OBLIGATORIO), y por
+eso calorias y descripcion fueron ELIMINADAS de aca. Mientras el catalogo era
+opcional eran redundancia PARCIAL (sobraban solo a veces); al volverse obligatorio
+pasaron a redundancia TOTAL, y recien ahi se pudieron borrar sin perder informacion.
+PENDIENTE: momento es varchar libre, deberia ser enum.
+CHECKs:
+- chk_comida_plato: CHECK (((id_catalogo_comida IS NOT NULL) OR (descripcion IS NOT NULL)))'''
+}
+
+Table "Congelamiento" {
+  "id_congelamiento" integer [pk, increment]
+  "id_membresia" integer [not null]
+  "fecha_inicio" date [not null]
+  "fecha_fin" date [not null]
+  "fecha_reanudacion" date
+  "motivo" varchar(200)
+  "estado" "estado_congelamiento" [not null, default: 'ACTIVO']
+  "fecha_solicitud" timestamp [not null, default: `now()`]
+  "origen" "origen_congelamiento" [not null, default: 'SOCIO']
+
+  indexes {
+    ("origen", "fecha_inicio") [name: 'congelamiento_origen_idx']
+    "id_membresia" [unique, name: 'congelamiento_una_activa_uidx', note: '''WHERE (estado = 'ACTIVO'::estado_congelamiento)''']
+  }
+
+  Note: '''Pausas de membresia. Al reanudar se extiende Membresia.fecha_vencimiento por los
+dias REALMENTE congelados, no por los pedidos: por eso fecha_fin es lo previsto y
+fecha_reanudacion lo efectivo.
+
+origen distingue SOCIO (viaje, lesion) de GIMNASIO (cierre, refaccion). Se mantiene
+porque los dias impuestos por el gimnasio NO deben contar contra un eventual tope
+anual de congelamiento voluntario: seria cobrarle al socio un cierre que no fue
+culpa suya.
+
+ABIERTO — regla de solapados, definida pero NO implementada: cuando llega uno nuevo
+y ya hay otro activo, se conserva el de fecha de fin MAS LEJANA. Si el nuevo termina
+antes, se guarda como CANCELADO. Si termina despues, se corta el actual
+(fecha_reanudacion = inicio del nuevo, estado FINALIZADO) y arranca el nuevo. Cortar
+no es borrar: los dias ya vividos se acreditan. Los dos pasos van en una transaccion,
+con el UPDATE antes del INSERT. Sin esto, el indice unico rechaza el segundo
+congelamiento y el socio queda sin compensacion.
+CHECKs:
+- chk_congelamiento_rango: CHECK ((fecha_fin >= fecha_inicio))'''
+}
+
+Table "Contacto_Emergencia" {
+  "id_contacto_emergencia" integer [pk, increment]
+  "id_persona" integer [not null]
+  "nombre" varchar(150) [not null]
+  "telefono" varchar(30) [not null]
+  "parentesco" varchar(50)
+  "principal" boolean [default: false]
+
+  indexes {
+    "id_persona" [name: 'contacto_emergencia_persona_idx']
+  }
+
+  Note: '''Multivaluado, por eso tabla propia y no columnas de Persona.
+Asimetria deliberada: el telefono va inline aca, mientras que los de Persona
+viven en Telefono. Se justifica porque el contacto de emergencia NO es una
+Persona del sistema: es un dato de contacto externo, no un actor.'''
+}
+
+Table "Dieta" {
+  "id_dieta" integer [pk, increment]
+  "id_nutricionista" integer
+  "nombre" varchar(100) [not null]
+  "objetivo" varchar(100)
+  "calorias_diarias" integer [note: '''Objetivo calorico diario pautado por el nutricionista. NO es la suma de
+Comida.calorias: es la intencion clinica, no el contenido. Que la suma real difiera
+del objetivo es informacion valida, no una inconsistencia. Por eso no viola la regla
+de "no guardar lo derivable": no es derivable de nada.''']
+  "descripcion" text
+  "fecha_creacion" date [default: `CURRENT_DATE`]
+  "activo" boolean [default: true]
+
+  Note: 'DFD 4.1. Es una PLANTILLA, igual que Rutina.'
+}
+
+Table "Dueno" {
+  "id_dueno" integer [pk, increment]
+  "id_persona" integer [not null, unique]
+  "porcentaje_participacion" numeric(5,2)
+
+  Note: 'PENDIENTE: falta CHECK de rango 0-100 en porcentaje_participacion.'
+}
+
+Table "Ejercicio" {
+  "id_ejercicio" integer [pk, increment]
+  "nombre" varchar(100) [not null, unique]
+  "grupo_muscular" varchar(50) [not null]
+  "descripcion" text
+  "url_video" varchar(255)
+  "requiere_maquina" boolean [default: false]
+
+  indexes {
+    "grupo_muscular" [name: 'Ejercicio_grupo_muscular_idx']
+  }
+
+  Note: '''3FN: grupo_muscular depende del EJERCICIO, no de la rutina en que aparece.
+PENDIENTE: grupo_muscular es varchar libre pero TIENE UN INDICE ENCIMA, lo cual
+prueba que se filtra por el: es un catalogo que no se declaro como tal. Sin
+restriccion, Pecho, pecho y PECHO son tres grupos distintos.'''
+}
+
+Table "Empleado" {
+  "id_empleado" integer [pk, increment]
+  "id_persona" integer [not null, unique]
+  "id_sede" integer [not null]
+  "legajo" varchar(20) [unique]
+  "fecha_ingreso" date [not null]
+  "fecha_egreso" date
+  "activo" boolean [default: true]
+
+  Note: '''3FN: el dueno se obtiene via Sede y no se repite aca.
+TRIGGER trg_empleado_completo: todo Empleado debe ser al menos uno de sus cuatro
+subtipos. Es un CONSTRAINT TRIGGER DIFERIDO que valida al COMMIT y no al INSERT,
+para que el alta en dos pasos (Empleado -> subtipo) funcione en una transaccion.'''
+}
+
+Table "Entrenador" {
+  "id_entrenador" integer [pk, increment]
+  "id_empleado" integer [not null, unique]
+  "titulo" varchar(100)
+  "especialidad" varchar(100)
+  "matricula" varchar(50)
+
+  Note: '''Subtipo de Empleado. Arma rutinas de musculacion y hace seguimiento personalizado.
+DISTINTO de Profesor: son subtipos SOLAPADOS, una misma persona puede tener las
+dos filas si cumple los dos roles.'''
+}
+
+Table "Franja_Laboral" {
+  "id_franja_laboral" integer [pk, increment]
+  "nombre" varchar(40) [not null, unique]
+  "hora_desde" time
+  "hora_hasta" time
+  "activo" boolean [default: true]
+}
+
+Table "Horario_Actividad" {
+  "id_horario_actividad" integer [pk, increment]
+  "id_sede" integer [not null]
+  "id_actividad" integer [not null]
+  "dia_semana" integer [not null]
+  "hora" time [not null]
+  "cupo" integer [not null]
+  "vigente_desde" date [not null]
+  "vigente_hasta" date
+  "activo" boolean [default: true]
+  "id_profesor" integer
+  "id_entrenador_a_cargo" integer
+
+  indexes {
+    ("id_horario_actividad", "id_actividad") [unique, name: 'horario_id_actividad_uk']
+    ("activo", "dia_semana") [name: 'horario_actividad_activo_idx']
+    ("id_sede", "id_actividad", "dia_semana", "hora") [unique, name: 'horario_actividad_unico_uidx', note: 'WHERE activo']
+  }
+
+  Note: '''Horario semanal de cada actividad. Es la PLANTILLA: el backend genera los Turno de
+las proximas semanas a partir de aca, en lugar de que alguien los cargue uno por uno.
+CHECKs:
+- chk_horario_cupo: CHECK ((cupo > 0))
+- chk_horario_dia_semana: CHECK (((dia_semana >= 1) AND (dia_semana <= 7)))
+- chk_horario_un_solo_staff: CHECK ((NOT ((id_entrenador_a_cargo IS NOT NULL) AND (id_profesor IS NOT NULL))))
+- chk_horario_vigencia: CHECK (((vigente_hasta IS NULL) OR (vigente_hasta >= vigente_desde)))'''
+}
+
+Table "Inscripcion_Actividad" {
+  "id_inscripcion" integer [pk, increment]
+  "id_socio" integer [not null]
+  "id_plan_actividad" integer [not null]
+  "precio_pactado" numeric(10,2) [not null]
+  "fecha_inicio" date [not null]
+  "fecha_vencimiento" date [not null]
+  "estado" "estado_inscripcion" [not null, default: 'ACTIVA']
+
+  indexes {
+    ("id_socio", "estado") [name: 'Inscripcion_Actividad_id_socio_estado_idx']
+  }
+
+  Note: '''Lo que un socio COMPRO de un Plan_Actividad.
+precio_pactado es historico: el vigente vive en Plan_Actividad.precio y puede cambiar
+despues. No viola 3FN, son dos hechos distintos.
+clases_restantes fue ELIMINADA: el consumo se calcula al vuelo contando Reserva.
+Guardarlo creaba una segunda fuente de verdad, y ademas dejaba dos criterios opuestos
+en la misma columna (POR_MES lo guardaba, POR_SEMANA lo calculaba).
+PENDIENTE: falta CHECK fecha_vencimiento >= fecha_inicio.'''
+}
+
+Table "Membresia" {
+  "id_membresia" integer [pk, increment]
+  "id_socio" integer [not null]
+  "id_tipo_membresia" integer [not null]
+  "precio_pactado" numeric(10,2) [not null]
+  "fecha_inicio" date [not null]
+  "fecha_vencimiento" date
+  "estado" "estado_membresia" [not null, default: 'ACTIVA']
+
+  indexes {
+    ("estado", "fecha_vencimiento") [name: 'Membresia_estado_fecha_vencimiento_idx']
+    ("id_socio", "fecha_inicio") [unique, name: 'Membresia_id_socio_fecha_inicio_idx']
+    "id_socio" [unique, name: 'membresia_una_activa_uidx', note: '''WHERE (estado = 'ACTIVA'::estado_membresia)''']
+  }
+
+  Note: '''1:N con Socio -> historial de renovaciones.
+precio_pactado (historico) != Tipo_Membresia.precio_actual (vigente). NO viola 3FN:
+son dos hechos distintos, lo que se cobro entonces y lo que se cobra hoy.
+
+INDICE PARCIAL membresia_una_activa_uidx: un socio tiene UNA sola membresia activa
+a la vez. Es critico porque Congelamiento cuelga de aca: dos activas romperian toda
+la logica de congelamiento y de extension de vencimiento.
+
+estado es NOT NULL a proposito: un enum con NULL admite un valor fuera del dominio
+declarado, y ademas las filas con NULL se ESCAPAN del indice parcial, porque un
+indice con WHERE solo indexa las filas que cumplen la condicion.
+
+RENOVACION ANTICIPADA: la membresia nueva NO nace al cobrar, nace cuando vence la
+anterior. Asi nunca hay dos ACTIVA simultaneas. Ver Pago.es_adelanto.
+PENDIENTE: falta CHECK fecha_vencimiento >= fecha_inicio.'''
+}
+
+Table "Nutricionista" {
+  "id_nutricionista" integer [pk, increment]
+  "id_empleado" integer [not null, unique]
+  "titulo" varchar(100)
+  "matricula" varchar(50)
+}
+
+Table "Pago" {
+  "id_pago" integer [pk, increment]
+  "id_socio" integer [not null]
+  "id_membresia" integer
+  "id_inscripcion" integer
+  "id_sede" integer
+  "metodo" "metodo_pago" [not null]
+  "monto" numeric(10,2) [not null]
+  "fecha_pago" timestamp [not null, default: `now()`]
+  "periodo_desde" date
+  "periodo_hasta" date
+  "es_adelanto" boolean [not null, default: false, note: '''true = cobro de un periodo que todavia no empezo. La membresia nueva NO se crea al
+cobrar: se crea recien cuando vence la anterior. Hasta ese momento el pago queda con
+id_membresia NULL y el periodo cubierto en periodo_desde / periodo_hasta.
+Consecuencia: nunca hay dos membresias ACTIVA simultaneas, y el indice
+membresia_una_activa_uidx no necesita excepciones.''']
+  "estado" "estado_pago" [not null, default: 'CONFIRMADO']
+  "fecha_cancelacion" timestamp
+  "numero_comprobante" varchar(50) [unique]
+  "id_promocion" integer
+  "monto_descuento" numeric(10,2)
+
+  indexes {
+    ("id_sede", "fecha_pago") [name: 'Pago_id_sede_fecha_pago_idx']
+    ("id_socio", "fecha_pago") [name: 'Pago_id_socio_fecha_pago_idx']
+  }
+
+  Note: '''DFD 2.1. Un pago NUNCA se borra: se marca CANCELADO o REEMBOLSADO.
+monto_descuento se GUARDA y no se recalcula: la promocion puede cambiar o vencer
+despues, y hay que poder reconstruir que se cobro ese dia.
+ABIERTO — FK redundantes: id_socio es derivable via id_membresia o id_inscripcion,
+e id_sede es derivable de Socio.id_sede. Nada garantiza hoy que coincidan.
+PENDIENTE: falta CHECK monto >= 0, y definir si un pago puede cubrir membresia e
+inscripcion a la vez o siempre una sola cosa.
+CHECKs:
+- chk_pago_adelanto_periodo: CHECK (((NOT es_adelanto) OR (periodo_desde IS NOT NULL)))'''
+}
+
+Table "Patologia" {
+  "id_patologia" integer [pk, increment]
+  "nombre" varchar(100) [not null, unique]
+  "descripcion" text
+
+  Note: '3FN: catalogo. El nombre depende de la patologia, no del socio que la tiene.'
+}
+
+Table "Persona" {
+  "id_persona" integer [pk, increment]
+  "dni" varchar(20) [not null, unique]
+  "apellido" varchar(100) [not null]
+  "nombre" varchar(100) [not null]
+  "sexo" varchar(20)
+  "email" varchar(150) [unique]
+  "calle" varchar(100)
+  "numero_calle" varchar(10)
+  "localidad" varchar(80)
+  "fecha_nacimiento" date
+  "fecha_alta" timestamp [default: `now()`]
+  "activo" boolean [default: true]
+
+  Note: '''SUPERTIPO. Los atributos comunes viven aca y no se repiten por rol.
+1FN: nombre y apellido separados, direccion descompuesta en calle/numero/localidad.
+Los telefonos van en Telefono y los contactos de emergencia en Contacto_Emergencia:
+ambos son multivaluados y por eso tienen tabla propia.
+PENDIENTE: sexo es varchar libre. Deberia ser enum o catalogo, como los otros 13.'''
+}
+
+Table "Plan_Actividad" {
+  "id_plan_actividad" integer [pk, increment]
+  "id_actividad" integer [not null]
+  "nombre" varchar(80) [not null]
+  "tipo_limite" "tipo_limite" [not null]
+  "cantidad" integer [not null]
+  "precio" numeric(10,2) [not null]
+  "activo" boolean [default: true]
+
+  Note: '''Formatos de venta de una Actividad. 1:N, NO se unifica con Actividad: unificarlas
+repetiria los atributos de la actividad en cada plan y dejaria a Turno sin saber a
+que fila apuntar.
+POR_SEMANA   -> cantidad = veces por semana.
+POR_MES      -> cantidad = clases totales del mes.
+CLASE_SUELTA -> cantidad = 1. Es un plan mas del catalogo, no una columna aparte.
+Los precios son FILAS y no constantes: el dueno los cambia sin tocar codigo.
+PENDIENTE: falta CHECK precio >= 0.'''
+}
+
+Table "Profesor" {
+  "id_profesor" integer [pk, increment]
+  "id_empleado" integer [not null, unique]
+  "titulo" varchar(100)
+  "especialidad" varchar(100)
+
+  Note: 'Subtipo de Empleado. Dicta las clases grupales con horario fijo (yoga, boxeo).'
+}
+
+Table "Profesor_Actividad" {
+  "id_profesor" integer [not null]
+  "id_actividad" integer [not null]
+
+  indexes {
+    ("id_profesor", "id_actividad") [pk]
+  }
+
+  Note: '''N:M pura: que profesor esta habilitado para dictar que actividad.
+Sirve de DESTINO a las FK compuestas de Turno y Horario_Actividad, que es como la
+base garantiza que nadie quede a cargo de una actividad para la que no esta
+habilitado.
+ABIERTO: solo habilita PROFESORES. Los entrenadores no tienen control equivalente.
+No molesta mientras esten solo a cargo de musculacion.'''
+}
+
+Table "Promocion" {
+  "id_promocion" integer [pk, increment]
+  "id_dueno" integer [not null, note: '''Dueno que creo la promocion. NO se puede derivar de la sede porque las promociones
+globales tienen id_sede NULL. Cuando id_sede no es NULL, la FK compuesta
+fk_promocion_sede_dueno obliga a que coincida con Sede.id_dueno, asi que los dos
+caminos nunca divergen: es redundancia CONTROLADA POR RESTRICCION, no libre.''']
+  "id_sede" integer
+  "nombre" varchar(100) [not null]
+  "descripcion" text
+  "porcentaje_descuento" numeric(5,2) [not null]
+  "fecha_inicio" date [not null]
+  "fecha_fin" date [not null]
+  "activo" boolean [default: true]
+
+  Note: '''DFD 2.2. id_sede NULL = promocion global, aplica a todas las sedes.
+El descuento es SIEMPRE porcentual: el de monto fijo se elimino por decision
+comercial. Los pesos efectivamente descontados viven en Pago.monto_descuento.
+CHECKs:
+- chk_promocion_porcentaje: CHECK (((porcentaje_descuento > (0)::numeric) AND (porcentaje_descuento <= (100)::numeric)))
+- chk_promocion_vigencia: CHECK ((fecha_fin >= fecha_inicio))'''
+}
+
+Table "Recepcionista" {
+  "id_recepcionista" integer [pk, increment]
+  "id_empleado" integer [not null, unique]
+  "id_franja_laboral" integer
+
+  Note: '''Subtipo de Empleado. No produce nada propio: solo opera el sistema.
+Es el UNICO subtipo con franja laboral. Los demas derivan su horario de Turno y
+Horario_Actividad, asi que no la necesitan.'''
+}
+
+Table "Registro_Comida" {
+  "id_registro_comida" integer [pk, increment]
+  "id_socio" integer [not null]
+  "id_comida" integer
+  "fecha" date [not null, default: `CURRENT_DATE`]
+  "comida_ingerida" text [not null, note: '''Texto libre: que comio realmente. Deliberadamente NO apunta a Catalogo_Comida, para
+que el socio pueda anotar cualquier cosa sin depender del catalogo del nutricionista.
+Es NOT NULL porque una fila que no dice que comio no sirve para nada.
+CONSECUENCIA A TENER PRESENTE: sin vinculo al catalogo no se pueden cruzar calorias
+reales automaticamente ni sacar estadisticas de platos mas consumidos.
+calorias_estimadas queda como unica fuente calorica de lo ingerido.''']
+  "calorias_estimadas" integer [note: '''Calorias que el SOCIO estima haber ingerido ese dia. Es lo que separa lo pautado de
+lo efectivamente consumido: el socio pudo comer media porcion, el doble, o algo
+distinto de lo planificado.''']
+  "proteinas_g" numeric(6,2)
+  "carbohidratos_g" numeric(6,2)
+  "grasas_g" numeric(6,2)
+  "momento" varchar(30)
+
+  indexes {
+    ("id_socio", "fecha") [name: 'registro_comida_socio_fecha_idx']
+  }
+
+  Note: '''Lo que el socio REALMENTE comio un dia, cargado por el.
+Es a Comida lo que Registro_Ejercicio es a Rutina_Ejercicio: PLANTILLA contra
+REALIDAD. No puede ir como columna de Comida porque esa fila pertenece a la plantilla
+Dieta y la comparten todos los socios que la siguen; ademas necesita fecha.
+id_comida = que comida de la dieta CORRESPONDIA. comida_ingerida = que comio DE
+VERDAD. Son dos hechos distintos: el socio pudo comer algo diferente de lo
+planificado, y registrar esa diferencia es el proposito de la tabla.'''
+}
+
+Table "Registro_Ejercicio" {
+  "id_registro_ejercicio" integer [pk, increment]
+  "id_socio" integer [not null]
+  "id_ejercicio" integer [not null]
+  "fecha" date [not null, default: `CURRENT_DATE`]
+  "peso_hecho" numeric(6,2) [not null]
+  "series_hechas" integer
+  "repeticiones_hechas" varchar(20)
+  "observaciones" varchar(200)
+
+  indexes {
+    ("id_socio", "id_ejercicio", "fecha") [unique, name: 'registro_ejercicio_socio_ej_fecha_uidx']
+  }
+
+  Note: '''Peso que el socio EFECTIVAMENTE levanto, cargado por el. Record = MAX(peso_hecho).
+Es la mitad REAL del par plantilla/realidad: Rutina_Ejercicio dice que deberia hacer,
+esto dice que hizo.
+El indice (id_socio, id_ejercicio) fue ELIMINADO: era prefijo exacto del unico de
+tres columnas. Un B-tree se recorre por sus columnas iniciales, asi que el de tres ya
+resolvia todo lo que resolvia el de dos.
+CHECKs:
+- chk_registro_ejercicio_peso: CHECK ((peso_hecho >= (0)::numeric))'''
+}
+
+Table "Registro_Salud" {
+  "id_registro_salud" integer [pk, increment]
+  "id_socio" integer [not null]
+  "fecha" date [not null]
+  "peso" numeric(5,2)
+  "altura" numeric(3,2)
+  "grasa_corporal" numeric(4,2)
+  "masa_muscular" numeric(5,2)
+  "observaciones" text
+
+  indexes {
+    ("id_socio", "fecha") [unique, name: 'Registro_Salud_id_socio_fecha_idx']
+  }
+
+  Note: '''HISTORICO 1:N. El indice unico (id_socio, fecha) impide dos mediciones el mismo
+dia pero conserva toda la progresion.
+altura se conserva a proposito: el gimnasio acepta MENORES, y en un adolescente la
+altura si cambia entre mediciones. En un padron solo de adultos habria sido
+redundante, porque dependeria de la persona y no del registro.'''
+}
+
+Table "Reserva" {
+  "id_reserva" integer [pk, increment]
+  "id_turno" integer [not null]
+  "id_socio" integer [not null]
+  "id_inscripcion" integer
+  "id_pago" integer
+  "fecha_reserva" timestamp [default: `now()`]
+  "estado" "estado_reserva" [not null, default: 'RESERVADA']
+  "fecha_cancelacion" timestamp
+
+  indexes {
+    ("id_turno", "estado") [name: 'Reserva_id_turno_estado_idx']
+    ("id_turno", "id_socio") [unique, name: 'Reserva_id_turno_id_socio_idx']
+  }
+
+  Note: '''DFD 5.2. El indice unico (id_turno, id_socio) impide que un socio reserve DOS VECES
+EL MISMO TURNO. NO limita cuantos turnos distintos reserva en un mismo dia: si esa
+restriccion hace falta, es una regla aparte y todavia no esta definida.
+
+id_inscripcion NULL = clase suelta. Reemplaza a un viejo booleano es_clase_suelta,
+que repetia este mismo dato.
+
+TRIGGER trg_reserva_cupo: no se reserva sobre un turno lleno.
+TRIGGER trg_reserva_coherente: la inscripcion usada tiene que ser del mismo socio y
+de la misma actividad que el turno.
+
+estado es NOT NULL a proposito. El trigger de cupo arranca con
+  IF NEW.estado IS DISTINCT FROM RESERVADA THEN RETURN NULL
+y como NULL IS DISTINCT FROM RESERVADA da verdadero en logica de tres valores, una
+reserva con estado nulo se salteaba la validacion de cupo Y tampoco se contaba
+despues: entraba sin control y dejaba entrar a las demas.'''
+}
+
+Table "Rutina" {
+  "id_rutina" integer [pk, increment]
+  "id_entrenador" integer
+  "nombre" varchar(100) [not null]
+  "objetivo" varchar(100)
+  "nivel" varchar(20)
+  "dias_por_semana" integer
+  "fecha_creacion" date [default: `CURRENT_DATE`]
+  "activo" boolean [default: true]
+
+  Note: '''DFD 3.1. Es una PLANTILLA: se escribe una vez y se asigna a varios socios.
+NO es personalizada por persona.
+PENDIENTE: nivel es varchar libre, deberia ser enum.'''
+}
+
+Table "Rutina_Ejercicio" {
+  "id_rutina_ejercicio" integer [pk, increment]
+  "id_rutina" integer [not null]
+  "id_ejercicio" integer [not null]
+  "dia" integer [not null]
+  "orden" integer [not null]
+  "series" integer
+  "repeticiones" varchar(20)
+  "peso_sugerido" numeric(6,2)
+  "descanso_segundos" integer
+  "observaciones" varchar(200)
+
+  indexes {
+    ("id_rutina", "dia", "orden") [unique, name: 'Rutina_Ejercicio_id_rutina_dia_orden_idx']
+  }
+
+  Note: '''1FN: una rutina tiene muchos ejercicios, asi que no pueden ser columnas.
+peso_hecho NO puede ir aca: esta fila es de la PLANTILLA y la comparten todos los
+socios que siguen esa rutina, asi que un peso aca no tendria dueno. Va en
+Registro_Ejercicio, cuyo grano es (socio, ejercicio, fecha).'''
+}
+
+Table "Sede" {
+  "id_sede" integer [pk, increment]
+  "id_dueno" integer [not null]
+  "nombre" varchar(100) [not null]
+  "calle" varchar(100)
+  "numero_calle" varchar(10)
+  "localidad" varchar(80)
+  "telefono" varchar(30)
+  "capacidad_maxima" integer
+  "hora_apertura" time
+  "hora_cierre" time
+  "abierto_24hs" boolean [default: true]
+  "activo" boolean [default: true]
+
+  indexes {
+    ("id_sede", "id_dueno") [unique, name: 'sede_id_dueno_uk']
+  }
+
+  Note: '''Raiz organizativa. Un gimnasio de una sola sucursal tiene una fila. El modelo
+soporta varias sedes, pero eso es prevision, no un requerimiento actual.'''
+}
+
+Table "Socio" {
+  "id_socio" integer [pk, increment]
+  "id_persona" integer [not null, unique]
+  "id_sede" integer [not null]
+  "numero_socio" varchar(20) [unique]
+  "codigo_rfid" varchar(50) [unique]
+  "fecha_alta" date [not null]
+  "objetivo" varchar(150)
+  "observaciones" text
+  "activo" boolean [default: true]
+
+  Note: '''Subtipo de Persona y centro del modelo.
+No guarda peso actual: sale de Registro_Salud con ORDER BY fecha DESC LIMIT 1.
+ABIERTO — asimetria alta/baja: existe la tabla Baja como hecho con fecha, pero no
+hay un hecho Alta simetrico: fecha_alta es una sola columna. Si el socio se va y
+vuelve, la fecha de reinscripcion no tiene donde vivir.'''
+}
+
+Table "Socio_Patologia" {
+  "id_socio" integer [not null]
+  "id_patologia" integer [not null]
+  "fecha_diagnostico" date
+  "observaciones" text
+
+  indexes {
+    ("id_socio", "id_patologia") [pk]
+  }
+
+  Note: '''1FN: rompe lo que seria un varchar multivaluado de patologias.
+2FN: fecha_diagnostico y observaciones dependen de la clave COMPLETA (socio +
+patologia), no de una sola de sus partes.'''
+}
+
+Table "Telefono" {
+  "id_telefono" integer [pk, increment]
+  "id_persona" integer [not null]
+  "numero" varchar(30) [not null]
+  "tipo" "tipo_telefono" [default: 'CELULAR']
+  "principal" boolean [default: false]
+
+  Note: '1FN: una persona puede tener varios telefonos, asi que no pueden ser columnas.'
+}
+
+Table "Tipo_Membresia" {
+  "id_tipo_membresia" integer [pk, increment]
+  "nombre" varchar(50) [not null, unique]
+  "descripcion" text
+  "duracion_dias" integer [not null]
+  "precio_actual" numeric(10,2) [not null]
+  "activo" boolean [default: true]
+
+  Note: '''3FN: saca la dependencia transitiva Tipo -> Precio fuera de Membresia.
+PENDIENTE: faltan CHECK duracion_dias > 0 y precio_actual >= 0.'''
+}
+
+Table "Turno" {
+  "id_turno" integer [pk, increment]
+  "id_sede" integer [not null]
+  "id_actividad" integer [not null]
+  "fecha" date [not null]
+  "hora" time [not null]
+  "cupo_maximo" integer [not null]
+  "estado" "estado_turno" [not null, default: 'HABILITADO']
+  "id_horario_actividad" integer
+  "motivo_cancelacion" varchar(200)
+  "observaciones" varchar(200)
+  "id_profesor" integer
+  "id_entrenador_a_cargo" integer
+
+  indexes {
+    ("id_actividad", "fecha") [name: 'Turno_id_actividad_fecha_idx']
+    ("id_sede", "id_actividad", "fecha", "hora") [unique, name: 'Turno_id_sede_id_actividad_fecha_hora_idx']
+    ("fecha", "hora", "estado") [name: 'turno_fecha_hora_estado_idx']
+    "id_horario_actividad" [name: 'turno_horario_actividad_idx', note: 'WHERE (id_horario_actividad IS NOT NULL)']
+  }
+
+  Note: '''La INSTANCIA concreta: una actividad con horario, en una fecha y sede.
+hora es SOLO de llegada, no hay hora de fin.
+id_entrenador_a_cargo es para musculacion; id_profesor para el resto. Las dos
+columnas NO se unifican en una sola FK: se probo y se revirtio.
+id_horario_actividad NULL = turno cargado a mano. La generacion automatica no lo toca.
+ABIERTO — FK redundantes: cuando id_horario_actividad no es NULL, id_sede e
+id_actividad son derivables del horario que genero el turno, y hoy nada impide que
+se contradigan.
+PENDIENTE: falta CHECK cupo_maximo > 0. Horario_Actividad.cupo si lo tiene.
+CHECKs:
+- chk_turno_un_solo_staff: CHECK ((NOT ((id_entrenador_a_cargo IS NOT NULL) AND (id_profesor IS NOT NULL))))'''
+}
+
+Table "Usuario" {
+  "id_usuario" integer [pk, increment]
+  "id_persona" integer [not null, unique]
+  "username" varchar(50) [not null, unique]
+  "password_hash" varchar(255) [not null]
+  "debe_cambiar_password" boolean [not null, default: true]
+  "ultimo_acceso" timestamp
+  "intentos_fallidos" integer [default: 0]
+  "bloqueado" boolean [default: false]
+  "activo" boolean [default: true]
+
+  Note: '''DFD 1.1.2 login. El rol se DERIVA de en que subtipo aparece la persona: no hay
+columna de rol porque seria una segunda fuente de verdad.
+ABIERTO: una Persona puede ser Socio Y Empleado a la vez (los UNIQUE son
+independientes entre si). Si eso ocurre, la derivacion del rol queda ambigua.'''
+}
+
+Ref: "Asignacion_Dieta"."id_dieta" > "Dieta"."id_dieta"
+Ref: "Asignacion_Dieta"."id_socio" > "Socio"."id_socio"
+Ref: "Asignacion_Entrenador"."id_entrenador" > "Entrenador"."id_entrenador"
+Ref: "Asignacion_Entrenador"."id_socio" > "Socio"."id_socio"
+Ref: "Asignacion_Rutina"."id_rutina" > "Rutina"."id_rutina"
+Ref: "Asignacion_Rutina"."id_socio" > "Socio"."id_socio"
+Ref: "Asistencia"."id_registrado_por" > "Usuario"."id_usuario"
+Ref: "Asistencia"."id_reserva" > "Reserva"."id_reserva"
+Ref: "Asistencia"."id_sede" > "Sede"."id_sede"
+Ref: "Asistencia"."id_socio" > "Socio"."id_socio"
+Ref: "Baja"."id_socio" > "Socio"."id_socio"
+Ref: "Comida"."id_catalogo_comida" > "Catalogo_Comida"."id_catalogo_comida"
+Ref: "Comida"."id_dieta" > "Dieta"."id_dieta"
+Ref: "Congelamiento"."id_membresia" > "Membresia"."id_membresia"
+Ref: "Contacto_Emergencia"."id_persona" > "Persona"."id_persona"
+Ref: "Dieta"."id_nutricionista" > "Nutricionista"."id_nutricionista"
+Ref: "Dueno"."id_persona" > "Persona"."id_persona"
+Ref: "Empleado"."id_persona" > "Persona"."id_persona"
+Ref: "Empleado"."id_sede" > "Sede"."id_sede"
+Ref: "Entrenador"."id_empleado" > "Empleado"."id_empleado"
+Ref: "Horario_Actividad"."id_actividad" > "Actividad"."id_actividad"
+Ref: "Horario_Actividad"."id_entrenador_a_cargo" > "Entrenador"."id_entrenador"
+Ref: "Horario_Actividad"."id_sede" > "Sede"."id_sede"
+Ref: "Horario_Actividad".("id_profesor", "id_actividad") > "Profesor_Actividad".("id_profesor", "id_actividad")
+Ref: "Inscripcion_Actividad"."id_plan_actividad" > "Plan_Actividad"."id_plan_actividad"
+Ref: "Inscripcion_Actividad"."id_socio" > "Socio"."id_socio"
+Ref: "Membresia"."id_socio" > "Socio"."id_socio"
+Ref: "Membresia"."id_tipo_membresia" > "Tipo_Membresia"."id_tipo_membresia"
+Ref: "Nutricionista"."id_empleado" > "Empleado"."id_empleado"
+Ref: "Pago"."id_inscripcion" > "Inscripcion_Actividad"."id_inscripcion"
+Ref: "Pago"."id_membresia" > "Membresia"."id_membresia"
+Ref: "Pago"."id_promocion" > "Promocion"."id_promocion"
+Ref: "Pago"."id_sede" > "Sede"."id_sede"
+Ref: "Pago"."id_socio" > "Socio"."id_socio"
+Ref: "Plan_Actividad"."id_actividad" > "Actividad"."id_actividad"
+Ref: "Profesor"."id_empleado" > "Empleado"."id_empleado"
+Ref: "Profesor_Actividad"."id_actividad" > "Actividad"."id_actividad"
+Ref: "Profesor_Actividad"."id_profesor" > "Profesor"."id_profesor"
+Ref: "Promocion"."id_dueno" > "Dueno"."id_dueno"
+Ref: "Promocion".("id_sede", "id_dueno") > "Sede".("id_sede", "id_dueno")
+Ref: "Recepcionista"."id_empleado" > "Empleado"."id_empleado"
+Ref: "Recepcionista"."id_franja_laboral" > "Franja_Laboral"."id_franja_laboral"
+Ref: "Registro_Comida"."id_comida" > "Comida"."id_comida"
+Ref: "Registro_Comida"."id_socio" > "Socio"."id_socio"
+Ref: "Registro_Ejercicio"."id_ejercicio" > "Ejercicio"."id_ejercicio"
+Ref: "Registro_Ejercicio"."id_socio" > "Socio"."id_socio"
+Ref: "Registro_Salud"."id_socio" > "Socio"."id_socio"
+Ref: "Reserva"."id_inscripcion" > "Inscripcion_Actividad"."id_inscripcion"
+Ref: "Reserva"."id_pago" > "Pago"."id_pago"
+Ref: "Reserva"."id_socio" > "Socio"."id_socio"
+Ref: "Reserva"."id_turno" > "Turno"."id_turno"
+Ref: "Rutina"."id_entrenador" > "Entrenador"."id_entrenador"
+Ref: "Rutina_Ejercicio"."id_ejercicio" > "Ejercicio"."id_ejercicio"
+Ref: "Rutina_Ejercicio"."id_rutina" > "Rutina"."id_rutina"
+Ref: "Sede"."id_dueno" > "Dueno"."id_dueno"
+Ref: "Socio"."id_persona" > "Persona"."id_persona"
+Ref: "Socio"."id_sede" > "Sede"."id_sede"
+Ref: "Socio_Patologia"."id_patologia" > "Patologia"."id_patologia"
+Ref: "Socio_Patologia"."id_socio" > "Socio"."id_socio"
+Ref: "Telefono"."id_persona" > "Persona"."id_persona"
+Ref: "Turno"."id_actividad" > "Actividad"."id_actividad"
+Ref: "Turno"."id_entrenador_a_cargo" > "Entrenador"."id_entrenador"
+Ref: "Turno"."id_horario_actividad" > "Horario_Actividad"."id_horario_actividad"
+Ref: "Turno"."id_sede" > "Sede"."id_sede"
+Ref: "Turno".("id_profesor", "id_actividad") > "Profesor_Actividad".("id_profesor", "id_actividad")
+Ref: "Usuario"."id_persona" > "Persona"."id_persona"

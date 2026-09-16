@@ -298,7 +298,18 @@ def cobrar(
         if promocion is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                                 detail="Esa promoción no existe.")
-        if not esta_vigente(promocion):
+        # La promo tiene que estar vigente CUANDO ARRANCA EL PERÍODO que se
+        # cobra, no hoy. Renovando por adelantado, el período nuevo empieza al
+        # día siguiente del vencimiento actual: cobrar hoy con una promo que
+        # para entonces ya no existe es regalar plata de un mes en el que la
+        # promoción no corre.
+        vigente_ahora = _membresia_vigente(db, socio.id_socio)
+        inicio_periodo = date.today()
+        if (vigente_ahora and vigente_ahora.fecha_vencimiento
+                and vigente_ahora.fecha_vencimiento >= inicio_periodo):
+            inicio_periodo = vigente_ahora.fecha_vencimiento + timedelta(days=1)
+
+        if not esta_vigente(promocion, inicio_periodo):
             # Un solo mensaje para los dos motivos (apagada o fuera de fecha)
             # sería más corto, pero el mostrador necesita saber cuál es: una se
             # arregla reactivándola y la otra cambiándole las fechas.

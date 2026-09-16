@@ -17,6 +17,7 @@ import { PatologiasModal } from './PatologiasModal';
 import { SocioFormModal } from './SocioFormModal';
 import { SocioTableRow } from './SocioTableRow';
 import { SortableHeader } from './SortableHeader';
+import { TelefonosModal } from './TelefonosModal';
 
 // Equivalente de SociosView (estructura_socios.md).
 //
@@ -108,6 +109,7 @@ export function SociosView() {
   // y meterlos en el mismo estado obligaría a discriminar el tipo en cada uso.
   const [historial, setHistorial] = useState<SocioListado | null>(null);
   const [entrenadores, setEntrenadores] = useState<SocioListado | null>(null);
+  const [telefonos, setTelefonos] = useState<SocioListado | null>(null);
 
   useEffect(() => {
     let cancelado = false;
@@ -312,6 +314,7 @@ export function SociosView() {
                           puedeVerHistorialMedico={puedeVerHistorialMedico}
                           onEditar={() => setModal({ socio })}
                           onEntrenadores={() => setEntrenadores(socio)}
+                          onTelefonos={() => setTelefonos(socio)}
                           onDarDeBaja={() => pedirBaja(socio)}
                           onActivar={() => activar(socio)}
                           onHistorialMedico={() => setHistorial(socio)}
@@ -339,6 +342,20 @@ export function SociosView() {
           está viendo detrás. */}
       {historial && (
         <PatologiasModal socio={historial} onClose={() => setHistorial(null)} />
+      )}
+
+      {/* Este SÍ recarga, a diferencia de los otros dos: el teléfono que
+          muestra la ficha es el PRINCIPAL, así que agregar uno, borrarlo o
+          cambiar cuál es el principal cambia lo que el formulario de edición
+          va a mostrar la próxima vez que se abra. Sin recargar, editar al
+          socio después reenviaría el número viejo. */}
+      {telefonos && (
+        <TelefonosModal
+          socio={telefonos}
+          puedeGestionar={puedeAltaBaja}
+          onClose={() => setTelefonos(null)}
+          onCambio={recargar}
+        />
       )}
 
       {/* Tampoco recarga la grilla: el entrenador a cargo no es una columna

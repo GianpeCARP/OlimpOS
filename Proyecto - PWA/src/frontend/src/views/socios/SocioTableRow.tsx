@@ -1,4 +1,4 @@
-import { Dumbbell, Pencil, RotateCcw, Stethoscope, UserX } from 'lucide-react';
+import { Dumbbell, Pencil, Phone, RotateCcw, Stethoscope, UserX } from 'lucide-react';
 import { StatusBadge } from '../../components/ui';
 import { EstadoSocio } from '../../config';
 import type { SocioListado } from '../../services/sociosService';
@@ -25,6 +25,7 @@ interface SocioTableRowProps {
   puedeVerHistorialMedico: boolean;
   onEditar: () => void;
   onEntrenadores: () => void;
+  onTelefonos: () => void;
   onDarDeBaja: () => void;
   onActivar: () => void;
   onHistorialMedico: () => void;
@@ -41,6 +42,7 @@ export function SocioTableRow({
   puedeVerHistorialMedico,
   onEditar,
   onEntrenadores,
+  onTelefonos,
   onDarDeBaja,
   onActivar,
   onHistorialMedico,
@@ -82,6 +84,19 @@ export function SocioTableRow({
               <Pencil size={16} />
             </button>
           )}
+          {/* Los teléfonos se muestran a todos los que ven la grilla: saber
+              cómo llamar a un socio no es un dato reservado, y el entrenador
+              que lo tiene a cargo es justamente quien más lo necesita. Los
+              controles para agregar y borrar sí están restringidos adentro
+              del modal. */}
+          <button
+            type="button"
+            onClick={onTelefonos}
+            title="Teléfonos"
+            className="rounded-md p-2 text-text-muted hover:bg-surface-card hover:text-primary-volt"
+          >
+            <Phone size={16} />
+          </button>
           {/* Este SÍ se muestra a todos los que ven la grilla, incluido el
               Entrenador que la tiene en LECTURA: quién entrena a quién no es
               un dato sensible, y esconderlo justo al entrenador sería

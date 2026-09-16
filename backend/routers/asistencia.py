@@ -26,7 +26,7 @@ concreta —que queda guardada en `id_registrado_por`— y conviene poder
 filtrarlos del total.
 """
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -42,12 +42,31 @@ from turnos import reserva_a_acreditar
 
 router = APIRouter(prefix="/asistencia", tags=["Asistencia"])
 
-# Minutos dentro de los cuales un segundo fichaje se considera repetido. Cubre
-# el caso real de pasar la tarjeta dos veces porque el lector no sonó.
-MINUTOS_ANTI_DUPLICADO = 5
+# NO HAY TOPE DE INGRESOS POR DÍA, Y ES UNA DECISIÓN
+# ---------------------------------------------------
+# Acá hubo dos guardas: un anti-duplicado de 5 minutos y un tope de un ingreso
+# diario, las dos rechazando con 409 para que el mostrador confirmara el
+# ingreso repetido. Se sacaron las dos.
+#
+# El motivo es el mostrador real: quien atiende NO lee el cartel. Con gente
+# haciendo cola, un diálogo de confirmación se acepta sin mirarlo —y entonces
+# no frenaba nada— o, peor, deja a un socio parado en la puerta mientras el
+# recepcionista descifra qué le está preguntando la pantalla. Negarle el paso a
+# alguien con la cuota paga porque el sistema cree que ya entró es exactamente
+# lo que evita el resto de este módulo (ver "el sistema informa, no juzga"): la
+# regla vale igual para entrar dos veces que para deber plata.
+#
+# En su lugar, cada ingreso viaja con `ingreso_numero`: qué número de entrada
+# del día es para ese socio. El segundo se registra sin preguntar nada y la
+# lista lo muestra marcado al lado del nombre. El que pasa diez veces para
+# joder queda a la vista de quien quiera mirarlo; el que entrena a la mañana y
+# vuelve a la clase de la tarde entra sin que nadie confirme nada.
+#
+# El conteo del día sigue siendo interpretable, porque el dato está: son pases,
+# y `ingreso_numero > 1` dice cuáles de ellos son repetidos.
 
 
-def _a_asistencia_out(a: Asistencia) -> AsistenciaOut:
+def _a_asistencia_out(a: Asistencia, ingreso_numero: int | None = None) -> AsistenciaOut:
     socio = a.socio
     persona = socio.persona if socio else None
     return AsistenciaOut(
@@ -58,6 +77,18 @@ def _a_asistencia_out(a: Asistencia) -> AsistenciaOut:
         fecha_hora_ingreso=a.fecha_hora_ingreso,
         fecha_hora_egreso=a.fecha_hora_egreso,
         metodo_registro=a.metodo_registro,
+        ingreso_numero=ingreso_numero,
+    )
+
+
+def _ingresos_del_dia(db: Session, id_socio: int) -> int:
+    """Cuántos ingresos lleva hoy ese socio, contando los ya guardados."""
+    inicio = datetime.combine(date.today(), datetime.min.time())
+    return (
+        db.query(Asistencia)
+        .filter(Asistencia.id_socio == id_socio,
+                Asistencia.fecha_hora_ingreso >= inicio)
+        .count()
     )
 
 
@@ -133,22 +164,8 @@ def fichar(
 
     ahora = datetime.now()
 
-    # Anti-duplicado: pasar la tarjeta dos veces porque el lector no sonó es
-    # lo más común del mostrador. Sin esto, el conteo diario de ingresos
-    # quedaría inflado.
-    reciente = (
-        db.query(Asistencia)
-        .filter(Asistencia.id_socio == socio.id_socio,
-                Asistencia.fecha_hora_ingreso >= ahora - timedelta(minutes=MINUTOS_ANTI_DUPLICADO))
-        .first()
-    )
-    if reciente:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(f"{socio.persona.nombre_completo} ya fichó hace menos de "
-                    f"{MINUTOS_ANTI_DUPLICADO} minutos."),
-        )
-
+    # Acá iban dos rechazos por ingreso repetido. Ya no: se registra siempre y
+    # se informa cuál número de ingreso del día es. Ver el comentario de arriba.
     advertencia = _revisar_situacion(db, socio)
 
     # A qué clase corresponde este ingreso. Lo resuelve el sistema: el
@@ -182,18 +199,24 @@ def fichar(
         turno = reserva.turno
         clase = f"{turno.actividad.nombre} {turno.hora.strftime('%H:%M')}"
 
+    # Se cuenta DESPUÉS del commit, así que la fila recién creada ya entra en
+    # el total: el primer ingreso del día da 1.
+    ingreso_numero = _ingresos_del_dia(db, socio.id_socio)
+
     nombre = socio.persona.nombre_completo
     if clase:
         mensaje = f"Ingreso registrado: {nombre}. Acreditado a {clase}."
     else:
         mensaje = f"Ingreso registrado: {nombre}."
+    if ingreso_numero > 1:
+        mensaje = f"{mensaje} Es su {ingreso_numero}º ingreso de hoy."
     if turno_perdido:
         mensaje = f"{mensaje} {turno_perdido}"
     if advertencia:
         mensaje = f"{mensaje} {advertencia}"
 
     return FicharResponse(
-        asistencia=_a_asistencia_out(asistencia),
+        asistencia=_a_asistencia_out(asistencia, ingreso_numero),
         permitido=advertencia is None,
         advertencia=advertencia,
         mensaje=mensaje,
@@ -215,7 +238,18 @@ def ingresos_de_hoy(
         .order_by(Asistencia.fecha_hora_ingreso.desc())
         .all()
     )
-    return [_a_asistencia_out(a) for a in asistencias]
+
+    # Se numeran los ingresos de cada socio. La lista viene del más reciente al
+    # más viejo, así que se recorre al revés: el último es el primero del día.
+    # Se cuenta acá y no con una consulta por fila —serían N viajes a São Paulo
+    # para un dato que ya está en memoria.
+    llevados: dict[int, int] = {}
+    numero_de: dict[int, int] = {}
+    for a in reversed(asistencias):
+        llevados[a.id_socio] = llevados.get(a.id_socio, 0) + 1
+        numero_de[a.id_asistencia] = llevados[a.id_socio]
+
+    return [_a_asistencia_out(a, numero_de[a.id_asistencia]) for a in asistencias]
 
 
 @router.post("/{id_asistencia}/salida", response_model=AsistenciaOut)
@@ -244,6 +278,39 @@ def registrar_salida(
     db.commit()
     db.refresh(asistencia)
     return _a_asistencia_out(asistencia)
+
+
+@router.delete("/{id_asistencia}", status_code=status.HTTP_204_NO_CONTENT)
+def deshacer_fichaje(
+    id_asistencia: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.ASISTENCIA, Acceso.TOTAL)),
+):
+    """
+    Borra un ingreso mal cargado ("desfichar").
+
+    Acá SÍ se borra la fila, a diferencia de casi todo el resto del sistema,
+    porque un ingreso que no ocurrió no es historia que preservar: es un dato
+    falso. El caso real es el amigo que pasa la tarjeta por otro, o el ingreso
+    cargado al socio equivocado.
+
+    SÓLO ingresos de HOY: corregir el error del momento es operación de
+    mostrador; borrar la asistencia de la semana pasada sería reescribir
+    estadísticas ya usadas, y para eso no hay botón.
+    """
+    asistencia = db.get(Asistencia, id_asistencia)
+    if asistencia is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Ese registro de ingreso no existe.")
+
+    if asistencia.fecha_hora_ingreso.date() != date.today():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sólo se pueden deshacer los ingresos de hoy.",
+        )
+
+    db.delete(asistencia)
+    db.commit()
 
 
 @router.get("/socio/{id_socio}", response_model=list[AsistenciaOut])

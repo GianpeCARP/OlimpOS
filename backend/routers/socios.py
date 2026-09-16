@@ -47,6 +47,7 @@ from permisos import Accion, Seccion
 from schemas import (
     AsignacionEntrenadorOut, AsignarEntrenadorRequest, BajaRequest, PersonaOut,
     SocioAltaRequest, SocioAltaResponse, SocioEditarRequest, SocioOut,
+    TelefonoOut, TelefonoRequest,
 )
 from routers.rutinas import _entrenador_de_sesion
 from security import Sesion, requiere_accion, requiere_seccion
@@ -591,6 +592,178 @@ def reactivar(
 
 
 # =============================================================================
+# TELÉFONOS DE LA FICHA
+# =============================================================================
+#
+# POR QUÉ ENDPOINTS APARTE Y NO UN CAMPO MÁS DEL PUT
+# --------------------------------------------------
+# `Telefono` es una tabla desde el primer día, justamente porque una persona
+# tiene varios números —el celular, el de la casa, el del trabajo—. Pero la API
+# la venía tratando como si fuera una columna: el PUT de la ficha manda UN
+# `telefono` y el router le pisaba el principal. La tabla estaba bien modelada
+# y la ficha no la aprovechaba.
+#
+# Van separados del PUT porque agregar un número no es editar la ficha: pasa en
+# otro momento —el socio dicta un segundo número en el mostrador— y no tiene
+# por qué arrastrar nombre, email y objetivo en el mismo pedido, que es como se
+# pisan datos sin querer.
+#
+# El permiso es el MISMO que el de editar la ficha, no uno nuevo: quien puede
+# corregirle el nombre a un socio puede cargarle un teléfono.
+# =============================================================================
+
+
+def _socio_o_404(db: Session, id_socio: int) -> Socio:
+    socio = db.get(Socio, id_socio)
+    if socio is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="El socio no existe.")
+    return socio
+
+
+def _telefonos_ordenados(db: Session, id_persona: int) -> list[Telefono]:
+    """El principal primero, después por antigüedad. Mismo orden en toda la app."""
+    return (db.query(Telefono)
+            .filter(Telefono.id_persona == id_persona)
+            .order_by(Telefono.principal.desc(), Telefono.id_telefono)
+            .all())
+
+
+def _digitos(numero: str) -> str:
+    """
+    Sólo los dígitos, para comparar dos números escritos distinto.
+
+    "341 555-1234" y "3415551234" son el mismo teléfono, y sin normalizar la
+    ficha terminaba con varias filas que llaman al mismo lado.
+    """
+    return "".join(c for c in (numero or "") if c.isdigit())
+
+
+def _telefono_de(db: Session, id_persona: int, id_telefono: int) -> Telefono:
+    telefono = db.get(Telefono, id_telefono)
+    if telefono is None or telefono.id_persona != id_persona:
+        # 404 y no 403 a propósito: que exista un teléfono con ese id pero de
+        # otra persona no es información que le corresponda a quien está
+        # mirando ESTA ficha.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Ese teléfono no está en la ficha de este socio.")
+    return telefono
+
+
+def _desmarcar_principales(db: Session, id_persona: int) -> None:
+    """
+    Deja a todos en no-principal. Se llama antes de marcar el nuevo.
+
+    Tener dos principales es lo mismo que no tener ninguno: el listado de
+    socios muestra "el primero que aparezca" y pasaría a ser impredecible cuál.
+    """
+    for t in db.query(Telefono).filter(Telefono.id_persona == id_persona,
+                                       Telefono.principal.is_(True)).all():
+        t.principal = False
+
+
+@router.get("/{id_socio}/telefonos", response_model=list[TelefonoOut])
+def telefonos_del_socio(
+    id_socio: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.SOCIOS)),
+):
+    socio = _socio_o_404(db, id_socio)
+    return [TelefonoOut.model_validate(t)
+            for t in _telefonos_ordenados(db, socio.id_persona)]
+
+
+@router.post("/{id_socio}/telefonos", response_model=TelefonoOut,
+             status_code=status.HTTP_201_CREATED)
+def agregar_telefono(
+    id_socio: int,
+    datos: TelefonoRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.ALTA_BAJA_SOCIOS)),
+):
+    socio = _socio_o_404(db, id_socio)
+
+    existentes = _telefonos_ordenados(db, socio.id_persona)
+
+    # El mismo número dos veces no es un teléfono más: es el mismo.
+    if any(_digitos(t.numero) == _digitos(datos.numero) for t in existentes):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="Ese número ya está cargado en la ficha.")
+
+    # El primero es principal sí o sí, lo haya pedido o no quien lo carga: una
+    # ficha con teléfonos donde ninguno es el principal no muestra ninguno.
+    principal = datos.principal or not existentes
+    if principal:
+        _desmarcar_principales(db, socio.id_persona)
+
+    telefono = Telefono(id_persona=socio.id_persona, numero=datos.numero,
+                        tipo=datos.tipo, principal=principal)
+    db.add(telefono)
+    db.commit()
+    db.refresh(telefono)
+    return TelefonoOut.model_validate(telefono)
+
+
+@router.put("/{id_socio}/telefonos/{id_telefono}", response_model=TelefonoOut)
+def editar_telefono(
+    id_socio: int,
+    id_telefono: int,
+    datos: TelefonoRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.ALTA_BAJA_SOCIOS)),
+):
+    socio = _socio_o_404(db, id_socio)
+    telefono = _telefono_de(db, socio.id_persona, id_telefono)
+
+    if datos.principal and not telefono.principal:
+        _desmarcar_principales(db, socio.id_persona)
+        telefono.principal = True
+    elif not datos.principal and telefono.principal:
+        # Desmarcar el principal a secas dejaría la ficha sin ninguno. Se
+        # ignora el pedido: para cambiar cuál es el principal, se marca el
+        # OTRO — que es lo que la persona quiere hacer en realidad.
+        pass
+
+    telefono.numero = datos.numero
+    telefono.tipo = datos.tipo
+    db.commit()
+    db.refresh(telefono)
+    return TelefonoOut.model_validate(telefono)
+
+
+@router.delete("/{id_socio}/telefonos/{id_telefono}",
+               status_code=status.HTTP_204_NO_CONTENT)
+def borrar_telefono(
+    id_socio: int,
+    id_telefono: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.ALTA_BAJA_SOCIOS)),
+):
+    """
+    Saca un número de la ficha.
+
+    Acá se BORRA la fila, a diferencia de la baja de un socio: un teléfono
+    equivocado o que ya no existe no es historia que preservar, es un dato
+    falso que hace perder llamadas.
+    """
+    socio = _socio_o_404(db, id_socio)
+    telefono = _telefono_de(db, socio.id_persona, id_telefono)
+    era_principal = bool(telefono.principal)
+
+    db.delete(telefono)
+    db.flush()
+
+    # Si se fue el principal y quedan otros, asciende el más viejo. Sin esto la
+    # ficha diría "sin teléfono" teniendo dos cargados.
+    if era_principal:
+        quedan = _telefonos_ordenados(db, socio.id_persona)
+        if quedan:
+            quedan[0].principal = True
+
+    db.commit()
+
+
+# =============================================================================
 # ENTRENADOR A CARGO
 # =============================================================================
 #
@@ -729,10 +902,31 @@ def asignar_entrenador(
             detail=f"{nombre} ya está a cargo de este socio.",
         )
 
+    inicio = datos.fecha_inicio or date.today()
+
+    # VOLVER A TOMAR AL SOCIO EL MISMO DÍA QUE SE LO SOLTÓ.
+    #
+    # El índice único es (socio, entrenador, fecha_inicio), así que insertar
+    # una fila nueva con la misma fecha que una FINALIZADA reventaba con un
+    # IntegrityError -> 500. Pasa con sólo apretar dos botones: se finaliza la
+    # asignación y se la vuelve a crear en el día, que es exactamente el caso
+    # "me equivoqué de botón". Se reactiva la fila que ya existe.
+    misma_fecha = (db.query(AsignacionEntrenador)
+                   .filter(AsignacionEntrenador.id_socio == id_socio,
+                           AsignacionEntrenador.id_entrenador == datos.id_entrenador,
+                           AsignacionEntrenador.fecha_inicio == inicio)
+                   .first())
+    if misma_fecha is not None:
+        misma_fecha.estado = "ACTIVA"
+        misma_fecha.fecha_fin = None
+        db.commit()
+        db.refresh(misma_fecha)
+        return _a_asignacion_out(misma_fecha)
+
     asignacion = AsignacionEntrenador(
         id_socio=id_socio,
         id_entrenador=datos.id_entrenador,
-        fecha_inicio=datos.fecha_inicio or date.today(),
+        fecha_inicio=inicio,
         estado="ACTIVA",
     )
     db.add(asignacion)

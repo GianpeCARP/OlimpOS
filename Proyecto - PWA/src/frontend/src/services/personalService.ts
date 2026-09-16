@@ -65,6 +65,10 @@ interface EmpleadoApi {
   nombre: string;
   apellido: string;
   email: string | null;
+  // Aplanado por el backend desde la tabla Telefono (el principal). Viene
+  // también en el listado: sin él, el botón de contactar no tendría a dónde
+  // escribir y editar un empleado le borraba el teléfono al guardar.
+  telefono: string | null;
   tiene_cuenta: boolean;
 }
 
@@ -102,7 +106,7 @@ function aEmpleadoListado(e: EmpleadoApi): EmpleadoListado {
     nombreCompleto: `${e.nombre} ${e.apellido}`.trim(),
     iniciales: iniciales(e.nombre, e.apellido),
     email: e.email ?? undefined,
-    telefono: undefined, // el listado no lo trae; está en el detalle
+    telefono: e.telefono ?? undefined,
     // Un empleado sin fila en ninguna hija es alguien cargado a quien
     // todavía no se le asignó función. Se lo muestra como Recepcionista
     // —el rol más genérico— en vez de romper la tarjeta con undefined.

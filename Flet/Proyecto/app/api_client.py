@@ -131,7 +131,13 @@ def _procesar(respuesta) -> dict:
             return {"ok": True, "data": None}
     if respuesta.status_code == 204:
         return {"ok": True, "data": None}
-    return {"ok": False, "error": _mensaje_de_error(respuesta)}
+    # El código viaja junto al mensaje porque hay fallos que la pantalla puede
+    # OFRECER REINTENTAR y otros no: un 409 al fichar es "ya tiene un ingreso
+    # hoy", y quien atiende puede confirmarlo. Sin el número, todos los
+    # errores se ven iguales desde la vista y no queda forma de distinguirlos
+    # que comparar el texto del mensaje, que cambia.
+    return {"ok": False, "error": _mensaje_de_error(respuesta),
+            "status": respuesta.status_code}
 
 
 def _pedir(metodo: str, path: str, json_body: dict | None = None) -> dict:
@@ -435,6 +441,27 @@ def reactivar_socio(id_socio: int) -> dict:
     return _post(f"/socios/{id_socio}/reactivar")
 
 
+# --- Teléfonos de la ficha ---------------------------------------------------
+# Van por endpoints propios y no como un campo más del PUT del socio: agregar
+# un número no es editar la ficha, y no tiene por qué arrastrar nombre, email y
+# objetivo en el mismo pedido (ver routers/socios.py).
+
+def telefonos_de_socio(id_socio: int) -> dict:
+    return _get(f"/socios/{id_socio}/telefonos")
+
+
+def agregar_telefono(id_socio: int, datos: dict) -> dict:
+    return _post(f"/socios/{id_socio}/telefonos", datos)
+
+
+def editar_telefono(id_socio: int, id_telefono: int, datos: dict) -> dict:
+    return _put(f"/socios/{id_socio}/telefonos/{id_telefono}", datos)
+
+
+def borrar_telefono(id_socio: int, id_telefono: int) -> dict:
+    return _delete(f"/socios/{id_socio}/telefonos/{id_telefono}")
+
+
 # =============================================================================
 # PERSONAL
 # =============================================================================
@@ -584,12 +611,21 @@ def obtener_asistencias_hoy() -> dict:
     return _get("/asistencia/hoy")
 
 
-def fichar_rfid(codigo_rfid: str) -> dict:
-    return _post("/asistencia/fichar", {"codigo_rfid": codigo_rfid})
-
+# El fichaje por tarjeta se retiró de las dos apps (ver views/asistencia.py):
+# el gimnasio no tiene lector. El backend todavía acepta `codigo_rfid` para no
+# romper los registros históricos, pero ya no se manda desde acá.
 
 def fichar_manual(id_socio: int) -> dict:
+    """
+    Registra un ingreso. El backend NO rechaza el repetido: no hay tope diario
+    ni anti-duplicado, y la respuesta trae `ingreso_numero` para marcarlo.
+    """
     return _post("/asistencia/fichar", {"id_socio": id_socio})
+
+
+def deshacer_fichaje(id_asistencia: int) -> dict:
+    """Borra un ingreso mal cargado. El backend sólo deja los de hoy."""
+    return _delete(f"/asistencia/{id_asistencia}")
 
 
 # =============================================================================

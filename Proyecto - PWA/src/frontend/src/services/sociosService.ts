@@ -89,6 +89,86 @@ export async function listarSocios(): Promise<SocioListado[]> {
   return datos.map(aSocioListado);
 }
 
+// =========================================================================
+// TELÉFONOS DE LA FICHA
+// =========================================================================
+//
+// `Telefono` siempre fue una tabla —una persona tiene el celular, el de la
+// casa, el del trabajo— pero la ficha la usaba como si fuera una columna:
+// `SocioListado.telefono` es el PRINCIPAL, que el backend aplana para el
+// listado, y era el único que se podía cargar.
+//
+// Estas funciones manejan todos los demás. Van por endpoints propios y no por
+// el PUT de la ficha porque agregar un número no es editar la ficha: pasa en
+// otro momento y no tiene por qué arrastrar nombre, email y objetivo en el
+// mismo pedido (ver routers/socios.py).
+
+export type TipoTelefono = 'CELULAR' | 'FIJO';
+
+export interface TelefonoDeSocio {
+  idTelefono: number;
+  numero: string;
+  tipo: TipoTelefono;
+  /** El que sale en el listado y al que se llama primero. Hay uno solo. */
+  principal: boolean;
+}
+
+interface TelefonoApi {
+  id_telefono: number;
+  numero: string;
+  tipo: string | null;
+  principal: boolean;
+}
+
+function aTelefono(t: TelefonoApi): TelefonoDeSocio {
+  return {
+    idTelefono: t.id_telefono,
+    numero: t.numero,
+    // El ENUM de la base sólo tiene estos dos; cualquier otra cosa (o null,
+    // que la columna admite) se muestra como celular, que es el caso común.
+    tipo: t.tipo === 'FIJO' ? 'FIJO' : 'CELULAR',
+    principal: t.principal,
+  };
+}
+
+export interface TelefonoInput {
+  numero: string;
+  tipo: TipoTelefono;
+  principal: boolean;
+}
+
+export async function listarTelefonos(idSocio: number): Promise<TelefonoDeSocio[]> {
+  const datos = await pedir<TelefonoApi[]>(`/socios/${idSocio}/telefonos`);
+  return datos.map(aTelefono);
+}
+
+export async function agregarTelefono(
+  idSocio: number,
+  input: TelefonoInput,
+): Promise<TelefonoDeSocio> {
+  const datos = await pedir<TelefonoApi>(`/socios/${idSocio}/telefonos`, {
+    metodo: 'POST',
+    cuerpo: { numero: input.numero.trim(), tipo: input.tipo, principal: input.principal },
+  });
+  return aTelefono(datos);
+}
+
+export async function editarTelefono(
+  idSocio: number,
+  idTelefono: number,
+  input: TelefonoInput,
+): Promise<TelefonoDeSocio> {
+  const datos = await pedir<TelefonoApi>(`/socios/${idSocio}/telefonos/${idTelefono}`, {
+    metodo: 'PUT',
+    cuerpo: { numero: input.numero.trim(), tipo: input.tipo, principal: input.principal },
+  });
+  return aTelefono(datos);
+}
+
+export async function borrarTelefono(idSocio: number, idTelefono: number): Promise<void> {
+  await pedir<void>(`/socios/${idSocio}/telefonos/${idTelefono}`, { metodo: 'DELETE' });
+}
+
 /** La forma en que el backend devuelve los planes. */
 interface TipoMembresiaApi {
   id_tipo_membresia: number;

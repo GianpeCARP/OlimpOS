@@ -38,6 +38,49 @@ class LoginRequest(BaseModel):
     password: str
 
 
+def _telefono_valido(v: str | None) -> str | None:
+    """
+    Un teléfono lleva dígitos, y como mucho + ( ) - y espacios. Antes entraba
+    cualquier texto: "no tiene" quedaba guardado como número y después nadie
+    podía llamar ni mandar un WhatsApp.
+    """
+    v = (v or "").strip()
+    if not v:
+        return None
+    if not re.fullmatch(r"[+()\-\s0-9]{6,25}", v) or sum(c.isdigit() for c in v) < 6:
+        raise PydanticCustomError(
+            "telefono_invalido",
+            "El teléfono sólo puede tener números (y + - ( ) espacios), mínimo 6 dígitos.")
+    return v
+
+
+def _email_valido(v: str | None) -> str | None:
+    """
+    EmailStr por sí solo acepta direcciones a las que no se le puede escribir a
+    nadie: "juan@casa" pasa su validación —es sintácticamente correcto— pero no
+    existe como destino. El reclamo del gimnasio fue exactamente ese: el campo
+    dejaba poner cualquier cosa.
+
+    Se exige un dominio con punto y una terminación de al menos dos letras
+    (.com, .ar, .com.ar). NO valida que la casilla exista —eso sólo se sabe
+    mandando un mail— pero descarta el dedazo y el relleno, que es lo que
+    ensuciaba la base.
+
+    Además normaliza a minúsculas: el dominio no distingue mayúsculas, y sin
+    esto "Juan@Gmail.com" y "juan@gmail.com" entran como dos personas distintas
+    al chequear si un mail ya está registrado.
+    """
+    v = (v or "").strip()
+    if not v:
+        return None
+    dominio = v.rsplit("@", 1)[-1]
+    if not re.fullmatch(r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}", dominio):
+        raise PydanticCustomError(
+            "email_invalido",
+            "El email tiene que tener un dominio completo, como nombre@gmail.com.")
+    return v.lower()
+
+
 # Las más usadas que pasarían "letras y números". No pretende ser exhaustiva:
 # corta lo primero que prueba cualquiera.
 _PASSWORDS_COMUNES = {
@@ -175,7 +218,14 @@ class SocioAltaRequest(BaseModel):
     emergencia_parentesco: str | None = None
 
     # --- Teléfono (tabla aparte: una persona puede tener varios) ---
+    # Acá viaja UNO solo, el principal, porque el alta se hace en el mostrador
+    # con la persona enfrente y pedirle tres números ahí es perder tiempo. Los
+    # demás se agregan después desde la ficha, con POST /socios/{id}/telefonos.
     telefono: str | None = None
+
+    _validar_telefono = field_validator("telefono")(_telefono_valido)
+    _validar_email = field_validator("email")(_email_valido)
+    _validar_emergencia = field_validator("emergencia_telefono")(_telefono_valido)
 
     # --- Socio ---
     id_sede: int
@@ -225,9 +275,53 @@ class SocioEditarRequest(BaseModel):
     nombre: str = Field(min_length=1, max_length=100)
     apellido: str = Field(min_length=1, max_length=100)
     email: EmailStr | None = None
+    # Sigue siendo UNO: este endpoint edita el principal. Los otros números de
+    # la persona se manejan por /socios/{id}/telefonos, que es donde se pueden
+    # agregar y borrar sin tocar el resto de la ficha.
     telefono: str | None = None
     objetivo: str | None = None
     observaciones: str | None = None
+
+    _validar_telefono = field_validator("telefono")(_telefono_valido)
+    _validar_email = field_validator("email")(_email_valido)
+
+
+class TelefonoOut(BaseModel):
+    """
+    Un teléfono de la ficha. La tabla Telefono existe desde el primer día
+    justamente porque una persona tiene varios —el celular, el de la casa, el
+    del trabajo— y hasta acá el sistema sólo dejaba cargar uno.
+    """
+    model_config = ConfigDict(from_attributes=True)
+
+    id_telefono: int
+    numero: str
+    tipo: str | None = None
+    principal: bool = False
+
+
+class TelefonoRequest(BaseModel):
+    numero: str
+    # CELULAR por defecto porque es lo que se carga el 90% de las veces, y
+    # porque es el único al que se le puede mandar un WhatsApp.
+    tipo: str = "CELULAR"
+    # Marcar uno como principal DESMARCA al anterior (lo hace el router): es el
+    # que sale en el listado y al que se llama primero. Tener dos principales
+    # sería no tener ninguno.
+    principal: bool = False
+
+    _validar_numero = field_validator("numero")(_telefono_valido)
+
+    @field_validator("tipo")
+    @classmethod
+    def _tipo_conocido(cls, v: str) -> str:
+        # El ENUM de la base sólo acepta estos dos; mandarle otra cosa da un
+        # error de Postgres ilegible en pantalla.
+        v = (v or "CELULAR").strip().upper()
+        if v not in ("CELULAR", "FIJO"):
+            raise PydanticCustomError("tipo_telefono_invalido",
+                                      "El tipo de teléfono tiene que ser CELULAR o FIJO.")
+        return v
 
 
 class TipoBaja(str, Enum):
@@ -362,6 +456,13 @@ class AsistenciaOut(BaseModel):
     fecha_hora_ingreso: datetime
     fecha_hora_egreso: datetime | None = None
     metodo_registro: MetodoRegistro
+    # Qué número de ingreso del día es ESTE para ese socio (1 = el primero).
+    # No se guarda en ninguna columna: se cuenta al responder. Es lo que
+    # reemplazó al tope diario — el mostrador ya no frena a nadie, pero ve al
+    # lado del nombre que alguien entró tres veces hoy. Ver el comentario de
+    # routers/asistencia.py.
+    # None donde "ingreso del día" no significa nada: el historial de un socio.
+    ingreso_numero: int | None = None
 
 
 class FicharResponse(BaseModel):
@@ -946,6 +1047,10 @@ class MiPerfilEditarRequest(BaseModel):
     emergencia_telefono: str | None = None
     emergencia_parentesco: str | None = None
 
+    _validar_telefono = field_validator("telefono")(_telefono_valido)
+    _validar_emergencia = field_validator("emergencia_telefono")(_telefono_valido)
+    _validar_email = field_validator("email")(_email_valido)
+
 
 class MedicionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -1393,6 +1498,18 @@ class EmpleadoAltaRequest(BaseModel):
     telefono: str | None = None
     fecha_nacimiento: date | None = None
 
+    _validar_telefono = field_validator("telefono")(_telefono_valido)
+    _validar_email = field_validator("email")(_email_valido)
+
+    @model_validator(mode="after")
+    def _con_forma_de_contactarlo(self):
+        # Un empleado sin mail NI teléfono no se puede contactar, y además no
+        # hay por dónde mandarle sus credenciales.
+        if not self.email and not (self.telefono or "").strip():
+            raise PydanticCustomError(
+                "sin_contacto", "Cargá un email o un teléfono: hace falta para contactarlo.")
+        return self
+
     # --- Empleado ---
     id_sede: int
     fecha_ingreso: date | None = None      # por defecto, hoy
@@ -1443,6 +1560,11 @@ class EmpleadoOut(BaseModel):
     nombre: str
     apellido: str
     email: str | None = None
+    # El teléfono vive en la tabla Telefono (una persona puede tener varios):
+    # acá viaja el principal, aplanado. Sin esto, el formulario de edición
+    # reabría con el campo vacío aunque el backend lo hubiera guardado, y
+    # guardar de nuevo lo borraba.
+    telefono: str | None = None
     tiene_cuenta: bool = False
 
 
@@ -1457,6 +1579,16 @@ class EmpleadoEditarRequest(BaseModel):
     email: EmailStr | None = None
     telefono: str | None = None
     rol: RolEmpleado
+
+    _validar_telefono = field_validator("telefono")(_telefono_valido)
+    _validar_email = field_validator("email")(_email_valido)
+
+    @model_validator(mode="after")
+    def _con_forma_de_contactarlo(self):
+        if not self.email and not (self.telefono or "").strip():
+            raise PydanticCustomError(
+                "sin_contacto", "Cargá un email o un teléfono: hace falta para contactarlo.")
+        return self
     titulo: str | None = None
     especialidad: str | None = None
     matricula: str | None = None
@@ -1910,6 +2042,16 @@ class AsignarPatologiaRequest(BaseModel):
     id_patologia: int
     fecha_diagnostico: date | None = None
     observaciones: str | None = None
+
+    @field_validator("fecha_diagnostico")
+    @classmethod
+    def _no_futura(cls, v: date | None) -> date | None:
+        # Un diagnóstico es algo que YA pasó. Dejar poner una fecha futura no
+        # significa nada y ensucia el historial.
+        if v is not None and v > date.today():
+            raise PydanticCustomError(
+                "fecha_futura", "La fecha de diagnóstico no puede ser posterior a hoy.")
+        return v
 
 
 class PatologiaDeSocioOut(BaseModel):

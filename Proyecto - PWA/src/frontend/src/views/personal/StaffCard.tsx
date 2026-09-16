@@ -4,6 +4,7 @@ import {
   GraduationCap,
   Headset,
   Mail,
+  MessageCircle,
   Pencil,
   RotateCcw,
   UserX,
@@ -20,6 +21,7 @@ import {
   type TurnoLaboralValue,
 } from '../../config';
 import type { EmpleadoListado } from '../../services/personalService';
+import { linkMail, linkWhatsapp } from '../../utils/contacto';
 
 // Equivalente de _staff_card + ROL_ICONS + TURNO_COLORS
 // (estructura_personal.md).
@@ -39,6 +41,34 @@ const COLORES_TURNO: Record<TurnoLaboralValue, string> = {
   [TurnoLaboral.TARDE]: colors.accentCoral,
   [TurnoLaboral.NOCHE]: colors.primaryVolt,
 };
+
+/**
+ * A dónde escribirle a un empleado, y con qué ícono.
+ *
+ * El mail gana cuando están los dos: es la vía donde una contraseña o un aviso
+ * del gimnasio quedan guardados y buscables, mientras que un WhatsApp se
+ * pierde en la conversación. El teléfono es el respaldo para quien no dejó
+ * mail — que es la mitad de los casos reales.
+ */
+function vinculoDeContacto(
+  empleado: EmpleadoListado,
+): { href: string; titulo: string; Icono: LucideIcon } | null {
+  if (empleado.email) {
+    return {
+      href: linkMail(empleado.email),
+      titulo: `Escribir a ${empleado.email}`,
+      Icono: Mail,
+    };
+  }
+  if (empleado.telefono) {
+    return {
+      href: linkWhatsapp(empleado.telefono),
+      titulo: `WhatsApp a ${empleado.telefono}`,
+      Icono: MessageCircle,
+    };
+  }
+  return null;
+}
 
 interface StaffCardProps {
   empleado: EmpleadoListado;
@@ -63,6 +93,7 @@ export function StaffCard({
   onActivar,
 }: StaffCardProps) {
   const IconoRol = ICONOS_ROL[empleado.rol];
+  const contacto = vinculoDeContacto(empleado);
   // Solo los recepcionistas tienen turno; para el resto el chip lleva el
   // color neutro y muestra su dato propio (especialidad o título).
   const colorChip = empleado.turno ? COLORES_TURNO[empleado.turno] : colors.textSecondary;
@@ -139,21 +170,25 @@ export function StaffCard({
             Editar
           </button>
         )}
-        {/* "Contactar" abre el cliente de mail. Si la persona no tiene email
-            cargado no hay a dónde escribir, así que se muestra apagado y no
-            clickeable — un <a> sin href no es un link. */}
-        {empleado.email ? (
+        {/* "Contactar" abre el mail o el WhatsApp, según lo que tenga cargado
+            (ver `contacto` más arriba). Desde que el alta exige al menos una
+            de las dos vías, un empleado nuevo siempre tiene a dónde: el estado
+            apagado queda para las fichas viejas, cargadas antes de esa regla,
+            y es la señal de que a esa persona hay que completarle el contacto. */}
+        {contacto ? (
           <a
-            href={`mailto:${empleado.email}`}
-            title={`Escribir a ${empleado.email}`}
+            href={contacto.href}
+            target="_blank"
+            rel="noreferrer"
+            title={contacto.titulo}
             className="flex flex-1 items-center justify-center gap-2 rounded-md border border-border-idle px-3 py-2 font-body text-sm text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-main"
           >
-            <Mail size={14} />
+            <contacto.Icono size={14} />
             Contactar
           </a>
         ) : (
           <span
-            title="Sin email cargado"
+            title="Sin email ni teléfono cargados"
             className="flex flex-1 cursor-not-allowed items-center justify-center gap-2 rounded-md border border-border-idle px-3 py-2 font-body text-sm text-text-muted opacity-40"
           >
             <Mail size={14} />

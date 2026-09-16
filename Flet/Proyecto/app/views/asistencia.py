@@ -1,19 +1,43 @@
 # =============================================================================
 # views/asistencia.py — Panel de asistencia de recepción
 # =============================================================================
-# Espejo de AsistenciaView.tsx de la PWA. Dos formas de fichar y una lista:
-#   1. Tarjeta RFID: el lector se comporta como un teclado rápido que termina
-#      en Enter, así que el campo se mantiene enfocado y se limpia solo — quien
-#      atiende no tiene que clickear nada entre socio y socio.
-#   2. Carga manual: buscador de socio para el que se olvidó la tarjeta.
-#   3. Fichajes del día, del más reciente al más viejo.
+# Espejo de AsistenciaView.tsx de la PWA. Una forma de fichar y una lista:
+#   1. Carga manual: se busca al socio por nombre o DNI y se registra su
+#      ingreso.
+#   2. Fichajes del día, del más reciente al más viejo, cada uno con la opción
+#      de deshacerlo.
+#
+# SE RETIRÓ EL FICHAJE CON TARJETA
+# --------------------------------
+# Había una tarjeta "Fichar con tarjeta" con un campo que se automantenía
+# enfocado, pensada para un lector RFID —que funciona como un teclado rápido
+# terminado en Enter—. El gimnasio no usa lector, así que ocupaba media
+# pantalla del mostrador sin hacer nada. Los ingresos históricos con
+# metodo_registro='RFID' siguen en la base y la lista los distingue por el
+# ícono: lo que se sacó es la forma de crear nuevos, no el dato viejo.
+#
+# PERO EL CAMINO RFID DEL BACKEND QUEDA A PROPÓSITO. Lo que se sacó fue el campo
+# de texto, que no era un lector. El fichaje con tarjeta va a volver como aparato
+# físico en la puerta, cuando se compre el sensor. Por eso `Socio.codigo_rfid` y
+# el `codigo_rfid` de POST /asistencia/fichar siguen ahí aunque hoy nada los use:
+# parecen código muerto y no lo son. Ver "Lo que FALTA" en
+# docs/ESTADO-ACTUAL.md antes de limpiarlos.
+#
+# EL INGRESO REPETIDO SE MARCA, NO SE FRENA
+# -----------------------------------------
+# Antes, el segundo ingreso del día abría un diálogo de confirmación. Se sacó:
+# quien atiende el mostrador no lee el cartel —con gente en la cola lo acepta
+# sin mirarlo, o deja al socio parado en la puerta—. Ahora se registra siempre
+# y la lista muestra un chip "2º de hoy" al lado del nombre. El dato sigue
+# estando para quien quiera mirar el caso; lo que no hay es una pantalla
+# pidiéndole permiso a alguien que está apurado.
 
 import flet as ft
 from app.config import Colors, Fonts, Radius, alpha
 from app.state import app_state
 from app.components.ui import (build_topbar, section_card, primary_button,
-                               input_field, search_field, empty_state,
-                               divider_row, avatar, show_snack)
+                               search_field, empty_state, divider_row,
+                               show_snack, confirm_dialog, open_dialog)
 
 
 class AsistenciaView:
@@ -26,7 +50,6 @@ class AsistenciaView:
         # id y la hora que asignó el backend, no fabricados acá.
         self._fichajes = list(app_state.get_asistencias_hoy())
 
-        self._rfid_ref  = ft.Ref[ft.TextField]()
         self._lista_ref = ft.Ref[ft.Column]()
 
     # ── Construcción ─────────────────────────────────────────────────────────
@@ -35,10 +58,7 @@ class AsistenciaView:
         topbar = build_topbar("Panel de asistencia", self._texto_subtitulo())
 
         cuerpo = ft.Column([
-            ft.ResponsiveRow([
-                ft.Container(col={"xs": 12, "lg": 6}, content=self._card_rfid()),
-                ft.Container(col={"xs": 12, "lg": 6}, content=self._card_manual()),
-            ], spacing=16, run_spacing=16),
+            self._card_manual(),
             ft.Container(height=16),
             self._card_fichajes(),
         ], spacing=0)
@@ -56,44 +76,7 @@ class AsistenciaView:
         n = len(self._fichajes)
         return f"{n} ingreso{'' if n == 1 else 's'} hoy"
 
-    # ── Fichaje por tarjeta ──────────────────────────────────────────────────
-
-    def _card_rfid(self) -> ft.Control:
-        campo = input_field("Código de tarjeta", "Pasá la tarjeta o escribí el código…",
-                            icon=ft.Icons.BADGE_ROUNDED, ref=self._rfid_ref)
-        # El lector RFID termina la lectura con Enter: on_submit es el disparador
-        # natural, sin botón de por medio.
-        campo.on_submit = self._fichar_rfid
-
-        return section_card(
-            ft.Column([
-                campo,
-                ft.Text("El campo queda enfocado todo el tiempo: pasar la tarjeta "
-                        "alcanza, no hace falta clickear nada.",
-                        color=Colors.TEXT_MUTED, size=12, font_family=Fonts.BODY),
-            ], spacing=8),
-            title="Fichar con tarjeta",
-        )
-
-    def _fichar_rfid(self, e=None):
-        codigo = (self._rfid_ref.current.value or "").strip()
-        if not codigo:
-            return
-
-        # El backend resuelve el socio por su codigo_rfid y rechaza con 404 si
-        # la tarjeta no corresponde a ninguno.
-        resultado = app_state.fichar_rfid(codigo)
-
-        # El campo se limpia y se reenfoca SIEMPRE, salga bien o mal: el lector
-        # es un teclado que dispara solo, y si quedara texto viejo el próximo
-        # pase lo concatenaría al anterior.
-        self._rfid_ref.current.value = ""
-        self._rfid_ref.current.focus()
-        self._rfid_ref.current.update()
-
-        self._mostrar_resultado(resultado)
-
-    # ── Carga manual ─────────────────────────────────────────────────────────
+    # ── Registrar un ingreso ─────────────────────────────────────────────────
 
     def _card_manual(self) -> ft.Control:
         resultados = ft.Column([], spacing=0)
@@ -127,18 +110,14 @@ class AsistenciaView:
 
         return section_card(
             ft.Column([
-                search_field("Para quien se olvidó la tarjeta…", width=None,
+                search_field("Nombre o DNI del socio…", width=None,
                              on_change=buscar),
                 resultados,
             ], spacing=12),
-            title="Carga manual",
+            title="Registrar ingreso",
         )
 
     def _fila_socio(self, socio: dict) -> ft.Container:
-        def registrar(e):
-            # Quién lo cargó no se manda: el backend lo saca de la sesión.
-            self._mostrar_resultado(app_state.fichar_manual(socio["id"]))
-
         return ft.Container(
             content=ft.Row([
                 ft.Column([
@@ -147,10 +126,17 @@ class AsistenciaView:
                     ft.Text(f"DNI {socio.get('dni') or '—'}", color=Colors.TEXT_MUTED, size=12,
                             font_family=Fonts.BODY),
                 ], spacing=1, tight=True, expand=True),
-                primary_button("Registrar ingreso", on_click=registrar),
+                primary_button("Registrar ingreso",
+                               on_click=lambda e, s=socio: self._registrar(s)),
             ], spacing=12),
             padding=ft.Padding.symmetric(vertical=8),
         )
+
+    def _registrar(self, socio: dict):
+        # Quién lo cargó no se manda: el backend lo saca de la sesión.
+        # El ingreso repetido tampoco se pregunta: se registra y se marca en la
+        # lista (ver el encabezado y routers/asistencia.py).
+        self._mostrar_resultado(app_state.fichar_manual(socio["id"]))
 
     # ── Lista de fichajes ────────────────────────────────────────────────────
 
@@ -167,6 +153,8 @@ class AsistenciaView:
 
         filas = []
         for i, f in enumerate(self._fichajes):
+            # Los ingresos viejos cargados con lector siguen en la base: el
+            # ícono los distingue de los manuales.
             es_rfid = f["metodo"] == "RFID"
             filas.append(
                 ft.Container(
@@ -182,13 +170,18 @@ class AsistenciaView:
                             alignment=ft.Alignment.CENTER,
                         ),
                         ft.Column([
-                            ft.Text(f["socio"], color=Colors.TEXT_MAIN, size=14,
-                                    font_family=Fonts.BODY),
+                            self._nombre_con_chip(f),
                             ft.Text(f["metodo"], color=Colors.TEXT_MUTED, size=12,
                                     font_family=Fonts.BODY),
                         ], spacing=1, tight=True, expand=True),
                         ft.Text(f["hora"], color=Colors.TEXT_SECONDARY, size=13,
                                 font_family=Fonts.MONO),
+                        ft.IconButton(
+                            ft.Icons.DELETE_OUTLINE_ROUNDED,
+                            icon_color=Colors.TEXT_MUTED, icon_size=16,
+                            tooltip="Deshacer este ingreso",
+                            on_click=lambda e, x=f: self._pedir_deshacer(x),
+                        ),
                     ], spacing=12),
                     padding=ft.Padding.symmetric(vertical=9),
                 )
@@ -196,6 +189,59 @@ class AsistenciaView:
             if i < len(self._fichajes) - 1:
                 filas.append(divider_row())
         return filas
+
+    def _nombre_con_chip(self, f: dict) -> ft.Control:
+        """
+        El nombre y, si ya había fichado hoy, un chip con el número de ingreso.
+
+        Es lo que reemplazó al tope de un ingreso por día: el mostrador no
+        frena a nadie, pero ve que esta es la segunda o la tercera vez. Gemelo
+        del chip de AsistenciaView.tsx.
+        """
+        controles = [ft.Text(f["socio"], color=Colors.TEXT_MAIN, size=14,
+                             font_family=Fonts.BODY)]
+
+        # El backend no lo manda en los listados viejos cacheados: si no está,
+        # se asume el primero y no se marca nada.
+        numero = f.get("numero") or 1
+        if numero > 1:
+            controles.append(ft.Container(
+                content=ft.Text(f"{numero}º de hoy", color=Colors.STATUS_WARN,
+                                size=11, font_family=Fonts.BODY),
+                bgcolor=Colors.SURFACE_HOVER,
+                border_radius=Radius.SM,
+                padding=ft.Padding.symmetric(horizontal=6, vertical=1),
+                tooltip="Ya había fichado antes hoy",
+            ))
+
+        return ft.Row(controles, spacing=6, tight=True)
+
+    # ── Deshacer un ingreso ──────────────────────────────────────────────────
+
+    def _pedir_deshacer(self, f: dict):
+        open_dialog(self.page, confirm_dialog(
+            self.page, "¿Borrar este ingreso?",
+            f"Se elimina el ingreso de {f['socio']} de las {f['hora']}. Es para el "
+            "ingreso que no ocurrió —alguien que fichó por otro, o el socio "
+            "equivocado—: desaparece de la lista y deja de contar en el total "
+            "del día.",
+            on_confirm=lambda: self._deshacer(f),
+            texto_confirmar="Borrar",
+        ))
+
+    def _deshacer(self, f: dict):
+        resultado = app_state.deshacer_fichaje(f["id"])
+        if not resultado["ok"]:
+            show_snack(self.page, resultado["mensaje"], Colors.STATUS_DANGER)
+            return
+
+        self._fichajes = [x for x in self._fichajes if x["id"] != f["id"]]
+        if self._lista_ref.current:
+            self._lista_ref.current.controls = self._filas_fichajes()
+            self._lista_ref.current.update()
+        show_snack(self.page, resultado["mensaje"], Colors.STATUS_OK)
+
+    # ── Resultado de un fichaje ──────────────────────────────────────────────
 
     def _mostrar_resultado(self, resultado: dict):
         """

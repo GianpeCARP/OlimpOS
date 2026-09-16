@@ -18,8 +18,9 @@ import time
 import flet as ft
 from app.config import Colors, Fonts, Radius, Routes, alpha
 from app.state import app_state
-from app.components.ui import (build_topbar, input_field, primary_button,
-                                show_snack, open_dialog, close_dialog)
+from app.components.ui import (build_topbar, input_field,
+                                primary_button, show_snack, open_dialog,
+                                close_dialog)
 
 # Cada cuánto se vuelve a pedir el panel.
 #
@@ -311,7 +312,11 @@ class RecepcionView:
         registrado — perder la clase no es motivo para no dejar entrar a
         alguien con la cuota paga.
         """
+        # El ingreso repetido no se pregunta ni se frena: el backend lo
+        # registra y el mensaje dice cuál número de ingreso del día es. Ver
+        # routers/asistencia.py — quien atiende el mostrador no lee el cartel.
         r = app_state.fichar_manual(socio["id"])
+
         if not r["ok"]:
             show_snack(self.page, r["mensaje"], Colors.STATUS_DANGER)
             return

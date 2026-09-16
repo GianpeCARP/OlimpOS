@@ -11,6 +11,10 @@ from app.permisos import Accion
 from app.state import app_state
 from app.components.ui import (build_topbar, confirm_dialog, status_badge, primary_button,
                                 input_field, show_snack, open_dialog, close_dialog)
+from app.contacto import limpiar_telefono, link_mail, link_whatsapp
+
+# Asunto del mail de credenciales. Igual que en EmpleadoFormModal.tsx.
+ASUNTO_CREDENCIALES = "Tus datos de acceso a OlimpOS"
 
 # Mapa turno → (color de texto, color de fondo translúcido)
 #
@@ -106,18 +110,37 @@ class PersonalView:
                 on_click=lambda e, x=p: self._cambiar_estado(x),
             ))
 
-        # "Contactar" abre el cliente de mail; sin mail cargado queda apagado.
-        email = p.get("email") or ""
+        # "Contactar" abre el mail o, si la persona sólo dejó teléfono, el
+        # WhatsApp. El mail gana cuando están los dos: queda guardado y
+        # buscable, mientras que un WhatsApp se pierde en la conversación.
+        # Misma regla que StaffCard.tsx.
+        #
+        # Desde que el alta exige una de las dos vías, un empleado nuevo
+        # siempre tiene a dónde; el estado apagado queda para las fichas
+        # viejas, y es la señal de que a esa persona hay que completarle el
+        # contacto.
+        email    = p.get("email") or ""
+        telefono = p.get("telefono") or ""
+        if email:
+            destino, icono, tip = (link_mail(email), ft.Icons.EMAIL_OUTLINED,
+                                   f"Escribir a {email}")
+        elif telefono:
+            destino, icono, tip = (link_whatsapp(telefono), ft.Icons.CHAT_OUTLINED,
+                                   f"WhatsApp a {telefono}")
+        else:
+            destino, icono, tip = (None, ft.Icons.EMAIL_OUTLINED,
+                                   "Sin email ni teléfono cargados")
+
         contactar = ft.Container(
             content=ft.Row([
-                ft.Icon(ft.Icons.EMAIL_OUTLINED, color=Colors.TEXT_SECONDARY, size=14),
+                ft.Icon(icono, color=Colors.TEXT_SECONDARY, size=14),
                 ft.Text("Contactar", color=Colors.TEXT_SECONDARY, size=12),
             ], spacing=4),
             bgcolor=Colors.BG_SIDEBAR, border_radius=8,
             padding=ft.Padding.symmetric(horizontal=10, vertical=6),
-            on_click=(lambda e, m=email: self.page.launch_url(f"mailto:{m}")) if email else None,
-            tooltip=f"Escribir a {email}" if email else "Sin email cargado",
-            opacity=1 if email else 0.4,
+            on_click=(lambda e, u=destino: self.page.launch_url(u)) if destino else None,
+            tooltip=tip,
+            opacity=1 if destino else 0.4,
         )
 
         return ft.Container(
@@ -355,6 +378,24 @@ class PersonalView:
                        Colors.STATUS_DANGER)
             return
 
+        # Mail o teléfono, al menos uno. El backend lo exige igual —es la
+        # regla, no una comodidad de esta pantalla— pero avisar acá evita el
+        # viaje y señala el problema con el formulario todavía a la vista: un
+        # empleado al que nadie sabe cómo contactar no sirve de nada.
+        if not datos["email"] and not datos["telefono"]:
+            show_snack(self.page,
+                       "Cargá un email o un teléfono: sin una de las dos vías "
+                       "no hay forma de contactarlo.",
+                       Colors.STATUS_DANGER)
+            return
+
+        if datos["telefono"] and limpiar_telefono(datos["telefono"]) != datos["telefono"]:
+            show_snack(self.page,
+                       "El teléfono sólo puede tener números, espacios y los "
+                       "signos + ( ) -.",
+                       Colors.STATUS_DANGER)
+            return
+
         cuerpo = {
             "dni": datos["dni"],
             "nombre": datos["nombre"],
@@ -395,22 +436,51 @@ class PersonalView:
         # En el alta el backend puede devolver credenciales. Se muestran una
         # sola vez: en la base queda el hash y no hay forma de volver a leerlas.
         if id_empleado is None and resultado.get("password_temporal"):
-            self._mostrar_credenciales(resultado)
+            self._mostrar_credenciales(resultado, datos["email"], datos["telefono"])
         else:
             show_snack(self.page, resultado["mensaje"], Colors.SUCCESS)
 
         self.router.navigate(Routes.PERSONAL)
 
-    def _mostrar_credenciales(self, resultado: dict):
+    def _mostrar_credenciales(self, resultado: dict, email: str = "", telefono: str = ""):
         """
-        Muestra usuario y contraseña temporal del empleado recién dado de alta.
+        Entrega las credenciales del empleado recién dado de alta.
 
         Va en un diálogo y no en un snack a propósito: el snack se va solo a
         los pocos segundos y esta contraseña no se puede volver a consultar
         —la base guarda el hash—, así que si se pierde hay que resetearla.
-        El diálogo obliga a cerrarlo, que es tiempo suficiente para copiarla.
+
+        Y además de mostrarlas, las MANDA: los botones abren el mail o el
+        WhatsApp con el mensaje ya escrito. Hasta acá el alta terminaba con
+        alguien copiando una contraseña a mano para pasarla por otro lado.
+
+        El texto lo arma el BACKEND (`texto_credenciales`, de
+        notificaciones.py), el mismo que manda por mail: así el empleado lee
+        lo mismo por donde le llegue, y la advertencia de que la contraseña es
+        de un solo uso no depende de que cada pantalla se acuerde de ponerla.
         """
         legajo = resultado.get("legajo")
+        texto = resultado.get("texto_credenciales") or (
+            f"Usuario: {resultado.get('usuario', '—')} — "
+            f"Contraseña temporal: {resultado['password_temporal']}")
+
+        # El mail primero cuando existe; si sólo dejó teléfono, WhatsApp es la
+        # única vía. Misma regla que el botón "Contactar" de la tarjeta.
+        envios = []
+        if email:
+            envios.append(ft.TextButton(
+                "Enviar por mail",
+                style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                on_click=lambda e: self.page.launch_url(
+                    link_mail(email, ASUNTO_CREDENCIALES, texto)),
+            ))
+        if telefono:
+            envios.append(ft.TextButton(
+                "Enviar por WhatsApp",
+                style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                on_click=lambda e: self.page.launch_url(
+                    link_whatsapp(telefono, texto)),
+            ))
         dlg = ft.AlertDialog(
             modal=True,
             title=ft.Text("Empleado dado de alta",
@@ -431,12 +501,17 @@ class PersonalView:
                             color=Colors.PRIMARY_VOLT, size=14,
                             weight=ft.FontWeight.BOLD, selectable=True),
                     ft.Container(height=12),
-                    ft.Text("Anotala ahora: no se puede volver a ver. "
-                            "El empleado deberá cambiarla al entrar por primera vez.",
+                    *([ft.Text(f"Ya se le envió un mail a {email} con estos datos.",
+                               color=Colors.STATUS_OK, size=12)]
+                      if resultado.get("email_enviado") else []),
+                    ft.Text("No se puede volver a ver: en la base queda sólo el "
+                            "hash. Mandásela ahora. El empleado deberá cambiarla "
+                            "al entrar por primera vez.",
                             color=Colors.STATUS_WARN, size=12),
                 ], spacing=0, tight=True),
             ),
             actions=[
+                *envios,
                 ft.TextButton("Listo",
                               style=ft.ButtonStyle(color=Colors.ACCENT),
                               on_click=lambda e: close_dialog(self.page, dlg)),

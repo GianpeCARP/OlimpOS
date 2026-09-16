@@ -16,7 +16,7 @@ import {
 import type { SocioListado } from '../../services/sociosService';
 import { useUiStore } from '../../store/uiStore';
 import { formatearFecha } from '../../utils/format';
-import { parsearFecha } from '../../utils/fechas';
+import { aFechaISO, parsearFecha } from '../../utils/fechas';
 
 // Gemelo de `_patologias` / `_editar_patologia` / `_nueva_del_catalogo` de
 // `app/views/socios.py` en Flet. Allá son tres AlertDialog encadenados porque
@@ -38,6 +38,21 @@ import { parsearFecha } from '../../utils/fechas';
 interface PatologiasModalProps {
   socio: SocioListado;
   onClose: () => void;
+}
+
+/**
+ * Tope del selector de fecha: no se diagnostica algo que todavía no pasó.
+ *
+ * El backend ya lo rechaza, pero un `max` en el input hace que el calendario
+ * directamente no ofrezca los días futuros — mejor que dejar elegir y contestar
+ * con un error después de mandar el formulario.
+ *
+ * Con `aFechaISO` y no `toISOString()`: este último pasa a UTC, y a la noche
+ * (UTC-3) ya devuelve la fecha de mañana, que es justo el día que hay que
+ * bloquear.
+ */
+function hoyISO(): string {
+  return aFechaISO(new Date());
 }
 
 type Modo =
@@ -286,6 +301,7 @@ export function PatologiasModal({ socio, onClose }: PatologiasModalProps) {
                       onChange={setFecha}
                       icon={CalendarDays}
                       type="date"
+                      max={hoyISO()}
                       name="fechaDiagnostico"
                     />
                     <label className="flex flex-col gap-1.5 font-body text-sm">
@@ -349,6 +365,7 @@ export function PatologiasModal({ socio, onClose }: PatologiasModalProps) {
                 onChange={setFecha}
                 icon={CalendarDays}
                 type="date"
+                max={hoyISO()}
                 name="fechaDiagnosticoEdicion"
               />
               <label className="flex flex-col gap-1.5 font-body text-sm">
