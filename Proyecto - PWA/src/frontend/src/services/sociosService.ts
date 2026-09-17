@@ -47,6 +47,18 @@ export interface SocioListado {
   /** Vencimiento de la membresía vigente, o undefined si no tiene una. */
   vencimiento?: string;
   activo: boolean;
+  /** Si tiene cuenta de acceso creada (exista o no, esté activa o no). */
+  tieneCuenta: boolean;
+  /**
+   * Si esa cuenta está habilitada para entrar a la app.
+   *
+   * NO es lo mismo que `activo`, que es ser socio del gimnasio. Se pueden
+   * contradecir a propósito: alguien que paga y entrena pero se quedó sin
+   * acceso a la app sigue siendo socio activo. Hasta acá la grilla no lo
+   * mostraba en ninguna parte y Usuarios decía "inactivo" de alguien que
+   * Socios mostraba "Activo".
+   */
+  cuentaActiva: boolean;
 }
 
 /** La forma exacta en que responde el backend (snake_case). */
@@ -71,6 +83,8 @@ interface SocioApi {
   estado: string;
   vencimiento: string | null;
   activo: boolean;
+  tiene_cuenta?: boolean;
+  cuenta_activa?: boolean;
 }
 
 /**
@@ -105,6 +119,8 @@ function aSocioListado(s: SocioApi): SocioListado {
     estado: s.estado as EstadoSocioValue,
     vencimiento: s.vencimiento ?? undefined,
     activo: s.activo,
+    tieneCuenta: s.tiene_cuenta ?? false,
+    cuentaActiva: s.cuenta_activa ?? false,
   };
 }
 
@@ -197,6 +213,101 @@ export async function editarTelefono(
 
 export async function borrarTelefono(idSocio: number, idTelefono: number): Promise<void> {
   await pedir<void>(`/socios/${idSocio}/telefonos/${idTelefono}`, { metodo: 'DELETE' });
+}
+
+
+// --- CONTACTOS DE EMERGENCIA -------------------------------------------------
+//
+// Mismo molde que los teléfonos de acá arriba, y por el mismo motivo: la tabla
+// Contacto_Emergencia es 1:N desde siempre, pero la app la manejaba con tres
+// campos sueltos de la ficha y sólo dejaba cargar uno. Los tres campos siguen
+// existiendo en SocioListado (la grilla muestra el principal en el botón rojo
+// de llamar); esto es para gestionar la lista completa.
+
+export interface ContactoEmergencia {
+  idContactoEmergencia: number;
+  nombre: string;
+  telefono: string;
+  parentesco: string | null;
+  /** Al que apunta el botón de llamar de la grilla. Hay uno solo. */
+  principal: boolean;
+}
+
+interface ContactoEmergenciaApi {
+  id_contacto_emergencia: number;
+  nombre: string;
+  telefono: string;
+  parentesco: string | null;
+  principal: boolean;
+}
+
+function aContactoEmergencia(c: ContactoEmergenciaApi): ContactoEmergencia {
+  return {
+    idContactoEmergencia: c.id_contacto_emergencia,
+    nombre: c.nombre,
+    telefono: c.telefono,
+    parentesco: c.parentesco,
+    principal: c.principal,
+  };
+}
+
+export interface ContactoEmergenciaInput {
+  nombre: string;
+  telefono: string;
+  parentesco: string;
+  principal: boolean;
+}
+
+function cuerpoDe(input: ContactoEmergenciaInput) {
+  return {
+    nombre: input.nombre.trim(),
+    telefono: input.telefono.trim(),
+    // El backend deja parentesco en NULL si viene vacío: es opcional, y un
+    // string vacío en la base se muestra como " · " colgando del nombre.
+    parentesco: input.parentesco.trim() || null,
+    principal: input.principal,
+  };
+}
+
+export async function listarContactosEmergencia(
+  idSocio: number,
+): Promise<ContactoEmergencia[]> {
+  const datos = await pedir<ContactoEmergenciaApi[]>(
+    `/socios/${idSocio}/contactos-emergencia`,
+  );
+  return datos.map(aContactoEmergencia);
+}
+
+export async function agregarContactoEmergencia(
+  idSocio: number,
+  input: ContactoEmergenciaInput,
+): Promise<ContactoEmergencia> {
+  const datos = await pedir<ContactoEmergenciaApi>(
+    `/socios/${idSocio}/contactos-emergencia`,
+    { metodo: 'POST', cuerpo: cuerpoDe(input) },
+  );
+  return aContactoEmergencia(datos);
+}
+
+export async function editarContactoEmergencia(
+  idSocio: number,
+  idContacto: number,
+  input: ContactoEmergenciaInput,
+): Promise<ContactoEmergencia> {
+  const datos = await pedir<ContactoEmergenciaApi>(
+    `/socios/${idSocio}/contactos-emergencia/${idContacto}`,
+    { metodo: 'PUT', cuerpo: cuerpoDe(input) },
+  );
+  return aContactoEmergencia(datos);
+}
+
+export async function borrarContactoEmergencia(
+  idSocio: number,
+  idContacto: number,
+): Promise<void> {
+  await pedir<void>(`/socios/${idSocio}/contactos-emergencia/${idContacto}`, {
+    metodo: 'DELETE',
+  });
 }
 
 /** La forma en que el backend devuelve los planes. */

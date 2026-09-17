@@ -107,6 +107,31 @@ export async function darDeBajaHorario(idHorario: number): Promise<void> {
   });
 }
 
+/**
+ * Le cambia (o le saca) el profesor a un horario ya creado.
+ *
+ * Antes la única forma era darlo de baja y cargarlo de nuevo, y eso genera
+ * turnos nuevos dejando los viejos cancelados: corregir un dato administrativo
+ * le volteaba la clase a los que ya estaban anotados.
+ *
+ * El backend arrastra el cambio a los turnos futuros HABILITADOS, porque de ahí
+ * sale "Mis clases": sin eso el profesor nuevo no vería ninguna de las clases ya
+ * generadas y el viejo las seguiría viendo todas. Los pasados no se tocan.
+ */
+export async function cambiarProfesorDeHorario(
+  idHorario: number,
+  idProfesor: number | null,
+): Promise<Horario> {
+  // Sin `id_profesor` en la query, el backend lo lee como None y deja el
+  // horario como sala abierta, que es un estado válido.
+  const query = idProfesor === null ? '' : `?id_profesor=${idProfesor}`;
+  const datos = await pedir<HorarioApi>(
+    `/actividades/horarios/${idHorario}/profesor${query}`,
+    { metodo: 'PUT' },
+  );
+  return aHorario(datos);
+}
+
 export async function regenerarTurnos(): Promise<string> {
   const datos = await pedir<{ mensaje: string }>('/actividades/turnos/generar', {
     metodo: 'POST',

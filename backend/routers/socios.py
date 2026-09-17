@@ -46,7 +46,8 @@ from models import (
 from notificaciones import enviar_credenciales
 from permisos import Accion, Seccion
 from schemas import (
-    AsignacionEntrenadorOut, AsignarEntrenadorRequest, BajaRequest, PersonaOut,
+    AsignacionEntrenadorOut, AsignarEntrenadorRequest, BajaRequest,
+    ContactoEmergenciaOut, ContactoEmergenciaRequest, PersonaOut,
     SocioAltaRequest, SocioAltaResponse, SocioEditarRequest, SocioOut,
     TelefonoOut, TelefonoRequest,
 )
@@ -245,6 +246,7 @@ def _listar_socios_en_lote(db: Session, consulta) -> list[SocioOut]:
             telefono=telefono,
             **_datos_personales(persona),
             tiene_cuenta=persona.usuario is not None,
+            cuenta_activa=bool(persona.usuario and persona.usuario.activo),
             baja_programada=bajas_programadas.get(socio.id_socio),
             id_tipo_membresia=membresia.id_tipo_membresia if membresia else None,
             plan=(membresia.tipo.nombre if membresia and membresia.tipo else "Sin plan"),
@@ -274,6 +276,7 @@ def _a_socio_out(db: Session, socio: Socio) -> SocioOut:
         telefono=_telefono_principal(db, persona.id_persona),
         **_datos_personales(persona),
         tiene_cuenta=persona.usuario is not None,
+        cuenta_activa=bool(persona.usuario and persona.usuario.activo),
         baja_programada=(baja.fecha_baja if (baja := baja_pendiente(db, socio.id_socio)) else None),
         id_tipo_membresia=membresia.id_tipo_membresia if membresia else None,
         plan=(membresia.tipo.nombre if membresia and membresia.tipo else "Sin plan"),
@@ -1107,3 +1110,183 @@ def socios_del_entrenador(
     # Mismo camino en lote que /socios: son las dos grillas del sistema.
     return _listar_socios_en_lote(db, db.query(Socio).filter(
         Socio.id_socio.in_([s.id_socio for s in socios])))
+
+
+# =============================================================================
+# CONTACTOS DE EMERGENCIA — varios por socio, igual que los teléfonos
+# =============================================================================
+#
+# Contacto_Emergencia es 1:N desde el primer día (el COMMENT del schema dice
+# "Multivaluado, por eso tabla propia y no columnas de Persona"), pero la app
+# entraba y salía por tres campos sueltos —emergencia_nombre, _telefono,
+# _parentesco— y hacía upsert de UNA fila. O sea: la tabla soportaba varios y
+# la app dejaba cargar uno solo.
+#
+# Es el mismo agujero que tenían los teléfonos y se arregla igual: CRUD propio,
+# uno marcado como principal, y los tres campos planos de SocioOut siguen
+# existiendo porque la grilla muestra el principal en el botón rojo de llamar.
+#
+# POR QUÉ IMPORTA: a quien se llama en una emergencia puede no atender. Tener
+# a la madre Y a la pareja es la diferencia entre avisarle a alguien o no.
+
+
+def _emergencias_ordenadas(db: Session, id_persona: int) -> list[ContactoEmergencia]:
+    """El principal primero, después por antigüedad. Mismo orden en toda la app."""
+    return (db.query(ContactoEmergencia)
+            .filter(ContactoEmergencia.id_persona == id_persona)
+            .order_by(ContactoEmergencia.principal.desc(),
+                      ContactoEmergencia.id_contacto_emergencia)
+            .all())
+
+
+def _emergencia_de(db: Session, id_persona: int,
+                   id_contacto: int) -> ContactoEmergencia:
+    contacto = db.get(ContactoEmergencia, id_contacto)
+    if contacto is None or contacto.id_persona != id_persona:
+        # 404 y no 403, igual que en teléfonos: que exista un contacto con ese
+        # id pero de otra persona no es información de quien mira ESTA ficha.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ese contacto de emergencia no está en la ficha de este socio.")
+    return contacto
+
+
+def _desmarcar_emergencias_principales(db: Session, id_persona: int) -> None:
+    """Deja a todos en no-principal. Se llama antes de marcar el nuevo."""
+    for c in db.query(ContactoEmergencia).filter(
+            ContactoEmergencia.id_persona == id_persona,
+            ContactoEmergencia.principal.is_(True)).all():
+        c.principal = False
+
+
+def _agregar_emergencia(db: Session, id_persona: int,
+                        datos: ContactoEmergenciaRequest) -> ContactoEmergencia:
+    """
+    El alta compartida entre el mostrador y "Mi perfil".
+
+    Vive acá y no duplicada en portal.py porque la regla del principal y la del
+    número repetido tienen que ser LA MISMA: si el socio se carga un contacto
+    desde la app y el recepcionista otro desde la ficha, un criterio distinto
+    en cada lado deja la ficha con dos principales o con el mismo número dos
+    veces.
+    """
+    existentes = _emergencias_ordenadas(db, id_persona)
+
+    # El mismo número dos veces no es un contacto más: es el mismo. Se compara
+    # por dígitos porque "341 555-1234" y "+543415551234" son el mismo teléfono.
+    if any(_digitos(c.telefono) == _digitos(datos.telefono) for c in existentes):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ese número ya está cargado como contacto de emergencia.")
+
+    # El primero es principal sí o sí: una ficha con contactos donde ninguno es
+    # el principal no muestra ninguno en la grilla.
+    principal = datos.principal or not existentes
+    if principal:
+        _desmarcar_emergencias_principales(db, id_persona)
+
+    contacto = ContactoEmergencia(id_persona=id_persona, nombre=datos.nombre,
+                                  telefono=datos.telefono,
+                                  parentesco=datos.parentesco,
+                                  principal=principal)
+    db.add(contacto)
+    return contacto
+
+
+def _editar_emergencia(db: Session, contacto: ContactoEmergencia,
+                       datos: ContactoEmergenciaRequest) -> None:
+    """La edición compartida. Misma regla del principal que en teléfonos."""
+    if datos.principal and not contacto.principal:
+        _desmarcar_emergencias_principales(db, contacto.id_persona)
+        contacto.principal = True
+    elif not datos.principal and contacto.principal:
+        # Desmarcar el principal a secas dejaría la ficha sin ninguno. Se
+        # ignora: para cambiar cuál es, se marca el OTRO.
+        pass
+
+    contacto.nombre = datos.nombre
+    contacto.telefono = datos.telefono
+    contacto.parentesco = datos.parentesco
+
+
+def _borrar_emergencia(db: Session, contacto: ContactoEmergencia) -> None:
+    """
+    Saca un contacto de la ficha. Se BORRA la fila: un número al que ya no hay
+    que llamar no es historia, es un dato falso que hace perder una llamada.
+    """
+    id_persona = contacto.id_persona
+    era_principal = bool(contacto.principal)
+
+    db.delete(contacto)
+    db.flush()
+
+    # Si se fue el principal y quedan otros, asciende el más viejo. Sin esto la
+    # grilla diría "sin contacto de emergencia" teniendo dos cargados.
+    if era_principal:
+        quedan = _emergencias_ordenadas(db, id_persona)
+        if quedan:
+            quedan[0].principal = True
+
+
+@router.get("/{id_socio}/contactos-emergencia",
+            response_model=list[ContactoEmergenciaOut])
+def contactos_emergencia_del_socio(
+    id_socio: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.SOCIOS)),
+):
+    """
+    A quién avisar. Lo ve todo el que ve Socios —el recepcionista incluido—,
+    a diferencia del historial médico: en una emergencia el dato sirve
+    justamente en el mostrador.
+    """
+    socio = _socio_o_404(db, id_socio)
+    return [ContactoEmergenciaOut.model_validate(c)
+            for c in _emergencias_ordenadas(db, socio.id_persona)]
+
+
+@router.post("/{id_socio}/contactos-emergencia",
+             response_model=ContactoEmergenciaOut,
+             status_code=status.HTTP_201_CREATED)
+def agregar_contacto_emergencia(
+    id_socio: int,
+    datos: ContactoEmergenciaRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.ALTA_BAJA_SOCIOS)),
+):
+    socio = _socio_o_404(db, id_socio)
+    contacto = _agregar_emergencia(db, socio.id_persona, datos)
+    db.commit()
+    db.refresh(contacto)
+    return ContactoEmergenciaOut.model_validate(contacto)
+
+
+@router.put("/{id_socio}/contactos-emergencia/{id_contacto}",
+            response_model=ContactoEmergenciaOut)
+def editar_contacto_emergencia(
+    id_socio: int,
+    id_contacto: int,
+    datos: ContactoEmergenciaRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.ALTA_BAJA_SOCIOS)),
+):
+    socio = _socio_o_404(db, id_socio)
+    contacto = _emergencia_de(db, socio.id_persona, id_contacto)
+    _editar_emergencia(db, contacto, datos)
+    db.commit()
+    db.refresh(contacto)
+    return ContactoEmergenciaOut.model_validate(contacto)
+
+
+@router.delete("/{id_socio}/contactos-emergencia/{id_contacto}",
+               status_code=status.HTTP_204_NO_CONTENT)
+def borrar_contacto_emergencia(
+    id_socio: int,
+    id_contacto: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.ALTA_BAJA_SOCIOS)),
+):
+    socio = _socio_o_404(db, id_socio)
+    contacto = _emergencia_de(db, socio.id_persona, id_contacto)
+    _borrar_emergencia(db, contacto)
+    db.commit()

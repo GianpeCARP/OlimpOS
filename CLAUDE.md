@@ -183,14 +183,18 @@ D:\OlimpOs\
 - **El botón de mail abre el redactor de Gmail**, no `mailto:` (las PCs del gimnasio
   no tienen cliente de correo). Vive en `utils/contacto.ts` y `app/contacto.py`.
 - **Un empleado necesita mail o teléfono.** Un socio tiene **varios teléfonos**, con
-  uno principal.
+  uno principal, y **varios contactos de emergencia**, también con uno principal
+  (`Contacto_Emergencia` siempre fue 1:N). Los tres campos `emergencia_*` de
+  `SocioOut` son el PRINCIPAL aplanado para la grilla, no todo lo que hay.
 - **Teléfonos con código de país:** todo campo de teléfono usa `TelefonoField` /
   `telefono_field` (selector de país, Argentina por defecto) y guarda el número completo
   (`+54 3415551234`). Los viejos sin `+` se leen como argentinos, sin migrar.
   `linkWhatsapp` agrega el 9 de celular argentino.
 - **Datos personales del socio** (fecha de nacimiento, domicilio, contacto de
-  emergencia) se cargan en el **alta y la edición**, nunca al cobrar. El contacto de
-  emergencia se llama desde un botón de la grilla, que ven todos los que ven Socios.
+  emergencia) se cargan en el **alta y la edición**, nunca al cobrar. Los contactos de
+  emergencia se llaman desde un botón de la grilla, que ven todos los que ven
+  Socios, y ahí mismo se agregan y se borran; el socio gestiona los suyos desde
+  "Mi perfil".
 - **La baja de un socio no le quita los días pagos** (`backend/bajas.py`). Con cuota
   vigente queda PROGRAMADA (`Baja.pendiente`) para el día siguiente al vencimiento y
   hasta entonces sigue activo; se puede anular mientras tanto, y con la baja pendiente
@@ -198,6 +202,15 @@ D:\OlimpOs\
   (`inmediata`, para una expulsión): corta hoy, pierde los días y adelanta una programada. Se aplica sola al arrancar el backend,
   una vez por día desde el latido y al leer socios. La voluntaria deja viva la cuenta
   de acceso; la de mora o administrativa la desactiva.
+- **La cuenta de acceso y ser socio son DOS banderas distintas.** `Usuario.activo`
+  es entrar a la app; `Socio.activo` es ser socio del gimnasio. Desactivar la
+  cuenta desde Usuarios **no da de baja al socio**: sigue pagando, entrenando y
+  fichando, y sigue contando en el dashboard. Para que los paneles no se
+  contradigan, `SocioOut` manda `cuenta_activa` y la grilla de Socios avisa
+  **"Sin acceso a la app"**. Al revés sí está acoplado: la baja de mora o
+  administrativa apaga la cuenta (la voluntaria no) y reactivar al socio la
+  devuelve. En empleados el acople es total, porque ahí el acceso se justifica
+  en el puesto.
 - **Bajas lógicas y reversibles.** Dar de baja un empleado lo desasigna de sus
   actividades, pero no toca los turnos ya programados. **Usuarios no reactiva la
   cuenta de alguien dado de baja** (eso se hace desde Personal) **ni crea personas**:
@@ -266,7 +279,12 @@ D:\OlimpOs\
    `TextField` adentro dibuja un bloque gris: hay que abrirlo en el navegador con
    `scripts/lanzar_flet_navegador.py`. No renombrarlo a `flet_web.py` y no tocar
    `main.py`. Recargar mucho apila sesiones, y el aviso de Chrome para guardar
-   contraseña bloquea los clicks.
+   contraseña bloquea los clicks. El lanzador **deriva la raíz de su propia
+   ubicación**: no volver a clavarle una ruta, que el repo vive en `D:` en una
+   máquina y en `E:` en la otra. Y **Flutter no recibe el teclado sintetizado**
+   por automatización: el login hay que tipearlo a mano, así que lo que se puede
+   automatizar de un diálogo es armarlo y auditarle el árbol de controles
+   (instanciar la vista con el `app_state` simulado y leer `page.overlay`).
 
 **PWA en el celular** (ni tsc ni oxlint lo detectan)
 - `100dvh` y nunca `h-screen` (iOS). `overscroll-behavior: none` (si no, Safari
@@ -284,6 +302,14 @@ D:\OlimpOs\
   no borrar esas notas.
 - Soft delete con los dos caminos (baja y reactivación). Al cambiar el estado de una
   entidad, decidir qué pasa con todo lo que la referencia.
+- **Una "transacción descartada" NO protege la base si lo que se prueba hace su
+  propio `commit()`.** Casi todos los endpoints commitean adentro: llamarlos
+  desde un `db.begin()` y cerrar con `rollback()` no revierte nada —el commit
+  del endpoint ya se llevó también las filas de prueba—. Ya pasó: un escenario
+  de horario + turnos + 3 profesores quedó escrito en la base del dueño. Para
+  probar un endpoint contra la base real hay que **marcar todo lo creado**
+  (un prefijo reconocible en DNI y legajo) y **borrarlo a mano después**,
+  verificando los conteos antes y después.
 - Las búsquedas truncadas (o el Glob sobre rutas con espacios, como
   `Proyecto - PWA`) no prueban que algo "no existe": usar Grep sin límite.
 

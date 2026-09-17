@@ -134,6 +134,93 @@ export async function actualizarMisDatosDeContacto(
 }
 
 // =========================================================================
+// MIS CONTACTOS DE EMERGENCIA
+// =========================================================================
+//
+// Contacto_Emergencia siempre fue 1:N —el COMMENT de la tabla dice
+// "Multivaluado, por eso tabla propia y no columnas de Persona"— pero "Mi
+// perfil" tenía tres campos sueltos que pisaban la misma fila. El socio que
+// quería dejar el teléfono de la madre Y el de la pareja perdía uno de los dos.
+//
+// Los campos emergencia* de MiPerfil siguen existiendo: son el PRINCIPAL, que
+// es el que ve el personal en la grilla de Socios.
+
+export interface MiContactoEmergencia {
+  idContactoEmergencia: number;
+  nombre: string;
+  telefono: string;
+  parentesco: string | null;
+  /** Al que llama el gimnasio primero. Hay uno solo. */
+  principal: boolean;
+}
+
+interface ContactoEmergenciaApi {
+  id_contacto_emergencia: number;
+  nombre: string;
+  telefono: string;
+  parentesco: string | null;
+  principal: boolean;
+}
+
+function aMiContactoEmergencia(c: ContactoEmergenciaApi): MiContactoEmergencia {
+  return {
+    idContactoEmergencia: c.id_contacto_emergencia,
+    nombre: c.nombre,
+    telefono: c.telefono,
+    parentesco: c.parentesco,
+    principal: c.principal,
+  };
+}
+
+export interface MiContactoEmergenciaInput {
+  nombre: string;
+  telefono: string;
+  parentesco: string;
+  principal: boolean;
+}
+
+function cuerpoDeContacto(input: MiContactoEmergenciaInput) {
+  return {
+    nombre: input.nombre.trim(),
+    telefono: input.telefono.trim(),
+    parentesco: input.parentesco.trim() || null,
+    principal: input.principal,
+  };
+}
+
+export async function listarMisContactosEmergencia(): Promise<MiContactoEmergencia[]> {
+  const datos = await pedir<ContactoEmergenciaApi[]>('/portal/mis-contactos-emergencia');
+  return datos.map(aMiContactoEmergencia);
+}
+
+export async function agregarMiContactoEmergencia(
+  input: MiContactoEmergenciaInput,
+): Promise<MiContactoEmergencia> {
+  const datos = await pedir<ContactoEmergenciaApi>('/portal/mis-contactos-emergencia', {
+    metodo: 'POST',
+    cuerpo: cuerpoDeContacto(input),
+  });
+  return aMiContactoEmergencia(datos);
+}
+
+export async function editarMiContactoEmergencia(
+  idContacto: number,
+  input: MiContactoEmergenciaInput,
+): Promise<MiContactoEmergencia> {
+  const datos = await pedir<ContactoEmergenciaApi>(
+    `/portal/mis-contactos-emergencia/${idContacto}`,
+    { metodo: 'PUT', cuerpo: cuerpoDeContacto(input) },
+  );
+  return aMiContactoEmergencia(datos);
+}
+
+export async function borrarMiContactoEmergencia(idContacto: number): Promise<void> {
+  await pedir<void>(`/portal/mis-contactos-emergencia/${idContacto}`, {
+    metodo: 'DELETE',
+  });
+}
+
+// =========================================================================
 // MI RUTINA
 // =========================================================================
 

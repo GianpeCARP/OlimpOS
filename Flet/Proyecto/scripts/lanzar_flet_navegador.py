@@ -24,7 +24,10 @@ DOS TRAMPAS QUE ESTE ARCHIVO YA PAGO
 import os
 import sys
 
-RAIZ = "D:/OlimpOs/Proyeto-Python/Proyecto"
+# La raiz se deriva de DONDE ESTA este archivo (scripts/ cuelga de ella), no
+# de una ruta clavada: el repo vive en D: en una maquina y en E: en la otra,
+# y con la ruta fija el lanzador solo arrancaba en una de las dos.
+RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
 os.chdir(RAIZ)
 

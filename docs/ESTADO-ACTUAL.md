@@ -1,6 +1,6 @@
 # OlimpOS — Estado actual
 
-**Foto al 2026-09-16.** Sólo el presente: dónde estamos, qué falta y qué no se
+**Foto al 2026-09-17.** Sólo el presente: dónde estamos, qué falta y qué no se
 probó. Lo permanente (idea, reglas del negocio, trampas) está en `CLAUDE.md`, y el
 historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tanda.**
 
@@ -20,7 +20,7 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   y `franco.distillio` (socio: se limpiaron sus pagos online de prueba; le queda el Trimestral cobrado en el mostrador, activo hasta el 15/12/2026). Las contraseñas están en el `.txt` de contraseñas.
 - **Consecuencias para verificar:** las suites no se pueden correr (necesitan la base
   vacía). `pruebas_vistas.py` sólo entra con las cuentas que existan.
-- **Backend:** 124 rutas en `/openapi.json`; si da menos, está respondiendo un
+- **Backend:** 130 rutas en `/openapi.json`; si da menos, está respondiendo un
   proceso viejo. `check_permisos`: las tres copias coinciden (6 roles).
 
 ---
@@ -58,6 +58,41 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   cuenta; la persona y su historial quedan y se le puede crear otra.
   `Asistencia.id_registrado_por` pasa a NULL. Nadie borra la propia, sólo un Dueño
   borra la de un Dueño y nunca la última. Compila en las tres capas; sin probar.
+- **Los 4 menores de la tanda** (backend, PWA y Flet):
+  **Homónimos:** `ProfesorActividadOut` suma `dni` y `legajo`, y la asignación y el
+  selector del horario muestran "Legajo X" (o el DNI si no tiene). Verificado por API.
+  **Profesor en Flet:** entraba y caía en el Dashboard que no puede ver, porque
+  `primera_seccion()` da None y el fallback lo mandaba igual; ahora le sale
+  `SinSeccionesView` diciéndole que su pantalla está en la PWA.
+  **Cambiar el profesor de un horario ya creado:** `PUT /actividades/horarios/{id}/profesor`,
+  con la misma validación que el alta. Arrastra a los turnos futuros HABILITADOS (de ahí
+  sale "Mis clases"); los pasados y los cancelados no se tocan. Probado contra la base
+  real con datos marcados, borrados después (ver la trampa del rollback en `CLAUDE.md`).
+  **Diálogos de nutrición en Flet:** los cuatro cierran tocando afuera, como sus gemelos
+  de la PWA. No se tocó el `modal` de `confirm_dialog`/`form_dialog`, que son compartidos.
+  Falta verlo todo en pantalla.
+- **"Sin acceso a la app" en la grilla de Socios** (backend, PWA y Flet). Desactivar
+  la cuenta desde Usuarios dejaba a Usuarios diciendo "inactivo" y a Socios
+  "Activo" de la misma persona, porque son dos banderas (`Usuario.activo` vs
+  `Socio.activo`) y ningún panel mostraba la primera. **Decisión del dueño: NO se
+  acoplan** —el socio sin app sigue pagando y entrenando, y sigue contando en el
+  dashboard— así que `SocioOut` suma `cuenta_activa` y la fila avisa. Probado por
+  API prendiendo y apagando la cuenta de `ricky.edit`, que quedó como estaba
+  (desactivada). Falta verlo en pantalla.
+- **Contactos de emergencia: ahora son VARIOS** (backend, PWA y Flet). La tabla
+  `Contacto_Emergencia` siempre fue 1:N pero la app la manejaba con tres campos
+  planos y hacía upsert de UNA fila, así que cargar a la madre pisaba a la
+  pareja. Ahora tiene CRUD propio, calcado del de teléfonos: uno principal (el
+  que sigue saliendo en la grilla y en el botón rojo de llamar), no se repite el
+  mismo número, y al borrar el principal asciende el más viejo.
+  `EmergenciaModal` de la PWA y el diálogo de Flet pasaron de mostrar un contacto
+  a gestionar la lista; el socio gestiona la suya desde "Mi perfil"
+  (`MisContactosEmergenciaCard`, que reemplaza los tres campos del formulario).
+  **Probado por API** —los dos lados, mostrador y socio, con la base restaurada al
+  terminar—. Del diálogo de Flet se auditó el árbol de controles armándolo con el
+  estado simulado (los dos contactos, un solo principal, alta, sólo lectura, ficha
+  vacía, y las trampas 2 y 8 de Flet): **falta sólo la revisión visual** de las dos
+  apps, que es lo único que no cubre ninguna verificación automatizada.
 - **Teléfonos con código de país** en los 6 campos de la PWA y los 4 de Flet (alta y
   edición de socio y empleado, contacto de emergencia, agregar teléfono, Mi perfil).
   En Flet, editar un empleado ya precarga el teléfono (antes guardar lo borraba).
@@ -68,19 +103,10 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
 - Alta de socio con "Cobrar ahora"; el chip "2º de hoy" (ojo: fichar acredita
   reservas); el aviso de cuenta trabada en login y cambio de contraseña.
 
-### 2. Menores (el dueño pidió hacerlos todos menos el contador; sin empezar)
-- **Profesores homónimos:** dos con el mismo nombre se ven idénticos al asignarlos a
-  una actividad. Mostrar DNI o legajo. (Plan: sumar `dni` a `ProfesorActividadOut` y mostrarlo
-  en la asignación y en el selector del horario, en las dos apps.)
-- **Flet, Profesor:** al entrar no tiene secciones y cae en una pantalla sin acceso.
-  Falta un mensaje que diga que su pantalla está en la PWA.
-- **Horario sin profesor:** no hay forma de asignarle o cambiarle el profesor a un
-  horario ya creado (hay que darlo de baja y crearlo de nuevo). (Plan: `PUT /actividades/horarios/{id}/profesor`
-  con la misma validación que el alta, que actualice los turnos futuros HABILITADOS.)
-- **Flet, detalle de un plan de nutrición:** no cierra tocando afuera (en la PWA sí).
-  El `modal=True` es global a los diálogos, así que hay que resolverlo con cuidado.
-- **Contador de repeticiones:** rediseñar el overlay (las líneas verdes del esqueleto
-  son sólo para afinar) y seguir ajustando umbrales probando en el celular.
+### 2. Menores
+- **Contador de repeticiones** (el único que el dueño dejó afuera de la tanda):
+  rediseñar el overlay (las líneas verdes del esqueleto son sólo para afinar) y
+  seguir ajustando umbrales probando en el celular.
 
 ### 3. Grandes, después de la lista
 - **Coach con IA (decidido, sin implementar; AVISARLE al dueño antes de arrancar).**

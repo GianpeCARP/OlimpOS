@@ -273,20 +273,32 @@ def _load_main_app(page: ft.Page, router):
     que no puede ver: el guard del router la rechazaba y quedaba mirando una
     pantalla en blanco apenas entraba. Se lo lleva a la primera sección que sí
     puede abrir, respetando el orden del menú.
+
+    Y si no puede abrir NINGUNA —hoy el Profesor, que tiene cuenta pero su
+    pantalla vive en la PWA— caía igual al Dashboard, que tampoco puede ver:
+    entraba bien y se quedaba mirando una pantalla vacía. Ver SinSeccionesView.
     """
     from app.config import Routes
     from app.components.ui import build_sidebar
 
     content_ref = ft.Ref[ft.Container]()
 
-    inicial = app_state.primera_seccion() or Routes.DASHBOARD
+    inicial = app_state.primera_seccion()
 
-    # La ruta activa se fija ANTES de construir el sidebar: así el ítem ya
-    # nace resaltado y el hover sabe cuál no debe apagar.
-    app_state.current_route = inicial
+    if inicial is None:
+        # Sin ninguna sección no hay ruta que fijar ni ítem que resaltar: el
+        # sidebar va a salir sin nav (le queda el logo y el cerrar sesión).
+        from app.views.sin_secciones import SinSeccionesView
+        initial_content = SinSeccionesView(page=page, router=router).build()
+        inicial = Routes.DASHBOARD  # sólo para que el sidebar tenga un activo
+        app_state.current_route = inicial
+    else:
+        # La ruta activa se fija ANTES de construir el sidebar: así el ítem ya
+        # nace resaltado y el hover sabe cuál no debe apagar.
+        app_state.current_route = inicial
 
-    vista_inicial = router.view_class(inicial)
-    initial_content = vista_inicial(page=page, router=router).build()
+        vista_inicial = router.view_class(inicial)
+        initial_content = vista_inicial(page=page, router=router).build()
 
     content_container = ft.Container(
         ref=content_ref,

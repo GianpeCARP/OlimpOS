@@ -29,6 +29,7 @@ import { ActividadAdminCard } from './ActividadAdminCard';
 import { ActividadFormModal } from './ActividadFormModal';
 import { HorarioFormModal } from './HorarioFormModal';
 import { HorarioSemanal } from './HorarioSemanal';
+import { ProfesorHorarioModal } from './ProfesorHorarioModal';
 import { PlanFormModal } from './PlanFormModal';
 import { ProfesorAsignacionModal } from './ProfesorAsignacionModal';
 
@@ -71,6 +72,10 @@ export function ActividadesAdminView() {
   } | null>(null);
   const [actividadParaProfesores, setActividadParaProfesores] = useState<ActividadAdmin | null>(null);
   const [horarioNuevo, setHorarioNuevo] = useState(false);
+  // Horario al que se le está cambiando el profesor. Es aparte de
+  // `horarioNuevo` porque no es un alta: el horario ya existe y sus turnos
+  // generados también —por eso se corrige en vez de rehacerlo—.
+  const [horarioParaProfesor, setHorarioParaProfesor] = useState<Horario | null>(null);
 
   useEffect(() => {
     setDatos(null);
@@ -222,6 +227,7 @@ export function ActividadesAdminView() {
               puedeGestionar={puedeGestionarTurnos}
               onNuevo={() => setHorarioNuevo(true)}
               onBaja={pedirBajaHorario}
+              onCambiarProfesor={setHorarioParaProfesor}
               onRegenerar={regenerar}
             />
 
@@ -290,6 +296,19 @@ export function ActividadesAdminView() {
           actividades={datos.actividades}
           profesoresPorActividad={datos.profesoresPorActividad}
           onClose={() => setHorarioNuevo(false)}
+          onGuardado={recargar}
+        />
+      )}
+
+      {horarioParaProfesor && datos && (
+        <ProfesorHorarioModal
+          horario={horarioParaProfesor}
+          asignados={
+            datos.profesoresPorActividad.get(horarioParaProfesor.idActividad)?.filter(
+              (p) => p.asignado,
+            ) ?? []
+          }
+          onClose={() => setHorarioParaProfesor(null)}
           onGuardado={recargar}
         />
       )}

@@ -249,7 +249,15 @@ class NutricionView:
             ]
 
         dlg = ft.AlertDialog(
-            modal=True,
+            # modal=False para que cierre tocando afuera, como su gemelo
+            # PlanDetailModal.tsx. Los cuatro diálogos de esta pantalla lo hacen:
+            # en la PWA los cuatro cierran así, y que en escritorio no cerraran
+            # obligaba a buscar el botón para salir de algo que sólo se vino a mirar.
+            #
+            # NO se toca el modal de confirm_dialog/form_dialog de components/ui.py:
+            # esos son compartidos por TODAS las vistas y varios confirman acciones
+            # destructivas, donde cerrar por un click al costado sí es un problema.
+            modal=False,
             title=ft.Text(p["nombre"], color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
             bgcolor=Colors.BG_CARD,
             content=ft.Container(
@@ -452,7 +460,8 @@ class NutricionView:
             self.router.navigate(Routes.NUTRICION)
 
         dlg = ft.AlertDialog(
-            modal=True,
+            # Cierra tocando afuera (ver el detalle).
+            modal=False,
             title=ft.Text("Editar Plan" if es_edicion else "Nuevo Plan Nutricional",
                           color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
             bgcolor=Colors.BG_CARD,
@@ -538,7 +547,8 @@ class NutricionView:
 
         busqueda.on_change = lambda e: render()
         dlg = ft.AlertDialog(
-            modal=True,
+            # Cierra tocando afuera (ver el detalle).
+            modal=False,
             title=ft.Text(f"Asignar \"{p['nombre']}\"", color=Colors.TEXT_PRIMARY,
                           weight=ft.FontWeight.BOLD),
             bgcolor=Colors.BG_CARD,
@@ -587,7 +597,8 @@ class NutricionView:
             show_snack(self.page, resultado["mensaje"], Colors.SUCCESS)
 
         dlg = ft.AlertDialog(
-            modal=True,
+            # Cierra tocando afuera (ver el detalle).
+            modal=False,
             title=ft.Text("Nuevo plato", color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
             bgcolor=Colors.BG_CARD,
             content=ft.Container(width=420, content=ft.Column(

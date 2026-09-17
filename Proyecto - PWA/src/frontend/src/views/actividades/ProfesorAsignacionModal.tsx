@@ -6,6 +6,7 @@ import {
   asignarProfesorAActividad,
   desasignarProfesorDeActividad,
   getProfesoresDeActividad,
+  seniaDeProfesor,
   type ActividadAdmin,
   type ProfesorAsignable,
 } from '../../services/actividadService';
@@ -123,9 +124,14 @@ export function ProfesorAsignacionModal({ actividad, onClose, onCambio }: Profes
                   />
                   <div className="min-w-0">
                     <p className="truncate font-body text-sm text-text-main">{profesor.nombre}</p>
-                    {profesor.especialidad && (
-                      <p className="truncate font-body text-xs text-text-muted">{profesor.especialidad}</p>
-                    )}
+                    {/* Legajo o DNI al lado del nombre: dos profesores que se
+                        llaman igual se veían idénticos acá, y asignar al
+                        equivocado deja la clase con el profesor que no es. */}
+                    <p className="truncate font-body text-xs text-text-muted">
+                      {[seniaDeProfesor(profesor), profesor.especialidad]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </p>
                   </div>
                 </div>
                 <span

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type SubmitEvent } from 'react';
-import { CalendarDays, IdCard, Mail, MapPin, ShieldAlert, Users } from 'lucide-react';
+import { CalendarDays, IdCard, Mail, MapPin, Users } from 'lucide-react';
 import { InputField, PrimaryButton, SectionCard, StatusBadge, Topbar, TelefonoField } from '../../components/ui';
 import { colors } from '../../config';
 import { mensajeDeError } from '../../services/api';
@@ -13,6 +13,7 @@ import { useUiStore } from '../../store/uiStore';
 import { formatearFecha, formatearFechaConAnio } from '../../utils/format';
 import { parsearFecha } from '../../utils/fechas';
 import { MisCondicionesCard } from './MisCondicionesCard';
+import { MisContactosEmergenciaCard } from './MisContactosEmergenciaCard';
 import { SinSocioEnSesion } from './SinSocioEnSesion';
 
 // Vista 1 del portal (docs/prompt_portal_socio.md).
@@ -29,7 +30,13 @@ import { SinSocioEnSesion } from './SinSocioEnSesion';
 //      viene a consultar.
 //   2. "Datos de contacto" — el formulario de la ficha. Todo lo editable
 //      junto, separado visualmente del bloque de arriba.
-//   3. "Tu salud" — sus patologías. Va último porque es lo que menos se
+//   3. "Contactos de emergencia" — a quién avisamos. Es una LISTA, no un
+//      contacto: Contacto_Emergencia siempre fue 1:N y hasta acá la pantalla
+//      lo trataba como tres campos sueltos que se pisaban entre sí. Por eso
+//      es un componente aparte (MisContactosEmergenciaCard) y no parte del
+//      formulario de arriba: un submit de campos fijos no sabe dar de alta
+//      ni borrar filas.
+//   4. "Tu salud" — sus patologías. Va último porque es lo que menos se
 //      toca: se declara una vez y no se vuelve. Es un componente aparte
 //      (MisCondicionesCard) porque habla con otros endpoints y con su propio
 //      estado de carga.
@@ -82,9 +89,6 @@ export function MiPerfilView() {
   // existe).
   const [email, setEmail] = useState('');
   const [telefono, setTelefono] = useState('');
-  const [emergenciaNombre, setEmergenciaNombre] = useState('');
-  const [emergenciaTelefono, setEmergenciaTelefono] = useState('');
-  const [emergenciaParentesco, setEmergenciaParentesco] = useState('');
 
   /**
    * Vuelca el perfil recibido en los campos del formulario. Se llama al
@@ -96,9 +100,6 @@ export function MiPerfilView() {
   const volcarEnFormulario = useCallback((datos: MiPerfil) => {
     setEmail(datos.email ?? '');
     setTelefono(datos.telefono ?? '');
-    setEmergenciaNombre(datos.emergenciaNombre ?? '');
-    setEmergenciaTelefono(datos.emergenciaTelefono ?? '');
-    setEmergenciaParentesco(datos.emergenciaParentesco ?? '');
   }, []);
 
   useEffect(() => {
@@ -127,8 +128,7 @@ export function MiPerfilView() {
     if (idSocio === null) return;
     setGuardando(true);
     try {
-      const actualizado = await actualizarMisDatosDeContacto({ email, telefono, emergenciaNombre, emergenciaTelefono, emergenciaParentesco }
-      );
+      const actualizado = await actualizarMisDatosDeContacto({ email, telefono });
       setPerfil(actualizado);
       volcarEnFormulario(actualizado);
       showSnack('Listo, actualizamos tus datos', colors.statusOk);
@@ -245,40 +245,6 @@ export function MiPerfilView() {
                   />
                 </div>
 
-                <div className="mt-6 border-t border-border-idle pt-5">
-                  <div className="mb-4 flex items-center gap-2">
-                    <ShieldAlert size={16} className="text-accent-coral" />
-                    <h3 className="font-heading text-sm font-semibold text-text-main">
-                      Contacto de emergencia
-                    </h3>
-                  </div>
-                  <p className="mb-4 font-body text-xs text-text-muted">
-                    A quién llamamos si te pasa algo entrenando. Cargá nombre y teléfono, o dejá
-                    los dos vacíos.
-                  </p>
-
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <InputField
-                      label="Nombre"
-                      value={emergenciaNombre}
-                      onChange={setEmergenciaNombre}
-                      name="emergencia_nombre"
-                    />
-                    <TelefonoField
-                      label="Teléfono"
-                      value={emergenciaTelefono}
-                      onChange={setEmergenciaTelefono}
-                      name="emergencia_telefono"
-                    />
-                    <InputField
-                      label="Parentesco"
-                      value={emergenciaParentesco}
-                      onChange={setEmergenciaParentesco}
-                      name="emergencia_parentesco"
-                    />
-                  </div>
-                </div>
-
                 <div className="mt-6 flex justify-end">
                   <PrimaryButton
                     label={guardando ? 'Guardando…' : 'Guardar cambios'}
@@ -288,6 +254,12 @@ export function MiPerfilView() {
                 </div>
               </SectionCard>
             </form>
+
+            {/* Antes eran tres campos de este mismo formulario, y por eso el
+                socio no podía cargar más de uno: un submit de campos fijos sólo
+                sabe describir UN contacto. Va acá arriba de la salud porque
+                sigue siendo un dato de contacto. */}
+            <MisContactosEmergenciaCard />
 
             {/* Trae sus propios datos y su propio estado de carga: no depende
                 de `perfil`, así que un fallo del endpoint de patologías deja

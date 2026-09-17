@@ -58,7 +58,7 @@ from models import (
 )
 from permisos import Seccion
 from schemas import (
-    ActividadOut, AsignacionDietaOut, AsignacionEntrenadorOut, AsignacionRutinaOut, AsignarPatologiaRequest, AsistenciaOut, BajaPropiaRequest, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, CongelamientoOut, CongelarRequest, DietaOut, EjercicioOut, InscripcionOut, MedicionCrear, MedicionOut, MensajeResponse, MiComidaOut, MiCuotaOut, MiDiaDeDietaOut, MiDietaOut, MiDietaPropiaCrear, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRegistroEjercicioOut, MiRutinaOut, MiRutinaPropiaCrear, PagoOut, PatologiaDeSocioOut, PatologiaOut, RegistroComidaCrear, RegistroComidaOut, RegistroEjercicioCrear, RegistroEjercicioOut, ReservaOut, RutinaOut, TurnoDePanel, TurnoDisponibleOut,
+    ActividadOut, AsignacionDietaOut, AsignacionEntrenadorOut, AsignacionRutinaOut, AsignarPatologiaRequest, AsistenciaOut, BajaPropiaRequest, ClaseSueltaResponse, ComprarClaseSueltaRequest, ComprarMiPlanRequest, ComprarPlanRequest, ComprarPlanResponse, CongelamientoOut, CongelarRequest, ContactoEmergenciaOut, ContactoEmergenciaRequest, DietaOut, EjercicioOut, InscripcionOut, MedicionCrear, MedicionOut, MensajeResponse, MiComidaOut, MiCuotaOut, MiDiaDeDietaOut, MiDietaOut, MiDietaPropiaCrear, MiPerfilEditarRequest, MiPerfilOut, MiProgresoOut, MiRegistroEjercicioOut, MiRutinaOut, MiRutinaPropiaCrear, PagoOut, PatologiaDeSocioOut, PatologiaOut, RegistroComidaCrear, RegistroComidaOut, RegistroEjercicioCrear, RegistroEjercicioOut, ReservaOut, RutinaOut, TurnoDePanel, TurnoDisponibleOut,
 )
 from notificaciones import notificar_promocion_lista_espera
 from turnos import ocupacion, promover_de_lista_de_espera
@@ -73,6 +73,14 @@ from routers.actividades import clases_restantes_de
 # Se reusa el armador en vez de escribir otro porque dos versiones del mismo
 # dato terminan diciendo cosas distintas el día que una se actualiza sola.
 from routers.recepcion import _a_turno_de_panel
+# Los contactos de emergencia del socio son los MISMOS que los de la ficha
+# del mostrador, con las mismas reglas (uno principal, no repetir un
+# número). Se reusan los ayudantes de Socios en vez de copiarlos: dos
+# versiones de la misma regla terminan diciendo cosas distintas.
+from routers.socios import (
+    _agregar_emergencia, _borrar_emergencia, _editar_emergencia,
+    _emergencia_de, _emergencias_ordenadas,
+)
 
 router = APIRouter(prefix="/portal", tags=["Portal del socio"])
 
@@ -2339,4 +2347,86 @@ def quitar_mi_patologia(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="No tenés esa condición registrada.")
     db.delete(sp)
+    db.commit()
+
+
+# =============================================================================
+# MIS CONTACTOS DE EMERGENCIA — el socio se carga los suyos, y son varios
+# =============================================================================
+#
+# Antes esto eran tres campos del formulario de "Mi perfil" que hacían upsert
+# de UNA fila de Contacto_Emergencia. La tabla siempre fue 1:N; la pantalla no.
+# El socio que quería dejar el teléfono de la madre Y el de la pareja pisaba
+# uno con el otro sin enterarse.
+#
+# Las reglas (uno principal, no repetir un número) son las mismas que en la
+# ficha del mostrador porque los ayudantes se importan de routers.socios. Acá
+# sólo cambia la puerta de entrada: el socio sale de la sesión con _mi_socio,
+# nunca de un id que venga por parámetro.
+
+
+@router.get("/mis-contactos-emergencia", response_model=list[ContactoEmergenciaOut])
+def mis_contactos_emergencia(
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_PERFIL)),
+):
+    """A quién avisa el gimnasio si le pasa algo. El principal primero."""
+    socio = _mi_socio(db, sesion)
+    return [ContactoEmergenciaOut.model_validate(c)
+            for c in _emergencias_ordenadas(db, socio.persona.id_persona)]
+
+
+@router.post("/mis-contactos-emergencia", response_model=ContactoEmergenciaOut,
+             status_code=status.HTTP_201_CREATED)
+def agregar_mi_contacto_emergencia(
+    datos: ContactoEmergenciaRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_PERFIL)),
+):
+    """
+    Agrega uno más. No reemplaza al que haya: para eso está el editar.
+
+    A diferencia de las patologías, acá es texto libre a propósito: el contacto
+    de emergencia NO es una Persona del sistema ni sale de un catálogo, es un
+    dato externo. Lo dice el COMMENT de la tabla.
+    """
+    socio = _mi_socio(db, sesion)
+    contacto = _agregar_emergencia(db, socio.persona.id_persona, datos)
+    db.commit()
+    db.refresh(contacto)
+    return ContactoEmergenciaOut.model_validate(contacto)
+
+
+@router.put("/mis-contactos-emergencia/{id_contacto}",
+            response_model=ContactoEmergenciaOut)
+def editar_mi_contacto_emergencia(
+    id_contacto: int,
+    datos: ContactoEmergenciaRequest,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_PERFIL)),
+):
+    """
+    Se busca el contacto CON el id_persona de la sesión, así que cambiar el
+    número de la URL no permite editarle el contacto a otro: la fila
+    simplemente no aparece y sale un 404.
+    """
+    socio = _mi_socio(db, sesion)
+    contacto = _emergencia_de(db, socio.persona.id_persona, id_contacto)
+    _editar_emergencia(db, contacto, datos)
+    db.commit()
+    db.refresh(contacto)
+    return ContactoEmergenciaOut.model_validate(contacto)
+
+
+@router.delete("/mis-contactos-emergencia/{id_contacto}",
+               status_code=status.HTTP_204_NO_CONTENT)
+def borrar_mi_contacto_emergencia(
+    id_contacto: int,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_seccion(Seccion.MI_PERFIL)),
+):
+    """Igual que el editar: la búsqueda va atada a la persona de la sesión."""
+    socio = _mi_socio(db, sesion)
+    contacto = _emergencia_de(db, socio.persona.id_persona, id_contacto)
+    _borrar_emergencia(db, contacto)
     db.commit()

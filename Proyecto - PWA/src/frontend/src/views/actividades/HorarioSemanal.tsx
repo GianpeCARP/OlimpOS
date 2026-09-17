@@ -1,4 +1,4 @@
-import { CalendarPlus, RefreshCw, X } from 'lucide-react';
+import { CalendarPlus, GraduationCap, RefreshCw, X } from 'lucide-react';
 import { SectionCard } from '../../components/ui';
 import { DIAS_SEMANA, type Horario } from '../../services/turnosService';
 
@@ -19,6 +19,8 @@ interface HorarioSemanalProps {
   puedeGestionar: boolean;
   onNuevo: () => void;
   onBaja: (horario: Horario) => void;
+  /** Cambiarle el profesor SIN rehacer el horario (ver ProfesorHorarioModal). */
+  onCambiarProfesor: (horario: Horario) => void;
   onRegenerar: () => void;
 }
 
@@ -27,6 +29,7 @@ export function HorarioSemanal({
   puedeGestionar,
   onNuevo,
   onBaja,
+  onCambiarProfesor,
   onRegenerar,
 }: HorarioSemanalProps) {
   const activos = horarios.filter((h) => h.activo);
@@ -89,6 +92,7 @@ export function HorarioSemanal({
                         horario={h}
                         puedeGestionar={puedeGestionar}
                         onBaja={() => onBaja(h)}
+                        onCambiarProfesor={() => onCambiarProfesor(h)}
                       />
                     ))
                   )}
@@ -111,10 +115,12 @@ function ChipHorario({
   horario,
   puedeGestionar,
   onBaja,
+  onCambiarProfesor,
 }: {
   horario: Horario;
   puedeGestionar: boolean;
   onBaja: () => void;
+  onCambiarProfesor: () => void;
 }) {
   const sinTurnos = horario.turnosFuturos === 0;
   return (
@@ -132,14 +138,26 @@ function ChipHorario({
           {horario.hora}
         </span>
         {puedeGestionar && (
-          <button
-            type="button"
-            onClick={onBaja}
-            title="Dar de baja este horario"
-            className="shrink-0 rounded p-0.5 text-text-muted hover:text-status-danger"
-          >
-            <X size={12} />
-          </button>
+          <div className="flex shrink-0 items-center gap-0.5">
+            {/* Cambiar el profesor SIN rehacer el horario: darlo de baja y
+                crearlo de nuevo cancela los turnos que ya tenían gente anotada. */}
+            <button
+              type="button"
+              onClick={onCambiarProfesor}
+              title="Cambiar el profesor"
+              className="rounded p-0.5 text-text-muted hover:text-primary-volt"
+            >
+              <GraduationCap size={12} />
+            </button>
+            <button
+              type="button"
+              onClick={onBaja}
+              title="Dar de baja este horario"
+              className="rounded p-0.5 text-text-muted hover:text-status-danger"
+            >
+              <X size={12} />
+            </button>
+          </div>
         )}
       </div>
       <p className="truncate font-body text-xs text-text-main">{horario.actividad}</p>

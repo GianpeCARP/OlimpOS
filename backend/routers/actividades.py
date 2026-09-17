@@ -597,6 +597,8 @@ def listar_todos_los_profesores(
             nombre=persona.nombre_completo if persona else "?",
             titulo=p.titulo,
             especialidad=p.especialidad,
+            dni=persona.dni if persona else None,
+            legajo=p.empleado.legajo if p.empleado else None,
         ))
     return salida
 
@@ -829,6 +831,8 @@ def listar_profesores(
             nombre=persona.nombre_completo if persona else "?",
             titulo=prof.titulo if prof else None,
             especialidad=prof.especialidad if prof else None,
+            dni=persona.dni if persona else None,
+            legajo=prof.empleado.legajo if prof and prof.empleado else None,
         ))
     return salida
 
@@ -865,6 +869,8 @@ def asignar_profesor(
         nombre=persona.nombre_completo if persona else "?",
         titulo=profesor.titulo,
         especialidad=profesor.especialidad,
+        dni=persona.dni if persona else None,
+        legajo=profesor.empleado.legajo if profesor.empleado else None,
     )
 
 
@@ -1498,6 +1504,81 @@ def cambiar_estado_horario(
     db.refresh(horario)
     return _a_horario_out(db, horario)
 
+
+
+@router.put("/horarios/{id_horario}/profesor", response_model=HorarioActividadOut)
+def cambiar_profesor_de_horario(
+    id_horario: int,
+    id_profesor: int | None = None,
+    db: Session = Depends(get_db),
+    sesion: Sesion = Depends(requiere_accion(Accion.GESTION_TURNOS)),
+):
+    """
+    Le cambia (o le saca) el profesor a un horario YA CREADO.
+
+    Hasta acá el profesor sólo se elegía al crear el horario, y corregirlo
+    obligaba a darlo de baja y cargarlo de nuevo: eso genera turnos nuevos y
+    deja los viejos cancelados, o sea que arreglar un dato administrativo le
+    volteaba las clases a los que ya estaban anotados. Un profesor que se va,
+    una licencia o simplemente haberse equivocado al cargarlo son cosas
+    normales, no motivo para rehacer el horario.
+
+    ARRASTRA A LOS TURNOS FUTUROS, y esa es la parte que importa. El profesor
+    del horario se copia a cada turno al generarlo, y de ahí sale "Mis
+    clases": si sólo se cambiara el horario, el profesor nuevo no vería
+    ninguna de las clases que ya están generadas y el viejo las seguiría
+    viendo todas. Se tocan sólo los HABILITADOS de hoy en adelante:
+
+    - Los turnos PASADOS no se tocan: son historia. La clase del martes pasado
+      la dio esa persona, y reescribirlo sería falsear el registro.
+    - Los CANCELADOS tampoco: ya no son clases.
+
+    `id_profesor` en None saca el profesor y deja el horario como sala abierta,
+    que es un estado válido (el alta también lo permite).
+    """
+    horario = db.get(HorarioActividad, id_horario)
+    if horario is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="El horario no existe.")
+
+    # MISMA validación que el alta, y a propósito: si acá fuera más laxa, este
+    # endpoint sería la puerta para dejar un horario de Yoga a nombre de
+    # alguien que da Spinning o de un profesor dado de baja.
+    if id_profesor is not None:
+        asignado = (db.query(ProfesorActividad)
+                    .join(Profesor, Profesor.id_profesor == ProfesorActividad.id_profesor)
+                    .join(Empleado, Empleado.id_empleado == Profesor.id_empleado)
+                    .filter(ProfesorActividad.id_actividad == horario.id_actividad,
+                            ProfesorActividad.id_profesor == id_profesor,
+                            Empleado.activo.is_(True))
+                    .first())
+        if asignado is None:
+            actividad = horario.actividad
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(f"Ese profesor no está asignado a "
+                        f"{actividad.nombre if actividad else 'esa actividad'}. "
+                        "Asignalo primero desde la tarjeta de la actividad."),
+            )
+
+    if horario.id_profesor == id_profesor:
+        # No es un error: puede venir de una pantalla desactualizada. Se
+        # responde el horario tal como está en vez de tocar turnos al pedo.
+        return _a_horario_out(db, horario)
+
+    horario.id_profesor = id_profesor
+
+    futuros = (db.query(Turno)
+               .filter(Turno.id_horario_actividad == id_horario,
+                       Turno.fecha >= date.today(),
+                       Turno.estado == "HABILITADO")
+               .all())
+    for t in futuros:
+        t.id_profesor = id_profesor
+
+    db.commit()
+    db.refresh(horario)
+    return _a_horario_out(db, horario)
 
 @router.post("/turnos/generar", response_model=GeneracionTurnosOut)
 def generar(

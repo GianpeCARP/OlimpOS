@@ -56,6 +56,8 @@ interface ProfesorApi {
   nombre: string;
   titulo?: string | null;
   especialidad?: string | null;
+  dni?: string | null;
+  legajo?: string | null;
 }
 
 interface InscripcionApi {
@@ -396,6 +398,22 @@ export interface ProfesorAsignable {
   nombre: string;
   especialidad?: string;
   asignado: boolean;
+  dni?: string;
+  legajo?: string;
+}
+
+/**
+ * Cómo distinguir a dos profesores que se llaman IGUAL.
+ *
+ * Dos homónimos se ven idénticos al asignarlos a una actividad y en el selector
+ * del horario, y elegir mal deja la clase con el profesor equivocado —que después
+ * es el que ve "Mis clases"—. Se prefiere el legajo porque es lo que usa el
+ * gimnasio, pero la columna es nullable, así que se cae al DNI, que siempre está.
+ */
+export function seniaDeProfesor(p: ProfesorAsignable): string | undefined {
+  if (p.legajo) return `Legajo ${p.legajo}`;
+  if (p.dni) return `DNI ${p.dni}`;
+  return undefined;
 }
 
 /**
@@ -420,6 +438,8 @@ export async function getProfesoresDeActividad(
     nombre: p.nombre,
     especialidad: opcional(p.especialidad),
     asignado: idsAsignados.has(p.id_profesor),
+    dni: opcional(p.dni),
+    legajo: opcional(p.legajo),
   }));
 }
 

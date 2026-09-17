@@ -253,6 +253,12 @@ class SociosView:
                         *([ft.Text(f"Baja el {s['baja_programada']}",
                                    color=Colors.STATUS_WARN, size=11)]
                           if s["baja_programada"] else []),
+                        # Cuenta desactivada NO es una baja: sigue siendo socio,
+                        # paga y entrena, sólo que no entra a la app. Gemelo del
+                        # aviso de SocioTableRow.tsx.
+                        *([ft.Text("Sin acceso a la app",
+                                   color=Colors.TEXT_MUTED, size=11)]
+                          if s["tiene_cuenta"] and not s["cuenta_activa"] else []),
                     ], spacing=0, tight=True),
                 ], spacing=10, expand=3),
                 ft.Container(content=ft.Text(s["plan"], color=Colors.TEXT_SECONDARY, size=13), expand=2),
@@ -284,7 +290,7 @@ class SociosView:
                         ft.Icons.MONITOR_HEART_ROUNDED,
                         icon_color=Colors.STATUS_DANGER if s["emergencia_telefono"]
                         else Colors.TEXT_MUTED,
-                        icon_size=18, tooltip="Contacto de emergencia",
+                        icon_size=18, tooltip="Contactos de emergencia",
                         on_click=lambda e, x=s: self._emergencia(x),
                     ),
                     # El botón se OMITE, no se deshabilita, para quien no tenga
@@ -643,46 +649,181 @@ class SociosView:
 
     def _emergencia(self, socio: dict):
         """
-        El contacto de emergencia, a un click de la grilla. Gemelo de
+        Los contactos de emergencia, a un click de la grilla. Gemelo de
         EmergenciaModal.tsx: el número grande (si la PC no llama, alguien lo
         marca en el celular) y WhatsApp. Antes el dato existía y ninguna
         pantalla del personal lo mostraba, que es justo cuando hace falta.
+
+        POR QUÉ ES UNA LISTA Y NO UN CONTACTO: Contacto_Emergencia es 1:N desde
+        el primer día, pero la app la manejaba con los tres campos planos de
+        SocioOut y hacía upsert de UNA fila, así que cargar a la madre pisaba a
+        la pareja. En una emergencia se llama al que atienda.
         """
-        telefono = socio["emergencia_telefono"]
-        if not telefono:
-            contenido = ft.Text(
-                "No tiene un contacto de emergencia cargado. Se carga desde "
-                "\"Editar\", o lo completa el socio en su perfil.",
-                color=Colors.TEXT_SECONDARY, size=13)
-            acciones = []
+        contactos = app_state.get_contactos_emergencia(socio["id"])
+        puede = app_state.puede(Accion.ALTA_BAJA_SOCIOS)
+
+        nombre_ref     = ft.Ref[ft.TextField]()
+        telefono_ref   = ft.Ref[ft.TextField]()
+        parentesco_ref = ft.Ref[ft.TextField]()
+
+        contenido = []
+
+        if not contactos:
+            contenido.append(ft.Text(
+                "No tiene ningún contacto de emergencia cargado. Se carga acá, "
+                "o lo completa el socio en su perfil.",
+                color=Colors.TEXT_SECONDARY, size=13))
         else:
-            detalle = socio["emergencia_nombre"]
-            if socio["emergencia_parentesco"]:
-                detalle += f" · {socio['emergencia_parentesco']}"
-            contenido = ft.Column([
-                ft.Text(detalle, color=Colors.TEXT_MAIN, size=14),
-                ft.Text(telefono, color=Colors.PRIMARY_VOLT, size=26,
-                        weight=ft.FontWeight.BOLD, font_family=Fonts.MONO,
-                        selectable=True),
-            ], spacing=4, tight=True)
-            acciones = [ft.TextButton(
-                "WhatsApp", icon=ft.Icons.CHAT_ROUNDED,
-                style=ft.ButtonStyle(color=Colors.ACCENT),
-                on_click=lambda e: self.page.launch_url(link_whatsapp(telefono)),
-            )]
+            contenido.append(ft.Text(
+                "Al principal se lo llama primero, y es el que aparece en la ficha.",
+                color=Colors.TEXT_SECONDARY, size=12))
+            contenido.append(ft.Container(height=8))
+
+        for c in contactos:
+            acciones = []
+            if puede and not c["principal"]:
+                acciones.append(ft.IconButton(
+                    ft.Icons.STAR_OUTLINE_ROUNDED, icon_color=Colors.TEXT_MUTED,
+                    icon_size=16, tooltip="Marcarlo como principal",
+                    on_click=lambda e, x=c: self._resolver_emergencia(
+                        app_state.marcar_emergencia_principal(socio["id"], x),
+                        dlg, socio),
+                ))
+            if puede:
+                acciones.append(ft.IconButton(
+                    ft.Icons.DELETE_OUTLINE_ROUNDED, icon_color=Colors.TEXT_MUTED,
+                    icon_size=16, tooltip="Borrarlo de la ficha",
+                    on_click=lambda e, x=c: self._confirmar_borrar_emergencia(socio, x, dlg),
+                ))
+
+            detalle = c["nombre"]
+            if c["parentesco"]:
+                detalle += f" · {c['parentesco']}"
+            if c["principal"]:
+                detalle += "  ·  principal"
+
+            contenido.append(ft.Row([
+                ft.Icon(ft.Icons.FAVORITE_ROUNDED, color=Colors.STATUS_DANGER, size=16),
+                ft.Column([
+                    ft.Text(detalle, color=Colors.TEXT_PRIMARY, size=13),
+                    # El número GRANDE y seleccionable: si la PC del mostrador
+                    # no puede llamar, alguien lo marca en su celular leyéndolo.
+                    ft.Text(c["telefono"], color=Colors.PRIMARY_VOLT, size=22,
+                            weight=ft.FontWeight.BOLD, font_family=Fonts.MONO,
+                            selectable=True),
+                ], spacing=1, tight=True, expand=True),
+                ft.IconButton(
+                    ft.Icons.CHAT_ROUNDED, icon_color=Colors.ACCENT, icon_size=16,
+                    tooltip=f"WhatsApp a {c['telefono']}",
+                    on_click=lambda e, x=c: self.page.launch_url(
+                        link_whatsapp(x["telefono"])),
+                ),
+                *acciones,
+            ], spacing=8))
+
+        if puede:
+            contenido += [
+                ft.Container(height=12),
+                input_field("Agregar contacto", "Nombre y apellido", ref=nombre_ref),
+                ft.Container(height=8),
+                telefono_field("Teléfono", "Ej: 3415551234", ref=telefono_ref),
+                ft.Container(height=8),
+                input_field("Parentesco", "Madre, pareja, hermano…",
+                            ref=parentesco_ref),
+            ]
+
+        acciones_dlg = []
+        if puede:
+            acciones_dlg.append(ft.TextButton(
+                "Agregar", style=ft.ButtonStyle(color=Colors.ACCENT),
+                on_click=lambda e: self._agregar_emergencia(
+                    socio, nombre_ref, telefono_ref, parentesco_ref, dlg)))
+        acciones_dlg.append(ft.TextButton(
+            "Cerrar", style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+            on_click=lambda e: close_dialog(self.page, dlg)))
 
         dlg = ft.AlertDialog(
             modal=True,
-            title=ft.Text(f"Contacto de emergencia — {socio['nombre']}",
+            title=ft.Text(f"Contactos de emergencia — {socio['nombre']}",
                           color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD, size=16),
             bgcolor=Colors.BG_CARD,
-            content=ft.Container(content=contenido, width=380),
-            actions=[*acciones, ft.TextButton(
-                "Cerrar", style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
-                on_click=lambda e: close_dialog(self.page, dlg))],
+            content=ft.Container(
+                width=440,
+                height=420,
+                # El scroll va en la Column INTERNA (trampa de Flet 0.84: en la
+                # externa con un hijo expand, centra todo verticalmente).
+                content=ft.Column(contenido, spacing=8, tight=True,
+                                  scroll=ft.ScrollMode.AUTO),
+            ),
+            actions=acciones_dlg,
             actions_alignment=ft.MainAxisAlignment.END,
         )
         open_dialog(self.page, dlg)
+
+    def _agregar_emergencia(self, socio: dict, nombre_ref, telefono_ref,
+                            parentesco_ref, dlg):
+        nombre = self._texto(nombre_ref)
+        if not nombre:
+            show_snack(self.page, "Escribí a quién hay que llamar.",
+                       Colors.STATUS_DANGER)
+            return
+        telefono = self._texto(telefono_ref)
+        if not telefono:
+            show_snack(self.page, "Escribí un número.", Colors.STATUS_DANGER)
+            return
+        # `principal` no se manda: el backend marca principal al PRIMERO de la
+        # ficha aunque nadie se lo pida, porque una ficha con contactos donde
+        # ninguno es el principal no muestra ninguno en la grilla.
+        self._resolver_emergencia(
+            app_state.agregar_contacto_emergencia(
+                socio["id"], nombre, telefono, self._texto(parentesco_ref)),
+            dlg, socio)
+
+    def _confirmar_borrar_emergencia(self, socio: dict, contacto: dict, padre):
+        close_dialog(self.page, padre)
+
+        confirmacion = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f"¿Borrar a {contacto['nombre']}?",
+                          color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
+            bgcolor=Colors.BG_CARD,
+            content=ft.Text(
+                "Es el contacto principal. Si quedan otros cargados, el más "
+                "viejo pasa a ocupar su lugar."
+                if contacto["principal"] else "Se saca el contacto de la ficha.",
+                color=Colors.TEXT_SECONDARY, size=14),
+            actions=[
+                ft.TextButton("Cancelar",
+                              style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                              on_click=lambda e: self._volver_a_emergencia(confirmacion, socio)),
+                ft.TextButton("Borrar",
+                              style=ft.ButtonStyle(color=Colors.DANGER),
+                              on_click=lambda e: self._resolver_emergencia(
+                                  app_state.borrar_contacto_emergencia(
+                                      socio["id"], contacto["id"]),
+                                  confirmacion, socio)),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        open_dialog(self.page, confirmacion)
+
+    def _volver_a_emergencia(self, dlg, socio: dict):
+        """Cancelar en la confirmación devuelve a la lista, no a la grilla."""
+        close_dialog(self.page, dlg)
+        self._emergencia(socio)
+
+    def _resolver_emergencia(self, resultado: dict, dlg, socio: dict):
+        """
+        Muestra el resultado y REABRE la lista con los datos frescos.
+
+        Igual que con teléfonos: cargar contactos es una tarea de a varios —la
+        madre y después la pareja— y cerrar la ventana en cada paso obligaría a
+        volver a buscar al socio en la grilla.
+        """
+        close_dialog(self.page, dlg)
+        show_snack(self.page, resultado["mensaje"],
+                   Colors.SUCCESS if resultado["ok"] else Colors.STATUS_DANGER)
+        self._emergencia(socio)
 
     def _confirmar_baja(self, socio: dict):
         """

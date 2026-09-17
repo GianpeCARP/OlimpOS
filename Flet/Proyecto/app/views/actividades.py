@@ -17,7 +17,7 @@ from app.components.ui import (build_topbar, section_card, primary_button,
                                secondary_button, icon_action, input_field,
                                select_field, empty_state, divider_row,
                                show_snack, confirm_dialog, form_dialog,
-                               open_dialog)
+                               open_dialog, close_dialog)
 
 
 class ActividadesView:
@@ -210,6 +210,13 @@ class ActividadesView:
                     ft.Text(h["hora"], color=color, size=13,
                             weight=ft.FontWeight.BOLD, font_family=Fonts.MONO),
                     ft.Container(expand=True),
+                    # Cambiar el profesor SIN rehacer el horario: darlo de baja
+                    # y crearlo de nuevo cancela los turnos que ya tenían gente.
+                    ft.IconButton(
+                        ft.Icons.SCHOOL_ROUNDED, icon_color=Colors.TEXT_MUTED,
+                        icon_size=14, tooltip="Cambiar el profesor",
+                        on_click=lambda e, x=h: self._cambiar_profesor_horario(x),
+                    ),
                     ft.IconButton(
                         ft.Icons.CLOSE_ROUNDED, icon_color=Colors.TEXT_MUTED,
                         icon_size=14, tooltip="Dar de baja este horario",
@@ -263,8 +270,15 @@ class ActividadesView:
 
         def opciones_profesor(actividad: dict) -> tuple[list, str]:
             asignados = actividad["profesores"]
+            # La etiqueta lleva legajo o DNI: dos homónimos daban dos opciones
+            # idénticas y el profesor del horario pasa a cada turno generado,
+            # así que elegir mal se arrastra hasta "Mis clases".
             opciones = [ft.dropdown.Option(key=sin_profesor, text="Sin profesor")] + [
-                ft.dropdown.Option(key=str(p["id"]), text=p["nombre"]) for p in asignados
+                ft.dropdown.Option(
+                    key=str(p["id"]),
+                    text=f"{p['nombre']} · {p['senia']}" if p.get("senia") else p["nombre"],
+                )
+                for p in asignados
             ]
             elegido = str(asignados[0]["id"]) if len(asignados) == 1 else sin_profesor
             return opciones, elegido
@@ -362,6 +376,83 @@ class ActividadesView:
             texto_guardar="Crear y generar turnos",
         )
         open_dialog(self.page, dlg)
+
+    def _cambiar_profesor_horario(self, h: dict):
+        """
+        Le cambia (o le saca) el profesor a un horario YA CREADO. Gemelo de
+        ProfesorHorarioModal.tsx.
+
+        Antes la única forma era darlo de baja y cargarlo de nuevo, y eso genera
+        turnos nuevos dejando cancelados los viejos: corregir un dato
+        administrativo le volteaba la clase a los que ya estaban anotados.
+
+        Sólo los profesores ASIGNADOS a esa actividad, que es lo único que el
+        backend acepta: ofrecer los demás sería ofrecer un 409.
+        """
+        actividad = next((a for a in app_state.get_actividades()
+                          if a["id"] == h.get("id_actividad")), None)
+        asignados = actividad["profesores"] if actividad else []
+
+        sin_profesor = "0"
+        prof_ref = ft.Ref[ft.Dropdown]()
+
+        if not asignados:
+            cuerpo = ft.Text(
+                f"{h['actividad']} no tiene profesores asignados. Asignale uno "
+                "desde la tarjeta de la actividad y volvé acá.",
+                color=Colors.TEXT_SECONDARY, size=13)
+            acciones_extra = []
+        else:
+            opciones = [ft.dropdown.Option(key=sin_profesor, text="Sin profesor")] + [
+                ft.dropdown.Option(
+                    key=str(p["id"]),
+                    text=f"{p['nombre']} · {p['senia']}" if p.get("senia") else p["nombre"],
+                )
+                for p in asignados
+            ]
+            actual = h.get("id_profesor")
+            cuerpo = ft.Column([
+                ft.Dropdown(
+                    ref=prof_ref, label="Profesor", options=opciones,
+                    value=str(actual) if actual else sin_profesor,
+                    color=Colors.TEXT_PRIMARY, bgcolor=Colors.BG_INPUT,
+                    border_color=Colors.BORDER, focused_border_color=Colors.ACCENT,
+                    border_radius=10,
+                ),
+                ft.Container(height=8),
+                ft.Text(
+                    "El cambio también se aplica a los turnos de hoy en adelante "
+                    "que ya estén generados. Los que ya pasaron quedan con el "
+                    "profesor que dio esa clase.",
+                    color=Colors.TEXT_MUTED, size=11),
+            ], spacing=0, tight=True)
+            acciones_extra = [ft.TextButton(
+                "Guardar", style=ft.ButtonStyle(color=Colors.ACCENT),
+                on_click=lambda e: self._guardar_profesor_horario(h, prof_ref,
+                                                                  sin_profesor, dlg))]
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f"Profesor de {h['actividad']} — {h['dia']} {h['hora']}",
+                          color=Colors.TEXT_PRIMARY, weight=ft.FontWeight.BOLD, size=15),
+            bgcolor=Colors.BG_CARD,
+            content=ft.Container(content=cuerpo, width=380),
+            actions=[*acciones_extra, ft.TextButton(
+                "Cerrar", style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                on_click=lambda e: close_dialog(self.page, dlg))],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        open_dialog(self.page, dlg)
+
+    def _guardar_profesor_horario(self, h: dict, prof_ref, sin_profesor: str, dlg):
+        elegido = (prof_ref.current.value if prof_ref.current else None) or sin_profesor
+        id_profesor = int(elegido)
+        resultado = app_state.cambiar_profesor_de_horario(h["id"], id_profesor or None)
+        close_dialog(self.page, dlg)
+        show_snack(self.page, resultado["mensaje"],
+                   Colors.SUCCESS if resultado["ok"] else Colors.STATUS_DANGER)
+        if resultado["ok"]:
+            self.router.navigate(Routes.ACTIVIDADES)
 
     def _baja_horario(self, h: dict):
         """
@@ -707,7 +798,11 @@ class ActividadesView:
                 ft.Column([
                     ft.Text(prof["nombre"], color=Colors.TEXT_MAIN, size=14,
                             font_family=Fonts.BODY),
-                    ft.Text(prof["especialidad"], color=Colors.TEXT_MUTED, size=12,
+                    # Legajo o DNI adelante de la especialidad: sin esto, dos
+                    # profesores que se llaman igual se ven idénticos acá.
+                    ft.Text(" · ".join(x for x in (prof.get("senia"),
+                                                  prof["especialidad"]) if x),
+                            color=Colors.TEXT_MUTED, size=12,
                             font_family=Fonts.BODY),
                 ], spacing=1, tight=True, expand=True),
                 estado,

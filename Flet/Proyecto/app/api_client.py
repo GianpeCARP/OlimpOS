@@ -468,6 +468,28 @@ def borrar_telefono(id_socio: int, id_telefono: int) -> dict:
     return _delete(f"/socios/{id_socio}/telefonos/{id_telefono}")
 
 
+# --- Contactos de emergencia de la ficha --------------------------------------
+# Mismo criterio que los teléfonos de acá arriba: endpoints propios. La tabla
+# Contacto_Emergencia es 1:N desde el primer día, pero la app la manejaba con
+# los tres campos planos de SocioOut y sólo dejaba cargar uno (ver el bloque
+# CONTACTOS DE EMERGENCIA en routers/socios.py).
+
+def contactos_emergencia_de_socio(id_socio: int) -> dict:
+    return _get(f"/socios/{id_socio}/contactos-emergencia")
+
+
+def agregar_contacto_emergencia(id_socio: int, datos: dict) -> dict:
+    return _post(f"/socios/{id_socio}/contactos-emergencia", datos)
+
+
+def editar_contacto_emergencia(id_socio: int, id_contacto: int, datos: dict) -> dict:
+    return _put(f"/socios/{id_socio}/contactos-emergencia/{id_contacto}", datos)
+
+
+def borrar_contacto_emergencia(id_socio: int, id_contacto: int) -> dict:
+    return _delete(f"/socios/{id_socio}/contactos-emergencia/{id_contacto}")
+
+
 # =============================================================================
 # PERSONAL
 # =============================================================================
@@ -811,6 +833,21 @@ def crear_horario(datos: dict) -> dict:
 
 def cambiar_estado_horario(id_horario: int, activo: bool) -> dict:
     return _post(f"/actividades/horarios/{id_horario}/estado?activo={str(activo).lower()}")
+
+
+def cambiar_profesor_de_horario(id_horario: int, id_profesor: int | None) -> dict:
+    """
+    Le cambia (o le saca) el profesor a un horario ya creado.
+
+    Antes la única forma era darlo de baja y crearlo de nuevo, y eso cancela los
+    turnos ya generados —que pueden tener gente anotada—. El backend arrastra el
+    cambio a los turnos futuros, que es de donde sale "Mis clases".
+
+    Sin `id_profesor` en la query el backend lo lee como None y el horario queda
+    como sala abierta, que es un estado válido.
+    """
+    query = "" if id_profesor is None else f"?id_profesor={id_profesor}"
+    return _put(f"/actividades/horarios/{id_horario}/profesor{query}", {})
 
 
 def generar_turnos() -> dict:

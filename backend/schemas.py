@@ -356,6 +356,55 @@ class TelefonoRequest(BaseModel):
         return v
 
 
+class ContactoEmergenciaOut(BaseModel):
+    """
+    Un contacto de emergencia de la ficha.
+
+    Gemelo de TelefonoOut, y por el mismo motivo: Contacto_Emergencia es una
+    tabla 1:N desde el primer día —el comentario del schema dice "Multivaluado,
+    por eso tabla propia y no columnas de Persona"— pero la app entraba y salía
+    por tres campos sueltos (emergencia_nombre/telefono/parentesco), así que en
+    la práctica sólo se podía cargar UNO. Una persona tiene a la madre y a la
+    pareja, y en una emergencia se llama al que atienda.
+    """
+    model_config = ConfigDict(from_attributes=True)
+
+    id_contacto_emergencia: int
+    nombre: str
+    telefono: str
+    parentesco: str | None = None
+    principal: bool = False
+
+
+class ContactoEmergenciaRequest(BaseModel):
+    nombre: str
+    telefono: str
+    parentesco: str | None = None
+    # Igual que en Telefono: marcar uno DESMARCA al anterior (lo hace el
+    # router). El principal es el que sale en la grilla de Socios y al que
+    # apunta el botón rojo de llamar.
+    principal: bool = False
+
+    _validar_telefono = field_validator("telefono")(_telefono_valido)
+
+    @field_validator("nombre")
+    @classmethod
+    def _nombre_no_vacio(cls, v: str) -> str:
+        # La columna es NOT NULL: un nombre vacío lo rechaza Postgres con un
+        # error ilegible. Además "llamar a ___" no sirve de nada.
+        v = (v or "").strip()
+        if not v:
+            raise PydanticCustomError("nombre_requerido",
+                                      "El contacto de emergencia necesita un nombre.")
+        return v
+
+    @field_validator("parentesco")
+    @classmethod
+    def _parentesco_limpio(cls, v: str | None) -> str | None:
+        v = (v or "").strip()
+        return v or None
+
+
 class TipoBaja(str, Enum):
     VOLUNTARIA = "VOLUNTARIA"
     MORA = "MORA"
@@ -412,6 +461,12 @@ class SocioOut(BaseModel):
     emergencia_telefono: str | None = None
     emergencia_parentesco: str | None = None
     tiene_cuenta: bool = False
+    # Si la cuenta existe pero está DESACTIVADA. Son dos banderas distintas:
+    # `Usuario.activo` es el acceso a la app y `Socio.activo` es ser socio del
+    # gimnasio. Se pueden contradecir a propósito —alguien que paga y entrena
+    # pero se quedó sin app— y hasta acá la grilla no lo decía en ninguna parte:
+    # Usuarios mostraba "inactivo" y Socios "Activo" de la misma persona.
+    cuenta_activa: bool = False
     # Fecha de la baja PROGRAMADA (bajas.py), si pidió la baja con un período
     # pago en curso. Hasta ese día sigue activo.
     baja_programada: date | None = None
@@ -938,6 +993,13 @@ class ProfesorActividadOut(BaseModel):
     nombre: str
     titulo: str | None = None
     especialidad: str | None = None
+    # Para distinguir HOMÓNIMOS. Dos profesores que se llaman igual se ven
+    # idénticos en el panel de asignación y en el selector del horario, y
+    # elegir mal deja la clase con el profesor equivocado. El legajo es lo que
+    # usa el gimnasio, pero es nullable: el DNI siempre está, así que la
+    # pantalla muestra legajo y cae al DNI cuando no hay.
+    dni: str | None = None
+    legajo: str | None = None
 
 
 

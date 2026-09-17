@@ -33,6 +33,24 @@ METODO_PAGO_DISPLAY = {
 METODO_PAGO_BACKEND = {v: k for k, v in METODO_PAGO_DISPLAY.items()}
 
 
+def _senia_de_profesor(p: dict) -> str:
+    """
+    Cómo distinguir a dos profesores que se llaman IGUAL. Gemelo de
+    `seniaDeProfesor` en actividadService.ts.
+
+    Pasa de verdad (hay dos "PEPE SAND" con DNI distinto): se ven idénticos al
+    asignarlos a una actividad y en el selector del horario, y como el profesor
+    del horario pasa a cada turno generado, elegir mal se arrastra hasta "Mis
+    clases". Se prefiere el legajo porque es lo que usa el gimnasio, pero la
+    columna es nullable: el DNI siempre está.
+    """
+    if p.get("legajo"):
+        return f"Legajo {p['legajo']}"
+    if p.get("dni"):
+        return f"DNI {p['dni']}"
+    return ""
+
+
 class AppState:
     """Estado centralizado de la aplicación."""
 
@@ -407,6 +425,12 @@ class AppState:
                 "baja_programada": self._fecha(s.get("baja_programada"))
                                    if s.get("baja_programada") else "",
                 "activo": s.get("activo", True),
+                # La cuenta de acceso es OTRA bandera: `Usuario.activo` (entrar a
+                # la app) no es `Socio.activo` (ser socio del gimnasio). Se pueden
+                # contradecir a propósito y hasta acá la grilla no lo decía:
+                # Usuarios mostraba "inactivo" de alguien que Socios daba "Activo".
+                "tiene_cuenta": bool(s.get("tiene_cuenta")),
+                "cuenta_activa": bool(s.get("cuenta_activa")),
             }
             for s in datos
         ]
@@ -822,7 +846,8 @@ class AppState:
                 # marcara al otro como asignado. El id es lo único que los
                 # distingue.
                 "profesores": [
-                    {"id": p["id_profesor"], "nombre": p.get("nombre", "?")}
+                    {"id": p["id_profesor"], "nombre": p.get("nombre", "?"),
+                     "senia": _senia_de_profesor(p)}
                     for p in profesores
                 ],
                 "planes": [
@@ -846,6 +871,7 @@ class AppState:
                 "id": p["id_profesor"],
                 "nombre": p.get("nombre", "?"),
                 "especialidad": p.get("especialidad") or p.get("titulo") or "—",
+                "senia": _senia_de_profesor(p),
             }
             for p in datos
         ]
@@ -1150,6 +1176,58 @@ class AppState:
     def borrar_telefono(self, id_socio: int, id_telefono: int) -> dict:
         return self._resultado(api_client.borrar_telefono(id_socio, id_telefono),
                                "Teléfono borrado.")
+
+    # ── Contactos de emergencia de la ficha ───────────────────────────────────
+
+    def get_contactos_emergencia(self, id_socio: int) -> list[dict]:
+        """
+        Todos los contactos del socio, el principal primero (el orden lo decide
+        el backend). Los `emergencia_*` de SocioOut traen sólo el principal,
+        aplanado para la grilla; esto es la lista completa.
+
+        Existe porque Contacto_Emergencia siempre fue 1:N y la app la trataba
+        como tres campos sueltos: cargar a la madre pisaba a la pareja.
+        """
+        datos = self._datos(api_client.contactos_emergencia_de_socio(id_socio), [])
+        return [{
+            "id": c["id_contacto_emergencia"],
+            "nombre": c.get("nombre", ""),
+            "telefono": c.get("telefono", ""),
+            "parentesco": c.get("parentesco") or "",
+            "principal": bool(c.get("principal")),
+        } for c in datos]
+
+    def agregar_contacto_emergencia(self, id_socio: int, nombre: str,
+                                    telefono: str, parentesco: str = "") -> dict:
+        return self._resultado(
+            api_client.agregar_contacto_emergencia(id_socio, {
+                "nombre": nombre,
+                "telefono": telefono,
+                # El backend deja parentesco en NULL si viene vacío: es
+                # opcional, y un string vacío se muestra como un " · " colgando.
+                "parentesco": parentesco or None,
+                "principal": False,
+            }),
+            "Contacto agregado.")
+
+    def marcar_emergencia_principal(self, id_socio: int, contacto: dict) -> dict:
+        """
+        El PUT pide el cuerpo completo, así que se reenvían nombre, teléfono y
+        parentesco tal como están: lo único que cambia es cuál queda marcado.
+        """
+        return self._resultado(
+            api_client.editar_contacto_emergencia(id_socio, contacto["id"], {
+                "nombre": contacto["nombre"],
+                "telefono": contacto["telefono"],
+                "parentesco": contacto["parentesco"] or None,
+                "principal": True,
+            }),
+            "Ahora es el contacto principal.")
+
+    def borrar_contacto_emergencia(self, id_socio: int, id_contacto: int) -> dict:
+        return self._resultado(
+            api_client.borrar_contacto_emergencia(id_socio, id_contacto),
+            "Contacto borrado.")
 
     # ── Personal ──────────────────────────────────────────────────────────────
 
@@ -1457,11 +1535,20 @@ class AppState:
                 "hora": str(h.get("hora", ""))[:5],
                 "cupo": h.get("cupo", 0),
                 "profesor": h.get("profesor") or "—",
+                # El id, no sólo el nombre: lo necesita el selector de "cambiar
+                # profesor" para venir precargado con el que ya tiene.
+                "id_profesor": h.get("id_profesor"),
                 "activo": h.get("activo", True),
                 "turnos_futuros": h.get("turnos_futuros", 0),
             }
             for h in datos
         ]
+
+    def cambiar_profesor_de_horario(self, id_horario: int,
+                                    id_profesor: int | None) -> dict:
+        return self._resultado(
+            api_client.cambiar_profesor_de_horario(id_horario, id_profesor),
+            "Listo, cambiamos el profesor del horario.")
 
     def crear_horario(self, datos: dict) -> dict:
         return self._resultado(api_client.crear_horario(datos),

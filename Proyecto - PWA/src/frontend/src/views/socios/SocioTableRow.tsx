@@ -1,4 +1,4 @@
-import { Dumbbell, HeartPulse, Pencil, Phone, RotateCcw, Stethoscope, Undo2, UserX } from 'lucide-react';
+import { Ban, Dumbbell, HeartPulse, Pencil, Phone, RotateCcw, Stethoscope, Undo2, UserX } from 'lucide-react';
 import { StatusBadge } from '../../components/ui';
 import { EstadoSocio } from '../../config';
 import type { SocioListado } from '../../services/sociosService';
@@ -71,6 +71,15 @@ export function SocioTableRow({
                 Baja el {formatearFecha(parsearFecha(socio.bajaProgramada))}
               </p>
             )}
+            {/* La cuenta desactivada NO es una baja: sigue siendo socio, paga y
+                entrena, sólo que no puede entrar a la app. Se muestra acá porque
+                antes no se veía en ninguna parte de Socios y Usuarios decía
+                "inactivo" de alguien que esta grilla mostraba "Activo". */}
+            {socio.tieneCuenta && !socio.cuentaActiva && (
+              <p className="flex items-center gap-1 truncate font-body text-xs text-text-muted">
+                <Ban size={11} className="shrink-0" /> Sin acceso a la app
+              </p>
+            )}
           </div>
         </div>
       </td>
@@ -116,7 +125,7 @@ export function SocioTableRow({
           <button
             type="button"
             onClick={onEmergencia}
-            title="Contacto de emergencia"
+            title="Contactos de emergencia"
             className={`rounded-md p-2 hover:bg-surface-card hover:text-status-danger ${
               socio.emergenciaTelefono ? 'text-status-danger/80' : 'text-text-muted'
             }`}

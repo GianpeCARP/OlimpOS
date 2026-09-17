@@ -367,12 +367,19 @@ export function SociosView() {
         <PatologiasModal socio={historial} onClose={() => setHistorial(null)} />
       )}
 
-      {/* Este SÍ recarga, a diferencia de los otros dos: el teléfono que
-          muestra la ficha es el PRINCIPAL, así que agregar uno, borrarlo o
-          cambiar cuál es el principal cambia lo que el formulario de edición
-          va a mostrar la próxima vez que se abra. Sin recargar, editar al
-          socio después reenviaría el número viejo. */}
-      {emergencia && <EmergenciaModal socio={emergencia} onClose={() => setEmergencia(null)} />}
+      {/* Recarga la grilla, igual que el de teléfonos: el contacto de
+          emergencia que muestra la ficha es el PRINCIPAL, así que agregar
+          uno, borrarlo o cambiar cuál es el principal cambia lo que el
+          formulario de edición va a mostrar la próxima vez que se abra. Sin
+          recargar, editar al socio después reenviaría el contacto viejo. */}
+      {emergencia && (
+        <EmergenciaModal
+          socio={emergencia}
+          puedeGestionar={puedeAltaBaja}
+          onClose={() => setEmergencia(null)}
+          onCambio={recargar}
+        />
+      )}
 
       {baja && (
         <BajaSocioModal

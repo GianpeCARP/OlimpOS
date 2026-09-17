@@ -3,7 +3,11 @@ import { CalendarDays, Clock, Dumbbell, GraduationCap, Users2 } from 'lucide-rea
 import { InputField, PrimaryButton, SelectField, type SelectOption } from '../../components/ui';
 import { colors } from '../../config';
 import { mensajeDeError } from '../../services/api';
-import type { ActividadAdmin, ProfesorAsignable } from '../../services/actividadService';
+import {
+  seniaDeProfesor,
+  type ActividadAdmin,
+  type ProfesorAsignable,
+} from '../../services/actividadService';
 import { crearHorario, DIAS_SEMANA } from '../../services/turnosService';
 import { useUiStore } from '../../store/uiStore';
 
@@ -97,9 +101,18 @@ export function HorarioFormModal({
     value: String(i + 1),
     label: nombre,
   }));
+  // El legajo (o el DNI) va en la etiqueta: dos profesores homónimos daban dos
+  // opciones idénticas y no había forma de saber cuál era cuál. El profesor del
+  // horario pasa a cada turno generado, así que elegir mal se arrastra.
   const opcionesProfesor: SelectOption[] = [
     { value: SIN_PROFESOR, label: 'Sin profesor' },
-    ...asignados.map((p) => ({ value: String(p.idProfesor), label: p.nombre })),
+    ...asignados.map((p) => {
+      const senia = seniaDeProfesor(p);
+      return {
+        value: String(p.idProfesor),
+        label: senia ? `${p.nombre} · ${senia}` : p.nombre,
+      };
+    }),
   ];
 
   return (
