@@ -190,6 +190,10 @@ D:\OlimpOs\
   `telefono_field` (selector de país, Argentina por defecto) y guarda el número completo
   (`+54 3415551234`). Los viejos sin `+` se leen como argentinos, sin migrar.
   `linkWhatsapp` agrega el 9 de celular argentino.
+- **Objetivo y observaciones** (columnas de `Socio`) se cargan en el alta y la edición,
+  en las dos apps. El PUT de socio **sólo toca lo que vino en el pedido**: un campo
+  ausente se conserva, uno vacío borra. Sin eso, un formulario al que le falte un campo
+  lo borra en silencio.
 - **Datos personales del socio** (fecha de nacimiento, domicilio, contacto de
   emergencia) se cargan en el **alta y la edición**, nunca al cobrar. Los contactos de
   emergencia se llaman desde un botón de la grilla, que ven todos los que ven
@@ -215,6 +219,12 @@ D:\OlimpOs\
   actividades, pero no toca los turnos ya programados. **Usuarios no reactiva la
   cuenta de alguien dado de baja** (eso se hace desde Personal) **ni crea personas**:
   la cuenta nace con el alta en Socios o Personal.
+- **Resetear la propia contraseña está permitido y CORTA la sesión**: el backend
+  rechaza (401) cualquier token de una cuenta marcada para cambiar la clave, y la PWA
+  manda al login con el motivo. La temporal se muestra UNA vez: si el único dueño se
+  la resetea y la pierde, nadie puede rescatarlo desde la app (sólo un dueño opera
+  sobre un dueño) y la salida es reescribirle el hash en la base con
+  `auth.hashear_password` — el hash no se puede leer, se reemplaza.
 - **Borrar una cuenta** borra sólo el `Usuario` (la persona y su historial quedan).
   Nadie borra la propia; sólo un Dueño borra la de un Dueño, y nunca la última.
 - **Historial médico:** el catálogo dice QUÉ tiene y las observaciones por socio dicen

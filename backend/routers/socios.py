@@ -504,12 +504,21 @@ def editar_socio(
     duplican por cada función que la persona cumple.
 
     El DNI no se puede cambiar: sería decir que es otra persona.
+
+    SÓLO SE TOCA LO QUE VINO EN EL PEDIDO. Antes se asignaban todos los campos
+    del schema, y los que no venían llegaban en None y BORRABAN lo que había:
+    editar un teléfono desde un formulario que no tenía "objetivo" ni
+    "observaciones" los dejaba en blanco sin que nadie lo notara (pasó con la
+    PWA, que no los pedía y Flet sí). Con `model_fields_set` se distingue
+    "no lo mandó" de "lo mandó vacío para borrarlo", que son cosas distintas y
+    con un valor por defecto se veían iguales.
     """
     socio = db.get(Socio, id_socio)
     if socio is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="El socio no existe.")
 
     persona = socio.persona
+    enviados = datos.model_fields_set
 
     if datos.email and datos.email != persona.email:
         choca = (db.query(Persona)
@@ -520,15 +529,28 @@ def editar_socio(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                                 detail="Ese email ya está registrado para otra persona.")
 
+    # nombre y apellido son obligatorios en el schema: siempre vienen.
     persona.nombre = datos.nombre.strip()
     persona.apellido = datos.apellido.strip()
-    persona.email = datos.email
-    persona.fecha_nacimiento = datos.fecha_nacimiento
-    persona.calle = (datos.calle or "").strip() or None
-    persona.numero_calle = (datos.numero_calle or "").strip() or None
-    persona.localidad = (datos.localidad or "").strip() or None
-    socio.objetivo = datos.objetivo
-    socio.observaciones = datos.observaciones
+
+    def texto(valor: str | None) -> str | None:
+        """Vacío es None: un campo en blanco borra el dato, no guarda "" ."""
+        return (valor or "").strip() or None
+
+    if "email" in enviados:
+        persona.email = datos.email
+    if "fecha_nacimiento" in enviados:
+        persona.fecha_nacimiento = datos.fecha_nacimiento
+    if "calle" in enviados:
+        persona.calle = texto(datos.calle)
+    if "numero_calle" in enviados:
+        persona.numero_calle = texto(datos.numero_calle)
+    if "localidad" in enviados:
+        persona.localidad = texto(datos.localidad)
+    if "objetivo" in enviados:
+        socio.objetivo = texto(datos.objetivo)
+    if "observaciones" in enviados:
+        socio.observaciones = texto(datos.observaciones)
 
     # Contacto de emergencia principal: se crea o se actualiza, nunca se borra
     # desde acá (mismo criterio que "Mi perfil" del socio). Para crearlo hace
@@ -554,7 +576,7 @@ def editar_socio(
 
     # El teléfono vive en su propia tabla: se actualiza el principal o se crea
     # uno si la persona no tenía ninguno cargado.
-    if datos.telefono is not None:
+    if "telefono" in enviados and datos.telefono is not None:
         numero = datos.telefono.strip()
         principal = (db.query(Telefono)
                      .filter(Telefono.id_persona == persona.id_persona)

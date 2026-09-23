@@ -135,6 +135,36 @@ function mensajeDelCuerpo(cuerpo: unknown, status: number): string {
   return `El servidor respondió un error (${status}).`;
 }
 
+// =========================================================================
+// SESIÓN CAÍDA (401)
+// =========================================================================
+//
+// Un 401 en cualquier pantalla significa que la sesión dejó de valer: venció
+// el token, desactivaron la cuenta, o —el caso que lo motivó— alguien reseteó
+// su propia contraseña y el backend deja de aceptar el token viejo hasta que
+// defina una nueva. Antes eso no lo miraba nadie: la vista mostraba el error
+// como cualquier otro y la persona quedaba en una pantalla que ya no podía
+// cargar nada, sin entender que tenía que volver a entrar.
+//
+// Se avisa por callback y no navegando desde acá: este módulo no sabe de React
+// ni del router, y atarlo a ellos haría que un service no se pueda usar fuera
+// de una pantalla. App.tsx registra qué hacer (limpiar la sesión y mostrar el
+// motivo); ProtectedRoute se encarga del resto.
+
+type AvisoSesionCaida = (mensaje: string) => void;
+
+let avisarSesionCaida: AvisoSesionCaida | null = null;
+
+export function alPerderLaSesion(aviso: AvisoSesionCaida): void {
+  avisarSesionCaida = aviso;
+}
+
+// Rutas donde un 401 NO es una sesión caída: son las que se llaman JUSTAMENTE
+// sin sesión. En /login es "usuario o contraseña incorrectos" y en /me es el
+// chequeo del arranque, que ya trata el fallo como "no hay sesión" sin
+// molestar a nadie.
+const SIN_SESION_PROPIA = ['/login', '/cambiar-password', '/me'];
+
 interface OpcionesPedido {
   metodo?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   cuerpo?: unknown;
@@ -207,7 +237,11 @@ export async function pedir<T>(ruta: string, opciones: OpcionesPedido = {}): Pro
   }
 
   if (!respuesta.ok) {
-    throw new ServiceError(respuesta.status, mensajeDelCuerpo(datos, respuesta.status));
+    const mensaje = mensajeDelCuerpo(datos, respuesta.status);
+    if (respuesta.status === 401 && !SIN_SESION_PROPIA.includes(ruta.split('?')[0])) {
+      avisarSesionCaida?.(mensaje);
+    }
+    throw new ServiceError(respuesta.status, mensaje);
   }
 
   return datos as T;

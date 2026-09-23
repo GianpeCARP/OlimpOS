@@ -1,6 +1,6 @@
 import { useState, type SubmitEvent } from 'react';
 import { useNavigate } from 'react-router';
-import { Cake, HeartPulse, House, IdCard, Mail, MapPin, User } from 'lucide-react';
+import { Cake, ClipboardList, Flag, HeartPulse, House, IdCard, Mail, MapPin, User } from 'lucide-react';
 import { InputField, PrimaryButton, TelefonoField } from '../../components/ui';
 import { PanelCredenciales } from '../../components/PanelCredenciales';
 import { Acceso, colors, Routes } from '../../config';
@@ -56,6 +56,12 @@ export function SocioFormModal({ socio, onClose, onGuardado }: SocioFormModalPro
   const [apellido, setApellido] = useState(socio?.apellido ?? '');
   const [email, setEmail] = useState(socio?.email ?? '');
   const [telefono, setTelefono] = useState(socio?.telefono ?? '');
+  // Objetivo y observaciones son columnas de Socio y las pedía sólo Flet. Sin
+  // ellas acá, editar desde la PWA las mandaba vacías y las BORRABA (hoy el
+  // backend ignora lo que no viene, pero igual hacían falta: el objetivo es el
+  // dato con el que el entrenador le arma la rutina).
+  const [objetivo, setObjetivo] = useState(socio?.objetivo ?? '');
+  const [observaciones, setObservaciones] = useState(socio?.observaciones ?? '');
   // Datos personales: los pedía el esquema desde siempre y ninguna pantalla
   // los preguntaba. Van en el alta (con la persona enfrente) y en la edición,
   // NO al cobrar: el cobro es otra conversación.
@@ -103,6 +109,8 @@ export function SocioFormModal({ socio, onClose, onGuardado }: SocioFormModalPro
           apellido,
           email,
           telefono,
+          objetivo,
+          observaciones,
           datosPersonales,
         });
         showSnack('Socio actualizado correctamente', colors.statusOk);
@@ -111,7 +119,9 @@ export function SocioFormModal({ socio, onClose, onGuardado }: SocioFormModalPro
         return;
       }
 
-      const resultado = await crearSocio({ dni, nombre, apellido, email, telefono, datosPersonales });
+      const resultado = await crearSocio({
+        dni, nombre, apellido, email, telefono, objetivo, observaciones, datosPersonales,
+      });
       // La tabla se actualiza YA, aunque el modal siga abierto con las
       // credenciales: el socio existe desde este momento.
       onGuardado(resultado.socio);
@@ -212,6 +222,26 @@ export function SocioFormModal({ socio, onClose, onGuardado }: SocioFormModalPro
             <InputField label="Número" value={numeroCalle} onChange={setNumeroCalle} name="numeroCalle" />
           </div>
           <InputField label="Localidad" value={localidad} onChange={setLocalidad} icon={MapPin} name="localidad" />
+
+          <p className="-mb-2 font-body text-xs font-semibold tracking-wide text-text-muted uppercase">
+            En el gimnasio
+          </p>
+          <InputField
+            label="Objetivo"
+            value={objetivo}
+            onChange={setObjetivo}
+            icon={Flag}
+            hint="Ej: bajar de peso, ganar masa muscular"
+            name="objetivo"
+          />
+          <InputField
+            label="Observaciones"
+            value={observaciones}
+            onChange={setObservaciones}
+            icon={ClipboardList}
+            hint="Notas del mostrador. Las lesiones y condiciones van en la ficha médica."
+            name="observaciones"
+          />
 
           <p className="-mb-2 font-body text-xs font-semibold tracking-wide text-text-muted uppercase">
             Contacto de emergencia

@@ -32,6 +32,9 @@ export interface SocioListado {
   calle?: string;
   numeroCalle?: string;
   localidad?: string;
+  /** Lo que el socio viene a lograr y las notas del mostrador (tabla Socio). */
+  objetivo?: string;
+  observaciones?: string;
   /** Contacto de emergencia principal: se puede llamar desde la grilla. */
   emergenciaNombre?: string;
   emergenciaTelefono?: string;
@@ -74,6 +77,8 @@ interface SocioApi {
   calle?: string | null;
   numero_calle?: string | null;
   localidad?: string | null;
+  objetivo?: string | null;
+  observaciones?: string | null;
   emergencia_nombre?: string | null;
   emergencia_telefono?: string | null;
   emergencia_parentesco?: string | null;
@@ -110,6 +115,8 @@ function aSocioListado(s: SocioApi): SocioListado {
     calle: s.calle ?? undefined,
     numeroCalle: s.numero_calle ?? undefined,
     localidad: s.localidad ?? undefined,
+    objetivo: s.objetivo ?? undefined,
+    observaciones: s.observaciones ?? undefined,
     emergenciaNombre: s.emergencia_nombre ?? undefined,
     emergenciaTelefono: s.emergencia_telefono ?? undefined,
     emergenciaParentesco: s.emergencia_parentesco ?? undefined,
@@ -374,6 +381,8 @@ export interface CrearSocioInput {
   // Los pide el alta desde el 2026-09-16: antes el backend los aceptaba y
   // ninguna pantalla los preguntaba, así que nadie los tenía cargados.
   datosPersonales?: DatosPersonalesSocio;
+  objetivo?: string;
+  observaciones?: string;
   // Acá había `idTipoMembresia`, y no se mandaba nunca: el formulario dejaba
   // elegir un plan y el socio quedaba SIN membresía, sin ningún aviso. Se sacó
   // el 2026-09-16. El plan no es un dato del socio: es una Membresía, y se
@@ -428,6 +437,8 @@ export async function crearSocio(input: CrearSocioInput): Promise<AltaSocioResul
       email: input.email?.trim() || null,
       telefono: input.telefono?.trim() || null,
       ...cuerpoDatosPersonales(input.datosPersonales),
+      objetivo: input.objetivo?.trim() || null,
+      observaciones: input.observaciones?.trim() || null,
       id_sede: 1,
       crear_cuenta: true,
     },
@@ -461,6 +472,7 @@ export interface EditarSocioInput {
   email?: string;
   telefono?: string;
   objetivo?: string;
+  observaciones?: string;
   datosPersonales?: DatosPersonalesSocio;
 }
 
@@ -490,6 +502,7 @@ export async function actualizarSocio(
       email: input.email?.trim() || null,
       telefono: input.telefono?.trim() ?? null,
       objetivo: input.objetivo?.trim() || null,
+      observaciones: input.observaciones?.trim() || null,
       ...cuerpoDatosPersonales(input.datosPersonales),
     },
   });

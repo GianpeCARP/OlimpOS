@@ -1,6 +1,9 @@
 import { useEffect } from 'react';
 import { BrowserRouter, Routes as RouterRoutes, Route } from 'react-router';
 import { useAuthStore } from './store/authStore';
+import { useUiStore } from './store/uiStore';
+import { alPerderLaSesion } from './services/api';
+import { colors } from './config';
 import { AppLayout } from './layout/AppLayout';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { RedirectInicial } from './components/RedirectInicial';
@@ -62,6 +65,17 @@ export default function App() {
   useEffect(() => {
     void rehidratar();
   }, [rehidratar]);
+
+  // Qué hacer cuando el backend rechaza la sesión en medio del uso (401): se
+  // limpia y ProtectedRoute manda al login, con el motivo a la vista. Antes la
+  // pantalla se quedaba mostrando errores sin decir que había que volver a
+  // entrar — pasa, por ejemplo, al resetearse uno mismo la contraseña.
+  useEffect(() => {
+    alPerderLaSesion((mensaje) => {
+      useAuthStore.getState().sesionPerdida();
+      useUiStore.getState().showSnack(mensaje, colors.statusWarn);
+    });
+  }, []);
 
   if (isRehidratando) return <Rehidratando />;
 

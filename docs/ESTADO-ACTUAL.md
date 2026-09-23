@@ -18,6 +18,11 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   ENTREGA. **No vaciar ni recargar.** Cuentas hoy: `dueno`, `mario.dj`
   (recepcionista), `dami.silberstein` (profesor, todavía con la contraseña temporal)
   y `franco.distillio` (socio: se limpiaron sus pagos online de prueba; le queda el Trimestral cobrado en el mostrador, activo hasta el 15/12/2026). Las contraseñas están en el `.txt` de contraseñas.
+- **OJO: la cuenta `dueno` no entra.** Quedó con `debe_cambiar_password` en true (un
+  reseteo del 19/09 que no se completó) y la contraseña temporal no está anotada, así
+  que `Demo2026!` ya no sirve y el backend rechaza su token. No hay otro dueño que
+  pueda resetearla: la salida es reescribirle el hash con `auth.hashear_password`.
+  Para probar con permisos de mostrador, `mario.dj` sigue funcionando.
 - **Consecuencias para verificar:** las suites no se pueden correr (necesitan la base
   vacía). `pruebas_vistas.py` sólo entra con las cuentas que existan.
 - **Backend:** 130 rutas en `/openapi.json`; si da menos, está respondiendo un
@@ -93,6 +98,17 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   estado simulado (los dos contactos, un solo principal, alta, sólo lectura, ficha
   vacía, y las trampas 2 y 8 de Flet): **falta sólo la revisión visual** de las dos
   apps, que es lo único que no cubre ninguna verificación automatizada.
+- **Objetivo y observaciones del socio en la PWA** (alta y edición): sólo los pedía
+  Flet, así que editar desde la PWA los mandaba vacíos y **los borraba**. Ahora están
+  en el formulario y, además, el PUT de socio **sólo toca los campos que vinieron en
+  el pedido** (`model_fields_set`): un formulario incompleto ya no puede borrar datos
+  en silencio; mandar el campo vacío sí lo borra. Probado por API contra la base real
+  (parcial, vacío explícito y restauración), falta verlo en pantalla.
+- **Sesión caída (401) manda al login** en la PWA: `api.ts` avisa por callback,
+  `App.tsx` limpia el store y muestra el motivo del backend, y ProtectedRoute
+  redirige. Quedan afuera `/login`, `/cambiar-password` y `/me`, donde un 401 no es
+  una sesión caída. Se ve, por ejemplo, al resetearse uno mismo la contraseña.
+  Compila; falta verlo en pantalla.
 - **Teléfonos con código de país** en los 6 campos de la PWA y los 4 de Flet (alta y
   edición de socio y empleado, contacto de emergencia, agregar teléfono, Mi perfil).
   En Flet, editar un empleado ya precarga el teléfono (antes guardar lo borraba).

@@ -58,6 +58,12 @@ interface AuthState {
   // socios contra el backend, no por el store de sesión.
   darDeBaja: (idSocio: number, tipo: NonNullable<Baja['tipo']>, motivo?: string) => Promise<void>;
   logout: () => Promise<void>;
+  /**
+   * La sesión dejó de valer en medio del uso (401 desde cualquier pantalla).
+   * Limpia el store; ProtectedRoute ve isAuthenticated en false y manda al
+   * login. No hay await: quien lo llama es el cliente de API, no una vista.
+   */
+  sesionPerdida: () => void;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -155,6 +161,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ isLoading: false, error: mensajeDeError(err) });
       throw err;
     }
+  },
+
+  sesionPerdida: () => {
+    // Se le pide al backend que borre la cookie igual que en un logout: la
+    // cookie de sesión es httponly y sólo él puede borrarla. /logout no exige
+    // sesión válida, así que esto no puede disparar otro 401.
+    void logoutService().catch(() => {});
+    set({
+      usuario: null,
+      persona: null,
+      roles: [],
+      idSocio: null,
+      isAuthenticated: false,
+      isLoading: false,
+      usernamePendienteCambio: null,
+    });
   },
 
   logout: async () => {
