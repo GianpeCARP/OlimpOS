@@ -1,0 +1,1 @@
+.venv/Scripts/python.exe -c "from auth import hashear_password; print(hashear_password('MiClaveNueva1!'))"

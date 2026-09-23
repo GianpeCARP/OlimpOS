@@ -27,6 +27,11 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   vacía). `pruebas_vistas.py` sólo entra con las cuentas que existan.
 - **Backend:** 130 rutas en `/openapi.json`; si da menos, está respondiendo un
   proceso viejo. `check_permisos`: las tres copias coinciden (6 roles).
+- **`PROCESOS-LOGICOS-REQUERIDOS.md`** (raíz) tiene los **173 procesos** del sistema en
+  notación DFD lineal —167 rutas de la API contadas por operación, más 6 que corren
+  solas—, cada uno con qué tablas escribe y cuáles lee, verificado contra las columnas
+  de `db/schema.sql`. Es el mejor oráculo del repo para contrastar implementación contra
+  especificación, y el esqueleto de la masterclass pendiente.
 
 ---
 
@@ -140,6 +145,14 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   y `/recepcion/buscar`, sección ASISTENCIA) y la PWA ya consume dos de esos endpoints
   en `AgendaTurnos`, así que falta la pantalla: ruta nueva, ítem de menú y la matriz de
   permisos en sus tres copias (hoy `RECEPCION` sólo existe en la de Flet).
+- **Masterclass del código, sin escribir.** El dueño quiere una explicación completa del
+  código a nivel de cátedra de maestría: conceptos generales primero y después, proceso
+  por proceso, qué archivo y qué rango de líneas lo implementa en las tres capas. El
+  prompt ya está escrito y acordado en **`PROMPT-ZARPADO.md`** (raíz): define las partes
+  A (12 capítulos de fundamentos + glosario), B (los 173 procesos) y C (los 8 subsistemas
+  que no cuelgan de ningún endpoint), la plantilla obligatoria de cada proceso y la regla
+  de que todo rango de líneas se verifica abriendo el archivo. Los entregables van a
+  `docs/masterclass/`, que **todavía no existe**.
 
 ### 3. Menores
 - **Contador de repeticiones** (el único que el dueño dejó afuera de la tanda):
