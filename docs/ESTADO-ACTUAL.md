@@ -131,12 +131,22 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
 - Alta de socio con "Cobrar ahora"; el chip "2º de hoy" (ojo: fichar acredita
   reservas); el aviso de cuenta trabada en login y cambio de contraseña.
 
-### 2. Menores
+### 2. Pedido del dueño, sin empezar
+- **Recepción en la PWA.** Hoy el panel del mostrador existe sólo en Flet
+  (`app/views/recepcion.py`): próximos turnos con quién se anotó y su estado de
+  llegada, los vencidos recientes, búsqueda por DNI con la cuota y el próximo turno
+  resueltos, y fichar o cobrar sin salir de la pantalla. El dueño lo quiere también en
+  la web. **El backend ya está entero** (`GET /recepcion/panel`, `/recepcion/turnos/{id}`
+  y `/recepcion/buscar`, sección ASISTENCIA) y la PWA ya consume dos de esos endpoints
+  en `AgendaTurnos`, así que falta la pantalla: ruta nueva, ítem de menú y la matriz de
+  permisos en sus tres copias (hoy `RECEPCION` sólo existe en la de Flet).
+
+### 3. Menores
 - **Contador de repeticiones** (el único que el dueño dejó afuera de la tanda):
   rediseñar el overlay (las líneas verdes del esqueleto son sólo para afinar) y
   seguir ajustando umbrales probando en el celular.
 
-### 3. Grandes, después de la lista
+### 4. Grandes, después de la lista
 - **Coach con IA (decidido, sin implementar; AVISARLE al dueño antes de arrancar).**
   - Chat a pedido con historial guardado (tabla nueva chica), corriendo en el backend
     con **Claude vía API** (Haiku 4.5, necesita API key). Más adelante se puede migrar

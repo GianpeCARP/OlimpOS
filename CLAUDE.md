@@ -45,7 +45,9 @@ gimnasio sin fricción.
 - **La PWA es la referencia y Flet es su gemela.** Si difieren, la que está bien es
   la PWA. Todo arreglo de la PWA se **replica en Flet** en la misma tanda, porque el
   dueño prueba en la PWA y da por hecho que Flet quedó igual. Única excepción:
-  **Recepción** (panel del mostrador) existe sólo en Flet.
+  **Recepción** (panel del mostrador) existe sólo en Flet — y el dueño pidió que
+  también esté en la PWA, así que dejó de ser una excepción y pasó a ser un pendiente
+  (ver `docs/ESTADO-ACTUAL.md`).
 - **Las dos se ven casi idénticas** (decisión del dueño), con la paleta **Kinetic
   Carbon** duplicada en `index.css` (`@theme`) + `config.ts` y en `app/config.py`
   (`Colors`). Fondo `#15171C`, tarjetas `#1C1F26`, acento volt `#C6F135`, **siempre
