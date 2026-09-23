@@ -98,6 +98,14 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   estado simulado (los dos contactos, un solo principal, alta, sólo lectura, ficha
   vacía, y las trampas 2 y 8 de Flet): **falta sólo la revisión visual** de las dos
   apps, que es lo único que no cubre ninguna verificación automatizada.
+- **README y `instalar.ps1` en la raíz** (para quien clona el repo). El instalador
+  verifica Python 3.11+/Node 20+/git, instala con `winget` lo que falte preguntando
+  (`-SinPreguntar` no pregunta, `-SoloVerificar` no toca nada), arma el venv, instala
+  las dependencias de los tres proyectos, crea el `.env` con la clave de sesión
+  generada y verifica. Probado en modo verificación en esta máquina; **falta probarlo
+  en una máquina limpia**, que es donde se ve si instala de verdad. **El README no
+  tiene capturas todavía.** OJO: un `.ps1` con acentos tiene que guardarse en UTF-8
+  **con BOM** o PowerShell 5.1 lo lee como ANSI y ni siquiera parsea.
 - **Objetivo y observaciones del socio en la PWA** (alta y edición): sólo los pedía
   Flet, así que editar desde la PWA los mandaba vacíos y **los borraba**. Ahora están
   en el formulario y, además, el PUT de socio **sólo toca los campos que vinieron en

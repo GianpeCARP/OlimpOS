@@ -91,7 +91,9 @@ D:\OlimpOs\
 │                     pruebas_vistas.py, scripts/lanzar_flet_navegador.py
 ├── Proyecto - PWA/   src/frontend/src (views/, services/, components/, config.ts),
 │                     docs/*.md (citados +100 veces desde comentarios: NO borrar)
-└── videos/           los que baja backend/demonio_videos.py
+├── videos/           los que baja backend/demonio_videos.py
+├── README.md         la cara del repo: qué es, instalación, cómo se corre
+└── instalar.ps1      instalador de Windows (winget + venv + npm ci + .env)
 ```
 
 - `db/schema.sql` y Neon coinciden nombre por nombre: una tabla nueva va en los dos
