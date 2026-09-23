@@ -114,23 +114,80 @@ repo, con archivo y línea:
 > golpe — que es exactamente lo que dice V-08 cuando anota que el JWT no tiene
 > revocación: la única revocación disponible es esa, y es a todo o nada."*
 
-### 2.5 Regla de la conexión
+### 2.5 Regla de la fuente única
 
-**Todo tiene que ver con todo, y eso hay que escribirlo, no dejarlo implícito.** Cada
-capítulo cierra con un apartado **"Con qué se conecta"**, de tres a seis viñetas, cada
-una del tipo:
+**Cada concepto se explica UNA sola vez, en un solo lugar, y ese lugar es el único que
+lo explica.** En todos los demás se lo nombra y se enlaza. Un hash es lo que es: se
+define a fondo en A0-11 y nunca más se vuelve a definir, ni "desde otro ángulo", ni
+"aplicado a este caso", ni "repasando brevemente".
 
-- **Es la misma idea que…** — *el pool de conexiones y el caché de `api_client.py` son
-  la misma jugada: pagar una vez algo caro y reusarlo. Cambia qué es lo caro.*
-- **Existe por culpa de…** — *el token CSRF existe únicamente porque la cookie se
-  reenvía sola; si la sesión viajara en una cabecera manual, como en Flet, no haría
-  falta. Por eso Flet no lo usa.*
-- **Es el mismo problema que…** — *el N+1 del ORM y el 825 ms de conexión nueva son el
-  mismo problema —viajes de ida y vuelta— a dos escalas distintas.*
+Leer el mismo concepto explicado dos veces es la marca de un documento escrito sin
+criterio, y hace dudar de todo lo demás. Es peor que una explicación corta.
+
+**El presupuesto de profundidad se gasta bajando de capa, no repitiendo desde otro
+ángulo.** Si te sobra espacio en un capítulo, la respuesta correcta es descender un
+escalón más hacia el piso, o aplicar la sección 2.7 — nunca volver a contar lo mismo con
+otras palabras.
+
+**Un segundo ángulo se permite sólo si pasa esta prueba**, y hay que escribir en el
+texto cuál de las dos condiciones cumple:
+
+1. El mismo mecanismo **cumple roles opuestos** en dos lugares del sistema, y verlo una
+   sola vez no deja ver la oposición. *(El `X-Client-Type` que en Flet es comodidad y en
+   seguridad es la vulnerabilidad V-11: mismo mecanismo, dos lecturas que se contradicen.)*
+2. La segunda vista **revela un modo de fallar** que la primera no podía mostrar.
+
+Si no cumple ninguna, es redundancia: enlazá y seguí.
+
+### 2.6 Regla de la conexión
+
+Las conexiones se escriben, pero **como punteros de una línea, nunca como
+explicaciones**. Cada capítulo cierra con **"Con qué se conecta"**: de tres a seis
+viñetas, una línea cada una, cada una nombrando el otro concepto y el tipo de vínculo, y
+**enlazando** en vez de desarrollar.
+
+- **Es la misma idea que…** — *el pool de conexiones y el caché de `api_client.py`:
+  pagar una vez algo caro y reusarlo (→ A0-12, A-11).*
+- **Existe por culpa de…** — *el token CSRF existe sólo porque la cookie se reenvía
+  sola; Flet, que manda la sesión a mano, no lo necesita (→ A0-12).*
+- **Es el mismo problema que…** — *el N+1 y los 825 ms de conexión nueva: viajes de ida
+  y vuelta, a dos escalas (→ A0-09, A-11).*
 - **Se contradice con…** — cuando dos decisiones del sistema tiran para lados opuestos,
-  nombralo y explicá cuál ganó y por qué.
+  nombralas y decí cuál ganó.
 
-### 2.6 Prohibiciones
+Si una viñeta necesita un párrafo para entenderse, no es una conexión: es un concepto
+que le falta su lugar propio. Dáselo, y enlazalo desde acá.
+
+### 2.7 Regla de la ingeniería inversa
+
+El descenso de 2.2 va del concepto al mecanismo. Esta regla va **al revés**: del código
+concreto hacia arriba, hasta la decisión estratégica que lo explica. Es la que convierte
+una lectura de código en una clase de diseño.
+
+Para cada subsistema —y para cada proceso de la Parte B que tenga algo para enseñar—
+reconstruí, leyendo el código, esto:
+
+1. **Qué estaba optimizando quien lo escribió.** Velocidad de mostrador, costo de
+   mantenimiento, cantidad de viajes a la base, simplicidad de la pantalla.
+2. **Qué restricciones lo acorralaban.** La base a 44 ms, Flet 0.84 sin librería de
+   gráficos, el celular sin conexión estable, el rol que no puede ver cierto dato.
+3. **Qué alternativas había, y qué se pierde con cada una.** Al menos una descartada,
+   dicha en serio: guardar el estado del socio en una columna, acoplar `Usuario.activo`
+   con `Socio.activo`, modelar una tabla `Deuda`.
+4. **Cuál se eligió y qué se pagó por elegirla.** Toda decisión cuesta algo; si no
+   encontrás el costo, no entendiste la decisión.
+5. **El nombre del patrón**, cuando lo tenga. Derivar en vez de almacenar. Soft delete.
+   Servir y refrescar. Denormalizar para leer. Idempotencia. Fallar cerrado. Poner el
+   nombre es lo que hace que el lector reconozca la misma jugada la próxima vez que la
+   vea en otro sistema.
+
+Escribilo en **conceptos estratégicos, no narrando el código**. "El bucle recorre las
+membresías y compara fechas" no es ingeniería inversa. "El sistema elige derivar el
+estado en cada lectura en vez de guardarlo, porque un estado guardado se vuelve mentira
+al día siguiente sin que nadie escriba nada; el precio son dos consultas más por fila,
+y por eso al lado hay un `selectinload`" sí lo es.
+
+### 2.8 Prohibiciones
 
 - **Analogías sin mecanismo.** "Es como una caja", "pensalo como un cajón de archivos".
   Se permite una analogía **sólo** si inmediatamente después viene el mecanismo real.
@@ -139,6 +196,11 @@ una del tipo:
   enumerá qué valida y qué devuelve cuando falla.
 - **Usar un término antes de definirlo.** La primera vez que aparece, se define en su
   lugar. Si ya se definió antes, se lo nombra y se enlaza, no se lo repite.
+- **Explicar dos veces lo mismo.** Incluye el "repasemos brevemente", el "dicho de otra
+  manera" y el "visto desde el lado del servidor". Ver 2.5.
+- **Sobre-explicar lo que se entiende solo.** Un `getter` de tres líneas no necesita
+  cinco párrafos. La profundidad va donde hay una decisión atrás; donde no la hay,
+  una línea alcanza y sobra.
 - **Anglicismos sin traducir.** "Endpoint", "commit", "hash", "token" y "caché" pasan
   porque están en el código. "Deployar", "mockear", "handlear", no.
 - **Terminar en caja negra.** Ver 2.2.
@@ -297,7 +359,10 @@ concepto de A0, enlazalo en vez de re-explicarlo.
 código donde se toca cada una. Si el código toca una tabla que la línea DFD no declara,
 o al revés, **decilo explícitamente**: es un hallazgo, no un error de redacción.
 
-**Por qué está hecho así.** La decisión de diseño y su alternativa descartada.
+**Por qué está hecho así.** Ingeniería inversa según la sección 2.7: qué se estaba
+optimizando, qué restricción acorralaba, qué alternativa se descartó, qué se pagó y cómo
+se llama el patrón. Si el proceso no tiene ninguna decisión interesante atrás —un listado
+que lista y nada más—, **escribí una línea y seguí**: inflarlo es peor que no ponerlo.
 
 **Qué pasa cuando sale mal.** Cada error que declara el `CONCEPTO_SALIDA` del proceso,
 con el código HTTP, el mensaje y la línea que lo levanta.
@@ -412,17 +477,25 @@ botones.
 2. **Todo símbolo citado existe** con ese nombre exacto.
 3. **Ninguna caja negra quedó sin abrir**: el capítulo llegó a su piso declarado.
 4. **El descenso volvió a subir**: cada bajada termina apuntando a código de este repo.
-5. **El apartado "Con qué se conecta" está**, y sus enlaces existen.
-6. **Los 173 procesos tienen capítulo**, ninguno saltado, numeración igual al original.
-7. **Cada tabla de la línea DFD aparece** en "qué escribe y qué lee".
-8. **Ningún término se usó antes de definirse**, y todo lo definido está en el glosario.
-9. **Cero frases de relleno.** Buscá "se encarga de", "maneja la lógica", "realiza las
-   validaciones correspondientes": si aparecen, reescribí el párrafo con lo que hace de
-   verdad.
-10. **La prueba final:** un lector que no conoce el repo puede, con tu capítulo abierto,
-    encontrar el código, entender por qué está escrito así, y **no quedarse con ninguna
-    pregunta cuya respuesta sea "y eso cómo funciona por dentro"**. Ese es el único
-    criterio que importa.
+5. **Ningún concepto se explica dos veces.** Buscá en el capítulo "como vimos", "dicho de
+   otra manera", "repasemos", "visto desde": cada aparición es sospechosa de redundancia
+   y hay que reemplazarla por un enlace, salvo que cumpla una de las dos condiciones de
+   la sección 2.5 y lo diga.
+6. **La profundidad se gastó bajando, no repitiendo.** Si el capítulo es largo, tiene que
+   ser porque llegó al piso o porque hizo ingeniería inversa, nunca por acumular ángulos.
+7. **Hay ingeniería inversa donde hay una decisión**, y no la hay donde no la hay.
+8. **El apartado "Con qué se conecta" está**, es de una línea por viñeta, y sus enlaces
+   existen.
+9. **Los 173 procesos tienen capítulo**, ninguno saltado, numeración igual al original.
+10. **Cada tabla de la línea DFD aparece** en "qué escribe y qué lee".
+11. **Ningún término se usó antes de definirse**, y todo lo definido está en el glosario.
+12. **Cero frases de relleno.** Buscá "se encarga de", "maneja la lógica", "realiza las
+    validaciones correspondientes": si aparecen, reescribí el párrafo con lo que hace de
+    verdad.
+13. **La prueba final, en dos partes:** un lector que no conoce el repo puede, con tu
+    capítulo abierto, encontrar el código y entender por qué está escrito así, **sin
+    quedarse con ninguna pregunta cuya respuesta sea "y eso cómo funciona por dentro"**
+    y **sin haber leído dos veces la misma cosa**. Las dos partes pesan igual.
 
 ---
 

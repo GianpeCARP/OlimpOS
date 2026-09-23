@@ -148,11 +148,16 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
 - **Masterclass del código, sin escribir.** El dueño quiere una explicación completa del
   código a nivel de cátedra de maestría: conceptos generales primero y después, proceso
   por proceso, qué archivo y qué rango de líneas lo implementa en las tres capas. El
-  prompt ya está escrito y acordado en **`PROMPT-ZARPADO.md`** (raíz): define las partes
-  A (12 capítulos de fundamentos + glosario), B (los 173 procesos) y C (los 8 subsistemas
-  que no cuelgan de ningún endpoint), la plantilla obligatoria de cada proceso y la regla
-  de que todo rango de líneas se verifica abriendo el archivo. Los entregables van a
-  `docs/masterclass/`, que **todavía no existe**.
+  prompt ya está escrito y acordado en **`PROMPT-ZARPADO.md`** (raíz). Define cuatro
+  partes —A0 cimientos (14 capítulos), A el sistema (12 + glosario + mapa de conexiones),
+  B los 173 procesos y C los 8 subsistemas que no cuelgan de ningún endpoint— y, sobre
+  todo, el método: explicar cada concepto por el problema que lo originó, bajar de capa
+  hasta un piso declarado por tema (una tabla con 16), volver a subir hasta código de
+  este repo, **una sola explicación por concepto** (el resto son enlaces), conexiones
+  como punteros de una línea e ingeniería inversa del código hacia la decisión
+  estratégica. Más la plantilla obligatoria de cada proceso y la regla de que todo rango
+  de líneas se verifica abriendo el archivo. Los entregables van a `docs/masterclass/`,
+  que **todavía no existe**.
 
 ### 3. Menores
 - **Contador de repeticiones** (el único que el dueño dejó afuera de la tanda):
