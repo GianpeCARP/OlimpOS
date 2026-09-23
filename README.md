@@ -196,6 +196,6 @@ instalar.ps1      instalador
 
 ## Autoría y licencia
 
-Hecho por [**@GianpeCARP**](https://github.com/GianpeCARP).
+Hecho por **Gianluca Pardini Enrique** — [@GianpeCARP](https://github.com/GianpeCARP).
 
 Publicado bajo licencia [MIT](LICENSE): se puede usar, copiar y modificar libremente, manteniendo el aviso de copyright y sin ninguna garantía.
