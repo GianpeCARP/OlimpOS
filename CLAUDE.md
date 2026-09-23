@@ -357,9 +357,12 @@ python pruebas_vistas.py
   contra la base real restaura lo que toca.
 - **Credenciales:** sólo en `backend/CONTRASEÑAS PARA TESTEO Y ACTUALIZADAS.txt`, y
   **toda cuenta nueva se anota ahí**.
-- **iPhone sin cable:** `VITE_HTTPS=1 npm run dev` + `cloudflared tunnel --url
-  https://localhost:5173 --no-tls-verify`. **El túnel es público: cerrarlo al
-  terminar.**
+- **Probar en el celular:** `VITE_HTTPS=1 npm run dev` + `cloudflared tunnel --url
+  https://<IP-de-la-LAN>:5173 --no-tls-verify`. **Va la IP de la red, NO `localhost`**:
+  con VITE_HTTPS Vite atiende en la IP y el túnel contra localhost da 502. Si el
+  dominio `*.trycloudflare.com` no resuelve desde la PC es el DNS del proveedor —
+  desde el celular anda. **El túnel es público: cerrarlo al terminar.** Los pasos
+  completos (también por Wi-Fi) están en el README.
 
 ## Git
 

@@ -98,6 +98,8 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   estado simulado (los dos contactos, un solo principal, alta, sólo lectura, ficha
   vacía, y las trampas 2 y 8 de Flet): **falta sólo la revisión visual** de las dos
   apps, que es lo único que no cubre ninguna verificación automatizada.
+- **README:** falta la sección de capturas (las saca el dueño) y probar el instalador
+  en una máquina limpia. Ya tiene cómo verlo desde el celular, por Wi-Fi o por túnel.
 - **README y `instalar.ps1` en la raíz** (para quien clona el repo). El instalador
   verifica Python 3.11+/Node 20+/git, instala con `winget` lo que falte preguntando
   (`-SinPreguntar` no pregunta, `-SoloVerificar` no toca nada), arma el venv, instala

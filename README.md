@@ -119,6 +119,41 @@ cd Flet/Proyecto && python main.py
 
 ---
 
+## Probarlo desde el celular (Android o iPhone)
+
+El portal del socio está hecho para usarse desde el teléfono, parado en el gimnasio, así que conviene probarlo ahí. Hace falta **HTTPS**: sin contexto seguro el navegador no da acceso a la cámara, y sin cámara no anda el contador de repeticiones.
+
+```bash
+cd "Proyecto - PWA/src/frontend"
+VITE_HTTPS=1 npm run dev        # PowerShell: $env:VITE_HTTPS=1; npm run dev
+```
+
+Vite imprime dos direcciones: la local y la de la red (`https://192.168.x.x:5173`). Desde ahí hay dos caminos.
+
+### En la misma red Wi-Fi
+
+Abrí la dirección de red en el celular. El certificado es propio, así que el navegador va a avisar que el sitio no es de confianza: hay que aceptar y seguir.
+
+Si no carga, casi siempre es el **firewall de Windows**, que en redes marcadas como "públicas" bloquea las conexiones entrantes. O cambiás la red a privada, o usás el túnel.
+
+### Desde cualquier lado, con un túnel
+
+Funciona aunque el celular esté con datos móviles, y sin tocar el firewall. Con [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) instalado (`winget install Cloudflare.cloudflared`):
+
+```bash
+cloudflared tunnel --url https://192.168.0.146:5173 --no-tls-verify
+```
+
+Devuelve una dirección `https://algo-al-azar.trycloudflare.com` que se abre en el celular sin avisos de certificado, porque el certificado lo pone Cloudflare.
+
+Dos cosas que ahorran un rato:
+- **Va la IP de red, no `localhost`.** Con `VITE_HTTPS=1`, Vite atiende en la IP de la red y el túnel contra `localhost` devuelve 502.
+- Si la dirección del túnel **no resuelve desde la PC**, puede ser el DNS del proveedor: desde el celular, y sobre todo con datos móviles, suele andar igual.
+
+> **El túnel es público mientras esté abierto: cualquiera con la dirección entra al sistema.** Es para probar, no para dejar corriendo. Se cierra con Ctrl+C.
+
+---
+
 ## Verificación
 
 ```bash
