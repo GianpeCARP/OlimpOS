@@ -98,10 +98,10 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   estado simulado (los dos contactos, un solo principal, alta, sólo lectura, ficha
   vacía, y las trampas 2 y 8 de Flet): **falta sólo la revisión visual** de las dos
   apps, que es lo único que no cubre ninguna verificación automatizada.
-- **README:** falta la sección de capturas y probar el instalador en una máquina
-  limpia. Las capturas las saca el dueño y las deja en `docs/capturas/` (los nombres
-  esperados están en el LEEME de esa carpeta); cuando estén, se arma la sección arriba
-  de todo. Ya tiene cómo verlo desde el celular, por Wi-Fi o por túnel.
+- **README:** ya tiene capturas (dashboard, cobros y el portal del socio en el
+  celular) y cómo verlo desde el teléfono. El dueño avisó que **no son definitivas**:
+  cuando haya mejores, se reemplazan los archivos de `docs/capturas/`. Falta probar
+  el instalador en una máquina limpia.
 - **README y `instalar.ps1` en la raíz** (para quien clona el repo). El instalador
   verifica Python 3.11+/Node 20+/git, instala con `winget` lo que falte preguntando
   (`-SinPreguntar` no pregunta, `-SoloVerificar` no toca nada), arma el venv, instala

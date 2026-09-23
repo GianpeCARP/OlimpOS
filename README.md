@@ -12,6 +12,25 @@ El socio se maneja solo desde el celular —paga la cuota, reserva su clase, sig
 
 ---
 
+## Capturas
+
+**El panel del gimnasio**, en el navegador: las métricas del mes, el gráfico de ingresos por día, mes o año, y los próximos turnos.
+
+![Dashboard del dueño](docs/capturas/dashboard-dueno.png)
+
+**Cobros**, donde se le cobra la cuota, un abono o una clase suelta a un socio. El aviso del medio es una regla del negocio aplicada por el backend: la cuota está paga hasta diciembre, así que **no se puede cobrar por adelantado** y el sistema dice desde cuándo se renueva.
+
+![Cobros](docs/capturas/cobros-dueno-recepcionista.png)
+
+**El portal del socio**, que se usa en el teléfono: su cuota de un vistazo, y la autogestión de la membresía —pausarla por un viaje o una lesión, o darse de baja sin perder los días que pagó—.
+
+<p align="center">
+  <img src="docs/capturas/socio-cuota2.jpeg" width="46%" alt="Mi cuota en el celular" />
+  <img src="docs/capturas/socio-cuota1.jpeg" width="46%" alt="Pausar la membresía o darse de baja" />
+</p>
+
+---
+
 ## Qué hace
 
 **Del lado del gimnasio**
