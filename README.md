@@ -156,3 +156,11 @@ instalar.ps1      instalador
 - **[`docs/ESTADO-ACTUAL.md`](docs/ESTADO-ACTUAL.md)** — en qué está el proyecto hoy y qué falta.
 - **[`backend/GUIA_BACKEND.md`](backend/GUIA_BACKEND.md)** — la API por dentro.
 - **`docs/olimpos_schema_actual.dbml`** — el esquema para abrir en [dbdiagram.io](https://dbdiagram.io).
+
+---
+
+## Autoría y licencia
+
+Hecho por [**@GianpeCARP**](https://github.com/GianpeCARP).
+
+Publicado bajo licencia [MIT](LICENSE): se puede usar, copiar y modificar libremente, manteniendo el aviso de copyright y sin ninguna garantía.

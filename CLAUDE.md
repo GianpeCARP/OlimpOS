@@ -363,8 +363,10 @@ python pruebas_vistas.py
 
 ## Git
 
-- Monorepo `github.com/GianpeCARP/OlimpOS`, rama de trabajo `desarrollo`. Se pushea
-  sólo ahí.
+- Monorepo `github.com/GianpeCARP/OlimpOS`, rama de trabajo `desarrollo`.
+- **`main` se mantiene al día**: después de pushear a `desarrollo`, adelantarla con
+  `git push origin desarrollo:main`. Es un avance directo porque `main` nunca tiene
+  nada propio; si alguna vez no lo fuera, preguntar antes de fusionar.
 - **Siempre rutas explícitas; nunca `git add -A` ni `commit -a`**: arrastran cosas que
   no van (el `.git.repo-viejo-backup` dentro de `Flet/Proyecto`, archivos a medio
   decidir).
