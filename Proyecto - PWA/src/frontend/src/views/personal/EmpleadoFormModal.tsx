@@ -10,6 +10,7 @@ import { mensajeDeError } from '../../services/api';
 import {
   crearEmpleado,
   actualizarEmpleado,
+  detalleEditable,
   listarFranjas,
   type AltaEmpleadoResultado,
   type EmpleadoListado,
@@ -53,14 +54,9 @@ export function EmpleadoFormModal({ empleado, onClose, onGuardado }: EmpleadoFor
   const [telefono, setTelefono] = useState(empleado?.telefono ?? '');
   const [rol, setRol] = useState<RolEmpleadoValue>(empleado?.rol ?? RolEmpleado.ENTRENADOR);
   // Para recepcionista `detalle` es el ID de la franja (FK Franja_Laboral);
-  // para los demás roles es texto libre (especialidad/título).
-  const [detalle, setDetalle] = useState(
-    empleado
-      ? empleado.rol === RolEmpleado.RECEPCIONISTA
-        ? (empleado.idFranjaLaboral ? String(empleado.idFranjaLaboral) : '')
-        : (empleado.detalle ?? '')
-      : '',
-  );
+  // para los demás roles es texto libre (especialidad/título), precargado con
+  // la columna exacta que se va a guardar (ver detalleEditable).
+  const [detalle, setDetalle] = useState(empleado ? detalleEditable(empleado) : '');
 
   /**
    * Alta recién hecha cuyas credenciales hay que entregar. Mientras tenga
@@ -84,10 +80,11 @@ export function EmpleadoFormModal({ empleado, onClose, onGuardado }: EmpleadoFor
   const campo = CAMPO_POR_ROL[rol];
 
   // Cambiar de rol vacía el campo específico: un turno no tiene sentido
-  // como especialidad, ni al revés.
+  // como especialidad, ni al revés. Volver al rol que ya tenía recupera su
+  // dato: si no, ir y volver en el selector lo guardaba vacío y lo borraba.
   const cambiarRol = (nuevo: string) => {
     setRol(nuevo as RolEmpleadoValue);
-    setDetalle('');
+    setDetalle(empleado && nuevo === empleado.rol ? detalleEditable(empleado) : '');
   };
 
   const handleSubmit = async (e: SubmitEvent) => {
@@ -116,8 +113,8 @@ export function EmpleadoFormModal({ empleado, onClose, onGuardado }: EmpleadoFor
         onGuardado(alta.empleado);
 
         // Las credenciales se muestran UNA vez: el backend guarda solo el
-        // hash. Un Profesor no recibe ninguna —no inicia sesión— y en ese
-        // caso el backend lo explica en `mensaje`.
+        // hash. Las reciben los cuatro roles, Profesor incluido; sólo faltan si
+        // la persona ya tenía cuenta, y el backend lo explica en `mensaje`.
         //
         // Con credenciales el modal NO se cierra: pasa al panel de entrega,
         // desde donde se le mandan por mail o WhatsApp. Antes salían en un

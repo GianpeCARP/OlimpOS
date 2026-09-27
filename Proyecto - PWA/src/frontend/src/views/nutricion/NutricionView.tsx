@@ -121,7 +121,9 @@ export function NutricionView() {
     (plan: PlanListado) => {
       confirmDialog(
         `¿Dar de baja "${plan.nombre}"?`,
-        'El plan deja de figurar como activo. Esta acción queda registrada en Auditoría.',
+        // El mismo texto que su gemelo de Flet, que dice lo que hace el backend
+        // (dar_de_baja_dieta). Antes prometía una auditoría que no existe.
+        'El plan deja de figurar como activo. Los socios que lo siguen lo terminan.',
         () => {
           darDeBajaPlan(plan.idDieta)
             .then(() => {

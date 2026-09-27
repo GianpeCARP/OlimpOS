@@ -43,7 +43,8 @@ def _leer_config() -> dict | None:
     impedir el seeding, no impedir que la API arranque. El resto de los
     endpoints puede funcionar perfectamente sin que exista el dueño.
     """
-    username = os.getenv("DUENO_INICIAL_USERNAME")
+    # En minúsculas, como todos los usuarios: el login los compara así.
+    username = (os.getenv("DUENO_INICIAL_USERNAME") or "").strip().lower()
     password = os.getenv("DUENO_INICIAL_PASSWORD")
 
     if not username or not password:

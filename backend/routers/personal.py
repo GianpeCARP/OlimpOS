@@ -25,11 +25,11 @@ La ventaja concreta: `turno_laboral` solo existe para Recepcionista, y
 habría que poner las siete columnas en la misma tabla y dejarlas nulas la
 mayor parte del tiempo.
 
-EL PROFESOR NO INICIA SESIÓN
-----------------------------
-Es el cuarto tipo y el único sin rol de sesión: da clases, no usa el sistema.
-El alta le ignora `crear_cuenta` aunque venga en True — crearle credenciales
-sería crear una cuenta que el login rechaza por no tener roles.
+EL PROFESOR TAMBIÉN INICIA SESIÓN
+---------------------------------
+Hasta el 2026-09-16 no tenía rol de sesión y el alta ignoraba `crear_cuenta`.
+Desde entonces tiene cuenta como los otros tres, para "Mis clases" en la PWA:
+el alta respeta la casilla igual para los cuatro. Ver Rol.PROFESOR (models.py).
 """
 
 from datetime import date
@@ -40,8 +40,9 @@ from sqlalchemy.orm import Session, selectinload
 from auth import generar_password_temporal, generar_username, hashear_password
 from database import get_db
 from models import (
-    Dieta, Empleado, Entrenador, FranjaLaboral, Nutricionista, Persona, Profesor,
-    ProfesorActividad, Recepcionista, Rutina, Sede, Telefono, Usuario,
+    AsignacionEntrenador, Dieta, Empleado, Entrenador, FranjaLaboral, HorarioActividad,
+    Nutricionista, Persona, Profesor, ProfesorActividad, Recepcionista, Rutina, Sede,
+    Telefono, Turno, Usuario,
 )
 from notificaciones import enviar_credenciales
 from permisos import Accion, Seccion
@@ -50,6 +51,7 @@ from schemas import (
     EmpleadoEditarRequest, EmpleadoOut, FranjaLaboralOut, PersonaOut,
     ProfesionalOpcion, RolEmpleado,
 )
+from routers.nutricion import _nutricionista_de_sesion
 from routers.rutinas import _entrenador_de_sesion
 from security import Sesion, requiere_accion, requiere_seccion
 
@@ -305,38 +307,78 @@ def alta_empleado(
 
 def _validar_cambio_de_rol(db: Session, empleado: Empleado, rol_nuevo: RolEmpleado) -> None:
     """
-    Frena un cambio de rol que dejaría registros huérfanos.
+    Frena un cambio de rol que la base no dejaría hacer, y dice por qué.
 
-    Cambiar de rol implica BORRAR la fila de la especialidad actual. Pero esa
-    fila es el destino de claves foráneas NOT NULL: `Rutina.id_entrenador` y
-    `Dieta.id_nutricionista`. Borrarla con trabajo a su nombre haría fallar el
-    DELETE por violación de FK — un error de base de datos incomprensible para
-    quien está mirando la pantalla de personal.
+    Cambiar de rol implica BORRAR la fila de la especialidad actual, y esa fila
+    es el destino de claves foráneas sin ON DELETE: a Entrenador apuntan
+    `Rutina`, `Asignacion_Entrenador`, `Horario_Actividad` y `Turno`; a
+    Nutricionista, `Dieta`; a Profesor, `Profesor_Actividad` (y a través de
+    ella, sus horarios y turnos). Con algo apuntando, el DELETE falla, y sin
+    este chequeo eso llegaba a la pantalla como un 500 sin explicación. Hasta
+    el 2026-09-26 sólo se miraban rutinas y dietas.
 
-    Así que se corta antes, con un mensaje que dice QUÉ hay que reasignar. Es
-    la misma regla que aplicaría Postgres, pero explicada.
+    Hay dos clases de bloqueo, y el mensaje las distingue:
+      · lo que se puede reasignar o sacar (rutinas, dietas, las actividades de
+        un profesor que todavía no dio clases): se dice qué hacer primero;
+      · el HISTORIAL (los socios que tuvo a cargo, aunque ya hayan terminado;
+        horarios y turnos a su nombre), que no se borra nunca: con eso el rol
+        hoy no se puede cambiar. Es un límite conocido, anotado en
+        docs/ESTADO-ACTUAL.md: a futuro, cambiar de rol tendría que conservar
+        la fila vieja en vez de borrarla.
     """
     rol_actual, fila = _especialidad_de(empleado)
     if rol_actual is None or rol_actual == rol_nuevo:
         return
 
+    def rechazar(motivo: str):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=f"No se puede cambiarle el rol: {motivo}")
+
     if rol_actual == RolEmpleado.ENTRENADOR:
         cuantas = db.query(Rutina).filter(Rutina.id_entrenador == fila.id_entrenador).count()
         if cuantas:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(f"No se puede cambiarle el rol: tiene {cuantas} rutina(s) a su "
-                        "nombre. Reasignalas a otro entrenador primero."),
-            )
+            rechazar(f"tiene {cuantas} rutina(s) a su nombre. "
+                     "Reasignalas a otro entrenador primero.")
+
+        alumnos = (db.query(AsignacionEntrenador)
+                   .filter(AsignacionEntrenador.id_entrenador == fila.id_entrenador)
+                   .count())
+        a_cargo = (db.query(HorarioActividad)
+                   .filter(HorarioActividad.id_entrenador_a_cargo == fila.id_entrenador)
+                   .count()
+                   + db.query(Turno)
+                   .filter(Turno.id_entrenador_a_cargo == fila.id_entrenador)
+                   .count())
+        if alumnos or a_cargo:
+            partes = []
+            if alumnos:
+                partes.append(f"tuvo {alumnos} socio(s) a cargo, contando los que ya terminaron")
+            if a_cargo:
+                partes.append(f"tiene {a_cargo} horario(s) o turno(s) de sala a su nombre")
+            rechazar(" y ".join(partes) + ". Ese historial no se borra, así que hoy "
+                     "el rol no se puede cambiar.")
 
     if rol_actual == RolEmpleado.NUTRICIONISTA:
         cuantas = db.query(Dieta).filter(Dieta.id_nutricionista == fila.id_nutricionista).count()
         if cuantas:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(f"No se puede cambiarle el rol: tiene {cuantas} dieta(s) a su "
-                        "nombre. Reasignalas a otro nutricionista primero."),
-            )
+            rechazar(f"tiene {cuantas} dieta(s) a su nombre. "
+                     "Reasignalas a otro nutricionista primero.")
+
+    if rol_actual == RolEmpleado.PROFESOR:
+        clases = (db.query(HorarioActividad)
+                  .filter(HorarioActividad.id_profesor == fila.id_profesor)
+                  .count()
+                  + db.query(Turno).filter(Turno.id_profesor == fila.id_profesor).count())
+        if clases:
+            rechazar(f"tiene {clases} horario(s) o clase(s) a su nombre. Ese historial "
+                     "no se borra, así que hoy el rol no se puede cambiar.")
+
+        habilitaciones = (db.query(ProfesorActividad)
+                          .filter(ProfesorActividad.id_profesor == fila.id_profesor)
+                          .count())
+        if habilitaciones:
+            rechazar(f"está habilitado para {habilitaciones} actividad(es). "
+                     "Sacalo de esas actividades en Actividades primero.")
 
 
 # =============================================================================
@@ -398,8 +440,17 @@ def listar_nutricionistas(
     db: Session = Depends(get_db),
     sesion: Sesion = Depends(requiere_seccion(Seccion.NUTRICION)),
 ):
-    """Espejo del anterior, para el formulario de dietas."""
-    return _opciones(db, Nutricionista, "id_nutricionista")
+    """
+    Espejo del anterior, para el formulario de dietas: una Nutricionista
+    logueada recibe SÓLO a sí misma, porque el alta de dieta rechaza (403) una
+    a nombre de otro. Sin este recorte la PWA le preseleccionaba al primero de
+    la lista, y con más de una nutricionista la dieta nueva podía fallar.
+    """
+    opciones = _opciones(db, Nutricionista, "id_nutricionista")
+    propio = _nutricionista_de_sesion(db, sesion)
+    if propio is not None:
+        opciones = [o for o in opciones if o.id == propio.id_nutricionista]
+    return opciones
 
 
 @router.get("/franjas", response_model=list[FranjaLaboralOut])
@@ -490,9 +541,15 @@ def editar_empleado(
     clase, campos = ESPECIALIDADES[datos.rol]
 
     if rol_actual == datos.rol and fila_actual is not None:
-        # Mismo rol: solo se actualizan sus campos propios.
+        # Mismo rol: sólo se tocan sus campos propios QUE VINIERON en el pedido,
+        # la misma regla que el PUT de socio (editar_socio). Cada app muestra
+        # campos distintos —la PWA uno por rol, Flet título, especialidad y
+        # matrícula—, y con "todos, siempre" cada una borraba en silencio lo que
+        # la otra había cargado: editarle el teléfono a una nutricionista desde
+        # la PWA le borraba la matrícula. Ausente se conserva; en null, se borra.
         for campo in campos:
-            setattr(fila_actual, campo, getattr(datos, campo))
+            if campo in datos.model_fields_set:
+                setattr(fila_actual, campo, getattr(datos, campo))
     else:
         # Cambio de rol: fuera la vieja, adentro la nueva.
         if fila_actual is not None:
@@ -563,6 +620,23 @@ def dar_de_baja_empleado(
         (db.query(ProfesorActividad)
          .filter(ProfesorActividad.id_profesor == empleado.profesor.id_profesor)
          .delete(synchronize_session=False))
+
+    # Si entrenaba socios, deja de estar a cargo de ellos. Sin esto el socio
+    # seguía viendo en "Mi entrenador" a alguien que ya no trabaja acá (el
+    # portal lista las asignaciones ACTIVA), y la ficha del socio lo seguía
+    # dando como su entrenador.
+    #
+    # Se FINALIZAN, no se borran: es el mismo cierre que finalizar_asignacion
+    # en routers/socios.py, y el historial de quién entrenó a quién queda.
+    # Reactivar al entrenador NO las reabre: a la vuelta, a quién entrena se
+    # decide de nuevo, que es lo que el gimnasio haría de verdad.
+    if empleado.entrenador is not None:
+        (db.query(AsignacionEntrenador)
+         .filter(AsignacionEntrenador.id_entrenador == empleado.entrenador.id_entrenador,
+                 AsignacionEntrenador.estado == "ACTIVA")
+         .update({AsignacionEntrenador.estado: "FINALIZADA",
+                  AsignacionEntrenador.fecha_fin: date.today()},
+                 synchronize_session=False))
 
     db.commit()
     db.refresh(empleado)

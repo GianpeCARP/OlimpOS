@@ -41,6 +41,14 @@ export interface EmpleadoListado {
   turno?: TurnoLaboralValue;
   /** FK a la franja del recepcionista, para preseleccionar en el form. */
   idFranjaLaboral?: number;
+  /**
+   * Los datos del rol tal cual están en la base. `detalle` es para MOSTRAR
+   * (elige uno con fallback); para precargar el formulario hace falta el campo
+   * exacto, o se guardaría la matrícula como si fuera el título.
+   */
+  titulo?: string;
+  especialidad?: string;
+  matricula?: string;
   estado: EstadoEmpleadoValue;
   activo: boolean;
   fechaIngreso: string;
@@ -114,6 +122,9 @@ function aEmpleadoListado(e: EmpleadoApi): EmpleadoListado {
     detalle: detalleDeRol(e),
     turno: (e.turno_laboral ?? undefined) as TurnoLaboralValue | undefined,
     idFranjaLaboral: e.id_franja_laboral ?? undefined,
+    titulo: e.titulo ?? undefined,
+    especialidad: e.especialidad ?? undefined,
+    matricula: e.matricula ?? undefined,
     estado: e.activo ? EstadoEmpleado.ACTIVO : EstadoEmpleado.INACTIVO,
     activo: e.activo,
     fechaIngreso: e.fecha_ingreso,
@@ -145,13 +156,18 @@ export interface EmpleadoInput {
 }
 
 /**
- * Reparte el campo único `detalle` del formulario en la columna que
- * corresponde a cada rol.
+ * Pone el campo único `detalle` del formulario en la columna que corresponde
+ * a cada rol, y SÓLO en esa.
  *
  * El formulario tiene UN campo porque para el usuario es "el dato de este
  * rol", pero en el esquema son columnas distintas en tablas distintas. La
  * traducción vive acá y no en el componente para que el formulario no tenga
  * que saber cómo está modelada la base.
+ *
+ * Los campos que el formulario no muestra NO viajan: el backend conserva lo
+ * que no viene en el pedido (editar_empleado). Antes se mandaban en null, y
+ * editarle el teléfono a un entrenador le borraba el título y la matrícula
+ * cargados desde Flet.
  */
 function repartirDetalle(rol: RolEmpleadoValue, detalle?: string) {
   const valor = detalle?.trim() || null;
@@ -159,14 +175,29 @@ function repartirDetalle(rol: RolEmpleadoValue, detalle?: string) {
     case RolEmpleado.RECEPCIONISTA:
       // El turno del recepcionista ahora es una FK a Franja_Laboral: `detalle`
       // trae el id de la franja elegida (ver listarFranjas y el formulario).
-      return {
-        id_franja_laboral: valor ? Number(valor) : null,
-        titulo: null, especialidad: null, matricula: null,
-      };
+      return { id_franja_laboral: valor ? Number(valor) : null };
     case RolEmpleado.NUTRICIONISTA:
-      return { titulo: valor, matricula: null, especialidad: null, id_franja_laboral: null };
+      return { titulo: valor };
     default: // Entrenador y Profesor
-      return { especialidad: valor, titulo: null, matricula: null, id_franja_laboral: null };
+      return { especialidad: valor };
+  }
+}
+
+/**
+ * El valor con que el formulario precarga el campo del rol: la columna exacta
+ * que `repartirDetalle` va a escribir. No sirve `detalle`, que es el de la
+ * tarjeta y cae a otra columna si la primera está vacía —a una nutricionista
+ * con matrícula y sin título le precargaba la matrícula, y guardar la mudaba
+ * al título—.
+ */
+export function detalleEditable(e: EmpleadoListado): string {
+  switch (e.rol) {
+    case RolEmpleado.RECEPCIONISTA:
+      return e.idFranjaLaboral ? String(e.idFranjaLaboral) : '';
+    case RolEmpleado.NUTRICIONISTA:
+      return e.titulo ?? '';
+    default: // Entrenador y Profesor
+      return e.especialidad ?? '';
   }
 }
 

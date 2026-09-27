@@ -1336,6 +1336,9 @@ class AppState:
                 "rol": (u.get("roles") or ["—"])[0],
                 "estado": "Inactivo" if not u.get("activo") else
                           ("Bloqueado" if u.get("bloqueado") else "Activo"),
+                # Aparte del estado: "Bloqueado" tapa que la cuenta sigue
+                # activa, y el botón de desactivar necesita saberlo.
+                "activo": bool(u.get("activo")),
                 "debe_cambiar": u.get("debe_cambiar_password", False),
                 "ultimo_acceso": self._fecha(u.get("ultimo_acceso")),
             }
@@ -1346,7 +1349,9 @@ class AppState:
         datos = self._datos(api_client.obtener_personas_sin_cuenta(), [])
         return [
             {"id": p["id_persona"], "nombre": p.get("nombre_completo", "—"),
-             "dni": p.get("dni", "—"), "roles": p.get("roles", [])}
+             "dni": p.get("dni", "—"), "roles": p.get("roles", []),
+             # A dónde mandarle las credenciales apenas se crea la cuenta.
+             "email": p.get("email") or "", "telefono": p.get("telefono") or ""}
             for p in datos
         ]
 
@@ -1361,7 +1366,11 @@ class AppState:
             return {"ok": False, "mensaje": respuesta.get("error", "No se pudo crear la cuenta.")}
         d = respuesta["data"]
         return {"ok": True, "mensaje": d.get("mensaje", ""),
-                "usuario": d.get("username"), "password_temporal": d.get("password_temporal")}
+                "usuario": d.get("username"), "password_temporal": d.get("password_temporal"),
+                # El mensaje ya armado, para los botones de envío (igual que el
+                # reseteo): la cuenta nueva también se entrega por mail o WhatsApp.
+                "texto_credenciales": d.get("texto_credenciales"),
+                "email_enviado": d.get("email_enviado", False)}
 
     def resetear_password_usuario(self, id_usuario: int) -> dict:
         respuesta = api_client.resetear_password(id_usuario)

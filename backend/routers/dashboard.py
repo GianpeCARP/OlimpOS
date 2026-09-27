@@ -44,9 +44,9 @@ router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 EVENTOS_RECIENTES = 10
 SOCIOS_RECIENTES = 5
-# Días de anticipación con que se avisa un vencimiento. Una semana da tiempo
-# a que el mostrador llame antes de que el socio quede sin acceso.
-DIAS_AVISO_VENCIMIENTO = 7
+# Los días de aviso y el estado del socio salen de socios.py, su única definición:
+# con una copia acá, la grilla y el dashboard decían cosas distintas del mismo socio.
+from routers.socios import DIAS_AVISO_VENCIMIENTO, _estado_socio, _membresia_vigente  # noqa: E402
 
 
 def _delta(actual: float, anterior: float) -> float | None:
@@ -354,41 +354,25 @@ def socios_recientes(
     """
     Las últimas altas, con su estado de cuota.
 
-    El `estado` no es una columna: se deriva de la membresía vigente —Activo,
-    Por vencer o Vencido—. Es el mismo criterio que usa la sección Cobros, y
-    se calcula acá para que la tarjeta del dashboard no tenga que pedir el
-    estado de cuenta de cada socio por separado.
+    El `plan` y el `estado` salen de `_membresia_vigente()` y `_estado_socio()`
+    de routers/socios.py: las mismas funciones que la grilla de Socios, así la
+    tarjeta y la grilla no pueden decir cosas distintas del mismo socio. Antes
+    esto tenía su propia versión de la regla, que sólo miraba membresías ACTIVA,
+    y a un socio en pausa, sin membresía, dado de baja o sin vencimiento lo
+    mostraba "Vencido". Se resuelve acá, y no pidiendo el estado de cuenta de
+    cada socio, para que la tarjeta sea un solo pedido.
     """
     socios = db.query(Socio).order_by(Socio.id_socio.desc()).limit(SOCIOS_RECIENTES).all()
-    hoy = date.today()
 
     salida = []
     for s in socios:
         persona = s.persona
-        membresia = (
-            db.query(Membresia)
-            .filter(Membresia.id_socio == s.id_socio, Membresia.estado == "ACTIVA")
-            .order_by(Membresia.fecha_vencimiento.desc())
-            .first()
-        )
-
-        if membresia is None or membresia.fecha_vencimiento is None:
-            estado, plan = "Vencido", "Sin plan"
-        else:
-            dias = (membresia.fecha_vencimiento - hoy).days
-            plan = membresia.tipo.nombre if membresia.tipo else "?"
-            if dias < 0:
-                estado = "Vencido"
-            elif dias <= DIAS_AVISO_VENCIMIENTO:
-                estado = "Por vencer"
-            else:
-                estado = "Activo"
-
+        membresia = _membresia_vigente(db, s.id_socio)
         salida.append(SocioResumen(
             idSocio=s.id_socio,
             nombre=persona.nombre_completo if persona else "?",
             iniciales=_iniciales(persona.nombre, persona.apellido) if persona else "?",
-            plan=plan,
-            estado=estado,
+            plan=membresia.tipo.nombre if membresia and membresia.tipo else "Sin plan",
+            estado=_estado_socio(s, membresia),
         ))
     return salida

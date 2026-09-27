@@ -81,9 +81,9 @@ def verificar_password(password_plano: str, password_hash: str) -> bool:
 # mostrador, el sistema le fabrica usuario y contraseña. La persona todavía no
 # eligió nada — por eso la cuenta nace con debe_cambiar_password en True.
 
-# 12 caracteres de token_urlsafe ≈ 72 bits de entropía. Es una clave que va a
-# durar hasta el primer ingreso y que alguien tiene que poder dictar por
-# teléfono, así que no tiene sentido hacerla más larga.
+# 12 BYTES aleatorios, no caracteres: 96 bits, que token_urlsafe escribe con
+# 16 caracteres de base64url. Dura hasta el primer ingreso y alguien tiene
+# que poder dictarla por teléfono, así que no tiene sentido hacerla más larga.
 LARGO_PASSWORD_TEMPORAL = 12
 
 

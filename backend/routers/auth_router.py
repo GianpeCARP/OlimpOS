@@ -136,7 +136,11 @@ def login(
         el problema del XSS ni el del CSRF, y guardar el token en memoria le
         alcanza.
     """
-    username = datos.username.strip()
+    # En minúsculas: así se guardan todos los usuarios (generados, editados
+    # desde Usuarios y el del dueño inicial). Antes la PWA mandaba lo que se
+    # tipeara y Flet lo pasaba a minúsculas, y una mayúscula en la base dejaba
+    # entrar por una app y no por la otra.
+    username = datos.username.strip().lower()
 
     # Se corta antes de tocar la base. Sin esto, un formulario vacío devuelve
     # "usuario o contraseña incorrectos", que confunde: el problema no es que
@@ -300,7 +304,7 @@ def cambiar_password(datos: CambiarPasswordRequest, request: Request,
     token a propósito, para que el primer uso de la contraseña nueva sea un
     login normal y quede probada.
     """
-    username = datos.username.strip()
+    username = datos.username.strip().lower()   # igual que el login
     ip = _ip(request)
     _frenar_si_excede(ip)
     usuario = db.query(Usuario).filter(Usuario.username == username).first()

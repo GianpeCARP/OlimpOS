@@ -165,7 +165,9 @@ class UsuariosView:
         # para no reventar con un IndexError sobre una cadena vacía.
         etiqueta = u["nombre"] if u["nombre"] not in ("", "—") else u["usuario"]
         initial  = etiqueta[0].upper() if etiqueta else "?"
-        activo   = u["estado"] == "Activo"
+        # "activo" es la bandera de la cuenta, no el estado que se muestra: una
+        # cuenta bloqueada sigue activa y tiene que poder desactivarse.
+        activo   = u["activo"]
         bloqueado = u["estado"] == "Bloqueado"
 
         def on_hover(e: ft.HoverEvent):
@@ -238,7 +240,12 @@ class UsuariosView:
                               on_click=lambda e, x=u: self._desbloquear(x))
             )
 
-        if puede_gestionar and not es_cuenta_protegida and not es_cuenta_propia:
+        # Activar o desactivar la propia no lo puede nadie, tampoco el Dueño
+        # (el backend responde 403): por eso se compara con es_la_misma, que no
+        # exime a nadie. Antes la fila del Dueño mostraba un botón que fallaba.
+        es_la_misma = u.get("usuario") == app_state.get_user_username()
+        if (puede_gestionar and not es_cuenta_protegida and not es_cuenta_propia
+                and not es_la_misma):
             acciones.append(
                 ft.IconButton(
                     ft.Icons.BLOCK_ROUNDED if activo else ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED,
@@ -250,9 +257,8 @@ class UsuariosView:
             )
 
         # Borrar la cuenta (no a la persona). Nadie borra la PROPIA, ni el Dueño:
-        # por eso se compara directo y no con es_cuenta_propia, que lo exime.
-        # Gemelo del botón de UsuarioRow.tsx.
-        es_la_misma = u.get("usuario") == app_state.get_user_username()
+        # por eso se compara con es_la_misma y no con es_cuenta_propia, que lo
+        # exime. Gemelo del botón de UsuarioRow.tsx.
         if puede_gestionar and not es_cuenta_protegida and not es_la_misma:
             acciones.append(
                 ft.IconButton(ft.Icons.DELETE_OUTLINE_ROUNDED, icon_color=Colors.TEXT_MUTED,
@@ -404,13 +410,13 @@ class UsuariosView:
                               on_click=lambda e: close_dialog(self.page, dlg)),
                 ft.TextButton("Crear cuenta",
                               style=ft.ButtonStyle(color=Colors.ACCENT),
-                              on_click=lambda e: self._crear_cuenta(dlg, persona_ref)),
+                              on_click=lambda e: self._crear_cuenta(dlg, persona_ref, personas)),
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )
         open_dialog(self.page, dlg)
 
-    def _crear_cuenta(self, dlg, persona_ref):
+    def _crear_cuenta(self, dlg, persona_ref, personas: list[dict]):
         elegida = persona_ref.current.value if persona_ref.current else None
         if not elegida:
             show_snack(self.page, "Elegí una persona.", Colors.STATUS_DANGER)
@@ -422,7 +428,13 @@ class UsuariosView:
             return
 
         close_dialog(self.page, dlg)
-        self._mostrar_credenciales("Cuenta creada", resultado)
+        # Con el mail y el teléfono de la persona, para que los botones de
+        # envío aparezcan igual que al resetear. Antes el diálogo salía sin
+        # ninguno y la clave había que pasarla a mano.
+        persona = next((p for p in personas if str(p["id"]) == elegida), {})
+        self._mostrar_credenciales("Cuenta creada", resultado,
+                                   email=persona.get("email", ""),
+                                   telefono=persona.get("telefono", ""))
 
     def _editar(self, u: dict):
         """
@@ -549,7 +561,7 @@ class UsuariosView:
         personas desactivan la misma cuenta comprometida a la vez, un toggle
         haría que el segundo click la reactive.
         """
-        destino = u["estado"] != "Activo"
+        destino = not u["activo"]   # no el estado: "Bloqueado" también es activa
         resultado = app_state.cambiar_estado_usuario(u["id"], destino)
         show_snack(self.page, resultado["mensaje"],
                    Colors.SUCCESS if resultado["ok"] else Colors.STATUS_DANGER)

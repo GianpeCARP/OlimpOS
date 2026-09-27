@@ -29,7 +29,6 @@ export interface UsuarioListado {
   rol: RolValue;
   rolLabel: string;
   ultimoAcceso?: string;
-  intentosFallidos: number;
   bloqueado: boolean;
   activo: boolean;
   estado: EstadoUsuarioValue;
@@ -81,9 +80,6 @@ function aUsuarioListado(u: UsuarioApi): UsuarioListado {
     rol,
     rolLabel: RolLabel[rol] ?? rol,
     ultimoAcceso: u.ultimo_acceso ?? undefined,
-    // El backend no expone el contador: alcanza con saber si está bloqueada.
-    // Mostrar "3 de 5 intentos" tampoco le sirve a nadie del mostrador.
-    intentosFallidos: u.bloqueado ? 5 : 0,
     bloqueado: u.bloqueado,
     activo: u.activo,
     estado: estadoDe(u),
@@ -105,15 +101,18 @@ export interface PersonaSinUsuario {
   /** Rol que va a tener la cuenta, derivado de lo que la persona ya es. */
   rol: RolValue;
   rolLabel: string;
+  /** A dónde mandarle las credenciales apenas se crea la cuenta. */
+  email?: string;
+  telefono?: string;
 }
 
 /**
  * Personas que podrían tener cuenta y todavía no la tienen.
  *
  * El backend filtra por ROL, no solo por "no tiene usuario": alguien sin rol
- * de sesión —un Profesor, por ejemplo— no podría entrar a ninguna sección
- * aunque se le creara la cuenta, así que ofrecerlo sería ofrecer crear una
- * cuenta inútil.
+ * de sesión no podría entrar a ninguna sección aunque se le creara la cuenta.
+ * Y deja afuera al empleado dado de baja, cuya vuelta se da desde Personal:
+ * crearle una cuenta nueva le devolvía el acceso con los permisos de su rol.
  */
 export async function listarPersonasSinUsuario(): Promise<PersonaSinUsuario[]> {
   const datos = await pedir<{
@@ -121,6 +120,7 @@ export async function listarPersonasSinUsuario(): Promise<PersonaSinUsuario[]> {
     dni: string;
     nombre_completo: string;
     email: string | null;
+    telefono: string | null;
     roles: string[];
   }[]>('/usuarios/personas-sin-cuenta');
 
@@ -132,6 +132,8 @@ export async function listarPersonasSinUsuario(): Promise<PersonaSinUsuario[]> {
       dni: p.dni,
       rol,
       rolLabel: RolLabel[rol] ?? rol,
+      email: p.email ?? undefined,
+      telefono: p.telefono ?? undefined,
     };
   });
 }
@@ -205,13 +207,6 @@ export async function actualizarUsuario(
 // --- Acciones sobre una cuenta ---
 
 /**
- * Levanta el bloqueo por intentos fallidos SIN tocar la contraseña.
- *
- * Es distinto de resetear: acá la persona sí se acuerda su clave y el bloqueo
- * fue un accidente (tecleó mal, tenía el Bloq Mayús). Cambiársela en ese caso
- * sería molestarla al pedo.
- */
-/**
  * Borra la CUENTA de acceso (no a la persona: su ficha e historial quedan y se
  * le puede crear otra). El backend no deja borrar la propia ni la última de un
  * Dueño. Devuelve el mensaje ya redactado.
@@ -221,6 +216,13 @@ export async function borrarCuenta(idUsuario: number): Promise<string> {
   return datos.mensaje;
 }
 
+/**
+ * Levanta el bloqueo por intentos fallidos SIN tocar la contraseña.
+ *
+ * Es distinto de resetear: acá la persona sí se acuerda su clave y el bloqueo
+ * fue un accidente (tecleó mal, tenía el Bloq Mayús). Cambiársela en ese caso
+ * sería molestarla al pedo.
+ */
 export async function desbloquearUsuario(idUsuario: number): Promise<UsuarioListado> {
   const datos = await pedir<UsuarioApi>(`/usuarios/${idUsuario}/desbloquear`, { metodo: 'POST' });
   return aUsuarioListado(datos);

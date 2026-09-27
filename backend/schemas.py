@@ -73,10 +73,10 @@ def _fecha_nacimiento_valida(v: date | None) -> date | None:
 
 def _email_valido(v: str | None) -> str | None:
     """
-    EmailStr por sí solo acepta direcciones a las que no se le puede escribir a
-    nadie: "juan@casa" pasa su validación —es sintácticamente correcto— pero no
-    existe como destino. El reclamo del gimnasio fue exactamente ese: el campo
-    dejaba poner cualquier cosa.
+    Corre ANTES que EmailStr (mode="before" en cada esquema). Así el rechazo de
+    "juan@casa" sale en castellano y no con el mensaje en inglés de EmailStr
+    ("It should have a period"), y se frena lo que EmailStr deja pasar: una
+    terminación de una letra, como "juan@casa.c".
 
     Se exige un dominio con punto y una terminación de al menos dos letras
     (.com, .ar, .com.ar). NO valida que la casilla exista —eso sólo se sabe
@@ -87,6 +87,8 @@ def _email_valido(v: str | None) -> str | None:
     esto "Juan@Gmail.com" y "juan@gmail.com" entran como dos personas distintas
     al chequear si un mail ya está registrado.
     """
+    if v is not None and not isinstance(v, str):
+        return v            # que lo rechace EmailStr, con su propio mensaje
     v = (v or "").strip()
     if not v:
         return None
@@ -241,7 +243,7 @@ class SocioAltaRequest(BaseModel):
     telefono: str | None = None
 
     _validar_telefono = field_validator("telefono")(_telefono_valido)
-    _validar_email = field_validator("email")(_email_valido)
+    _validar_email = field_validator("email", mode="before")(_email_valido)
     _validar_emergencia = field_validator("emergencia_telefono")(_telefono_valido)
     _validar_nacimiento = field_validator("fecha_nacimiento")(_fecha_nacimiento_valida)
 
@@ -313,7 +315,7 @@ class SocioEditarRequest(BaseModel):
     emergencia_parentesco: str | None = None
 
     _validar_telefono = field_validator("telefono")(_telefono_valido)
-    _validar_email = field_validator("email")(_email_valido)
+    _validar_email = field_validator("email", mode="before")(_email_valido)
     _validar_emergencia = field_validator("emergencia_telefono")(_telefono_valido)
     _validar_nacimiento = field_validator("fecha_nacimiento")(_fecha_nacimiento_valida)
 
@@ -1213,7 +1215,7 @@ class MiPerfilEditarRequest(BaseModel):
 
     _validar_telefono = field_validator("telefono")(_telefono_valido)
     _validar_emergencia = field_validator("emergencia_telefono")(_telefono_valido)
-    _validar_email = field_validator("email")(_email_valido)
+    _validar_email = field_validator("email", mode="before")(_email_valido)
 
 
 class MedicionOut(BaseModel):
@@ -1650,9 +1652,9 @@ class RolEmpleado(str, Enum):
     el nombre que usa la API para referirse a esa estructura, y sus valores
     coinciden con RolEmpleado de config.ts.
 
-    PROFESOR está acá pero NO habilita el ingreso al sistema: da clases, no lo
-    usa. Por eso `roles_de_persona` no le devuelve ningún rol de sesión y el
-    alta no le ofrece crear cuenta.
+    PROFESOR habilita el ingreso desde el 2026-09-16: `roles_de_persona` le
+    devuelve su rol de sesión y el alta le crea cuenta como a los otros tres,
+    para que vea "Mis clases" en la PWA.
     """
     ENTRENADOR = "Entrenador"
     NUTRICIONISTA = "Nutricionista"
@@ -1674,7 +1676,7 @@ class EmpleadoAltaRequest(BaseModel):
     fecha_nacimiento: date | None = None
 
     _validar_telefono = field_validator("telefono")(_telefono_valido)
-    _validar_email = field_validator("email")(_email_valido)
+    _validar_email = field_validator("email", mode="before")(_email_valido)
 
     @model_validator(mode="after")
     def _con_forma_de_contactarlo(self):
@@ -1701,8 +1703,8 @@ class EmpleadoAltaRequest(BaseModel):
     id_franja_laboral: int | None = None    # solo Recepcionista (FK Franja_Laboral)
 
     # --- Cuenta ---
-    # Un Profesor no puede tener sesión, así que el router fuerza esto a False
-    # para ese rol aunque venga en True.
+    # Vale para los cuatro roles, Profesor incluido (tiene sesión desde el
+    # 2026-09-16). Las dos apps la piden siempre.
     crear_cuenta: bool = True
 
 
@@ -1756,7 +1758,7 @@ class EmpleadoEditarRequest(BaseModel):
     rol: RolEmpleado
 
     _validar_telefono = field_validator("telefono")(_telefono_valido)
-    _validar_email = field_validator("email")(_email_valido)
+    _validar_email = field_validator("email", mode="before")(_email_valido)
 
     @model_validator(mode="after")
     def _con_forma_de_contactarlo(self):
@@ -1764,9 +1766,9 @@ class EmpleadoEditarRequest(BaseModel):
             raise PydanticCustomError(
                 "sin_contacto", "Cargá un email o un teléfono: hace falta para contactarlo.")
         return self
-    titulo: str | None = None
-    especialidad: str | None = None
-    matricula: str | None = None
+    titulo: str | None = None              # ausente = no se toca (editar_empleado)
+    especialidad: str | None = None        # ausente = no se toca
+    matricula: str | None = None           # ausente = no se toca
     id_franja_laboral: int | None = None   # solo Recepcionista (FK Franja_Laboral)
 
 
@@ -1827,6 +1829,9 @@ class PersonaSinCuentaOut(BaseModel):
     dni: str
     nombre_completo: str
     email: str | None = None
+    # El principal: con él la cuenta recién creada puede ofrecer mandar las
+    # credenciales por WhatsApp a quien no dejó mail.
+    telefono: str | None = None
     roles: list[str]
 
 
@@ -1840,6 +1845,12 @@ class UsuarioEditarRequest(BaseModel):
     """
     username: str = Field(min_length=1, max_length=50)
     email: EmailStr | None = None
+
+    # El mismo validador que el resto de los formularios con mail. Faltaba, y
+    # esta pantalla aceptaba "juan@casa.c" y guardaba "Juan@gmail.com" con
+    # mayúscula mientras todos los demás lo pasan a minúsculas: dos personas
+    # podían terminar con la misma casilla escrita distinto.
+    _validar_email = field_validator("email", mode="before")(_email_valido)
 
 
 class UsuarioCrearRequest(BaseModel):

@@ -70,8 +70,8 @@ def _numero_socio(id_socio: int) -> str:
     return f"S-{id_socio:04d}"
 
 
-# Días antes del vencimiento en que un socio pasa a "Por vencer". Mismo valor
-# que DIAS_AVISO_VENCIMIENTO en la PWA (membresiaService.ts) y en el dashboard.
+# Días antes del vencimiento en que un socio pasa a "Por vencer": una semana,
+# para que el mostrador llame a tiempo. El dashboard la importa de acá.
 DIAS_AVISO_VENCIMIENTO = 7
 
 # Los seis estados posibles. Espejo de `EstadoSocio` en config.ts — los valores
@@ -614,8 +614,8 @@ def dar_de_baja(
     siguiente al vencimiento (bajas.py): hasta entonces sigue activo y no
     pierde los días que pagó — salvo que se pida `inmediata` (una expulsión),
     que corta hoy y adelanta una baja ya programada. Sin período en curso es inmediata: se desactiva
-    la ficha y la cuenta de acceso (el agujero de la auditoría del 2026-08-03:
-    un socio dado de baja seguía pudiendo entrar a la app).
+    la ficha, y también la cuenta si la baja no es voluntaria (auditoría del 2026-08-03: un socio
+    dado de baja seguía entrando a la app). La voluntaria la deja viva, como bajas.py y el portal.
     """
     socio = db.get(Socio, id_socio)
     if socio is None:
@@ -657,7 +657,7 @@ def dar_de_baja(
     if not programada:
         db.flush()
         from turnos import promover_de_lista_de_espera
-        for id_turno in aplicar_baja(db, socio, desactivar_cuenta=True):
+        for id_turno in aplicar_baja(db, socio, desactivar_cuenta=datos.tipo.value != "VOLUNTARIA"):
             promover_de_lista_de_espera(db, id_turno)
 
     db.commit()

@@ -120,7 +120,9 @@ export function RutinasView() {
     (rutina: RutinaListado) => {
       confirmDialog(
         `¿Dar de baja "${rutina.nombre}"?`,
-        'La rutina deja de figurar como activa. Esta acción queda registrada en Auditoría.',
+        // El mismo texto que su gemelo de Flet, que dice lo que hace el backend
+        // (dar_de_baja_rutina). Antes prometía una auditoría que no existe.
+        'Deja de ofrecerse para asignar. Los socios que la están siguiendo la terminan.',
         () => {
           darDeBajaRutina(rutina.idRutina)
             .then(() => {

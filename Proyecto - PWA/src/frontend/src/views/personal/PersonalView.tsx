@@ -115,7 +115,7 @@ export function PersonalView() {
     (empleado: EmpleadoListado) => {
       confirmDialog(
         `¿Dar de baja a ${empleado.nombreCompleto}?`,
-        'El empleado deja de figurar como activo. Esta acción queda registrada en Auditoría.',
+        'Deja de figurar como activo y su cuenta de acceso se desactiva. Si entrena socios, deja de estar a cargo de ellos. Se puede reactivar.',
         () => {
           darDeBajaEmpleado(empleado.idEmpleado)
             .then(() => {

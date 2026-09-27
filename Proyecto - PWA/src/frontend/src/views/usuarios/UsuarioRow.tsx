@@ -11,10 +11,10 @@ import { RoleChip } from './RoleChip';
 // para no romper la consistencia visual con Socios/Personal/Rutinas/
 // Nutrición.
 //
-// El tercer botón tiene 3 variantes en vez de 2 (a diferencia de las otras
-// vistas): activo/bloqueado/inactivo son estados independientes de Usuario
-// (bloqueado no implica inactivo), así que "desbloquear" es una acción
-// propia, distinta de "activar".
+// Activo/bloqueado/inactivo son estados independientes de Usuario (bloqueado
+// no implica inactivo), así que "desbloquear" es una acción propia, distinta
+// de "activar", y convive con "desactivar": una cuenta bloqueada sigue
+// activa, y apagarla no puede exigir destrabarla antes.
 interface UsuarioRowProps {
   usuario: UsuarioListado;
   /** False = fila de sólo lectura, sin ninguna acción. */
@@ -34,8 +34,8 @@ interface UsuarioRowProps {
   esCuentaProtegida: boolean;
   /**
    * Es LITERALMENTE la cuenta de quien mira. Aparte de esCuentaPropia porque
-   * ésa exime al Dueño (puede editarse), y borrar la propia no se permite a
-   * nadie: no tiene vuelta.
+   * ésa exime al Dueño (puede editarse), y desactivar o borrar la propia no se
+   * permite a nadie: el backend responde 403 también al Dueño.
    */
   esLaMisma: boolean;
   onEditar: () => void;
@@ -72,6 +72,9 @@ export function UsuarioRow({
   // Editar y cambiar de estado (baja/activar/desbloquear) quedan afuera en
   // la fila propia; Resetear no — ver el comentario de esCuentaPropia arriba.
   const puedeEditarOCambiarEstado = puedeOperar && !esCuentaPropia;
+  // Activar o desactivar la propia no lo puede nadie, tampoco el Dueño: antes
+  // su fila mostraba "Desactivar" y el backend lo rechazaba siempre.
+  const puedeCambiarActivo = puedeEditarOCambiarEstado && !esLaMisma;
 
   return (
     <tr className="border-b border-border-idle transition-colors duration-[120ms] last:border-b-0 hover:bg-surface-hover">
@@ -114,20 +117,10 @@ export function UsuarioRow({
               <KeyRound size={16} />
             </button>
           )}
-          {/* Mismo patrón de las otras vistas: el botón cambia de acción
-              según el estado en vez de deshabilitarse sin salida — acá con
-              una tercera variante para "bloqueado", que no es lo mismo que
-              "inactivo". */}
-          {!puedeEditarOCambiarEstado ? null : yaInactivo ? (
-            <button
-              type="button"
-              onClick={onActivar}
-              title="Activar"
-              className="rounded-md p-2 text-text-muted hover:bg-surface-card hover:text-status-ok"
-            >
-              <RotateCcw size={16} />
-            </button>
-          ) : bloqueado ? (
+          {/* Desbloquear, sólo sobre una bloqueada. Va APARTE del botón de
+              estado: antes lo reemplazaba, y para apagar una cuenta atacada
+              había que destrabarla primero. */}
+          {puedeEditarOCambiarEstado && bloqueado && (
             <button
               type="button"
               onClick={onDesbloquear}
@@ -135,6 +128,18 @@ export function UsuarioRow({
               className="rounded-md p-2 text-text-muted hover:bg-surface-card hover:text-status-ok"
             >
               <Unlock size={16} />
+            </button>
+          )}
+          {/* Mismo patrón de las otras vistas: el botón cambia de acción
+              según el estado en vez de deshabilitarse sin salida. */}
+          {!puedeCambiarActivo ? null : yaInactivo ? (
+            <button
+              type="button"
+              onClick={onActivar}
+              title="Activar"
+              className="rounded-md p-2 text-text-muted hover:bg-surface-card hover:text-status-ok"
+            >
+              <RotateCcw size={16} />
             </button>
           ) : (
             <button

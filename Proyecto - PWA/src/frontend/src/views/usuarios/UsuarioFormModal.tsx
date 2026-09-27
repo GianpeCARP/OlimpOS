@@ -7,9 +7,12 @@ import {
   crearUsuario,
   actualizarUsuario,
   listarPersonasSinUsuario,
+  type PersonaSinUsuario,
+  type ResultadoCredenciales,
   type UsuarioListado,
 } from '../../services/usuariosService';
-import { useUiStore, SNACK_PERSISTENTE } from '../../store/uiStore';
+import { useUiStore } from '../../store/uiStore';
+import { PanelCredenciales } from '../../components/PanelCredenciales';
 
 // Equivalente de _open_form (estructura_usuarios.md). Dos diferencias con
 // el doc, explicadas en usuariosService.ts: en vez de tipear un nombre
@@ -37,7 +40,15 @@ export function UsuarioFormModal({ usuario, onClose, onGuardado }: UsuarioFormMo
   const [email, setEmail] = useState(usuario?.email ?? '');
 
   const [candidatos, setCandidatos] = useState<SelectOption[] | null>(null);
+  // Las personas completas, no sólo las opciones: al crear la cuenta hace
+  // falta el mail y el teléfono de la elegida para mandarle las credenciales.
+  const [personas, setPersonas] = useState<PersonaSinUsuario[]>([]);
   const [guardando, setGuardando] = useState(false);
+  // La cuenta recién creada cuyas credenciales hay que entregar. Mientras
+  // tenga valor, el modal muestra el panel de entrega en vez del formulario.
+  const [credenciales, setCredenciales] = useState<
+    { cred: ResultadoCredenciales; persona: PersonaSinUsuario | undefined } | null
+  >(null);
 
   const showSnack = useUiStore((s) => s.showSnack);
 
@@ -47,6 +58,7 @@ export function UsuarioFormModal({ usuario, onClose, onGuardado }: UsuarioFormMo
     listarPersonasSinUsuario()
       .then((lista) => {
         if (cancelado) return;
+        setPersonas(lista);
         // El rol va en la etiqueta porque no es elegible: se deriva de lo
         // que la persona ya es (socio o empleado, y de qué tipo). Mostrarlo
         // evita que el staff cree una cuenta sin saber con qué permisos va
@@ -88,15 +100,14 @@ export function UsuarioFormModal({ usuario, onClose, onGuardado }: UsuarioFormMo
         // un administrador eligiera la clave de otro significaría que la
         // conoce, y para siempre.
         const cred = await crearUsuario({ idPersona: Number(idPersona) });
-        showSnack(
-          `Cuenta creada. Usuario: ${cred.username} — Contraseña temporal: ` +
-            `${cred.passwordTemporal} (anotala, no se vuelve a mostrar)`,
-          colors.statusOk,
-          SNACK_PERSISTENTE,
-        );
         // La lista se recarga desde el padre: el alta devuelve credenciales,
         // no la fila de la tabla.
         onGuardado(null);
+        // Y el modal NO se cierra: pasa al MISMO panel de entrega que el alta
+        // de personal y el reseteo, desde donde se mandan por mail o
+        // WhatsApp. Antes salían en un aviso para copiar a mano.
+        setCredenciales({ cred, persona: personas.find((p) => String(p.idPersona) === idPersona) });
+        return;
       }
 
       onClose();
@@ -106,6 +117,22 @@ export function UsuarioFormModal({ usuario, onClose, onGuardado }: UsuarioFormMo
       setGuardando(false);
     }
   };
+
+  if (credenciales) {
+    return (
+      <PanelCredenciales
+        titulo="Cuenta creada"
+        mensaje={credenciales.cred.mensaje}
+        username={credenciales.cred.username}
+        passwordTemporal={credenciales.cred.passwordTemporal}
+        textoCredenciales={credenciales.cred.textoCredenciales}
+        emailEnviado={credenciales.cred.emailEnviado}
+        email={credenciales.persona?.email ?? ''}
+        telefono={credenciales.persona?.telefono ?? ''}
+        onClose={onClose}
+      />
+    );
+  }
 
   // Mientras llega la lista NO se dibuja el formulario. Antes sí se dibujaba,
   // con el selector vacío, y si la respuesta venía sin candidatos el modal

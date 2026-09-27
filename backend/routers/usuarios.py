@@ -11,14 +11,14 @@ Usuarios?" o "¿puede gestionar usuarios?". Pero acá hacen falta dos reglas que
 la matriz no puede expresar, porque no dependen del rol de quien pide sino de
 QUÉ FILA está tocando:
 
-1. NADIE fuera del Dueño puede editar ni desactivar SU PROPIA cuenta.
-   Si no, alguien puede desactivarse o cambiarse el usuario a sí mismo sin
-   que nadie lo vea venir. El Dueño queda exento por ser la autoridad última
-   del sistema.
+1. NADIE fuera del Dueño puede editar SU PROPIA cuenta, y NADIE —tampoco el
+   Dueño— puede desactivarla ni borrarla. Editarse sin que nadie lo vea venir
+   es el riesgo de un rol inferior; el Dueño queda exento por ser la autoridad
+   última. Desactivarse o borrarse deja afuera a cualquiera, y a un Dueño
+   único, al sistema sin salida (ver alternar_estado y borrar_cuenta).
 
    Resetearse la contraseña propia SÍ está permitido: no hay riesgo en eso, y
-   es lo que deja hacer cualquier sistema real. La restricción es sobre editar
-   y sobre desactivar.
+   es lo que deja hacer cualquier sistema real.
 
 2. SOLO UN DUEÑO PUEDE OPERAR SOBRE LA CUENTA DE UN DUEÑO.
    Esta es la importante. El Recepcionista tiene `gestionUsuarios` en true, y
@@ -107,15 +107,50 @@ def _a_usuario_out(usuario: Usuario) -> UsuarioAdminOut:
         dni=persona.dni,
         nombre_completo=persona.nombre_completo,
         email=persona.email,
-        # El principal, o el primero que haya. Lo usa el panel para ofrecer
-        # mandar las credenciales por WhatsApp cuando la persona no dejó mail.
-        telefono=next((t.numero for t in persona.telefonos if t.principal),
-                      next((t.numero for t in persona.telefonos), None)),
+        telefono=_telefono_principal(persona),
         roles=roles_de_persona(persona),
         activo=bool(usuario.activo),
         bloqueado=bloqueado,
         debe_cambiar_password=bool(usuario.debe_cambiar_password),
         ultimo_acceso=usuario.ultimo_acceso,
+    )
+
+
+def _telefono_principal(persona: Persona) -> str | None:
+    """
+    El principal, o el primero que haya. Lo usa el panel para ofrecer mandar
+    las credenciales por WhatsApp cuando la persona no dejó mail.
+    """
+    return next((t.numero for t in persona.telefonos if t.principal),
+                next((t.numero for t in persona.telefonos), None))
+
+
+def _empleado_dado_de_baja(persona: Persona | None) -> bool:
+    """
+    ¿Esta persona fue empleada y está dada de baja?
+
+    `roles_de_persona` mira que EXISTA la fila del subtipo, no que el empleado
+    siga activo: un entrenador dado de baja sigue devolviendo "entrenador".
+    Por eso cada camino de este router que da acceso tiene que preguntarlo
+    aparte. Sin esto, crear una cuenta NUEVA le devolvía la entrada —con los
+    permisos de su rol— a alguien que ya no trabaja acá: el mismo agujero de
+    offboarding que alternar_estado cierra para la cuenta vieja.
+
+    El acceso de un empleado se justifica en el puesto (la baja de personal
+    apaga la cuenta siempre), así que la vuelta se da desde Personal.
+    """
+    return (persona is not None and persona.empleado is not None
+            and not persona.empleado.activo)
+
+
+def _rechazar_empleado_dado_de_baja(persona: Persona) -> None:
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            f"{persona.nombre_completo} está dado de baja como empleado. "
+            "Reactivalo desde Personal: ahí se le devuelve el acceso junto "
+            "con el puesto."
+        ),
     )
 
 
@@ -193,9 +228,10 @@ def listar_personas_sin_cuenta(
     Personas que podrían tener cuenta pero todavía no la tienen.
 
     Filtra por rol y no solo por "no tiene Usuario": alguien sin ningún rol de
-    sesión —un Profesor, por ejemplo— no puede usar el sistema aunque se le
-    creara la cuenta, porque el login rechaza a quien no tiene roles. Ofrecerlo
-    como candidato sería ofrecer crear una cuenta inútil.
+    sesión no puede usar el sistema aunque se le creara la cuenta, porque el
+    login rechaza a quien no tiene roles. Ofrecerlo como candidato sería
+    ofrecer crear una cuenta inútil. Y deja afuera al empleado dado de baja,
+    que crear_cuenta rechaza: ofrecerlo sería ofrecer lo que después falla.
 
     Va ANTES de la ruta /{id_usuario} a propósito: FastAPI resuelve las rutas
     en el orden en que se declaran, y si estuviera después intentaría leer
@@ -210,13 +246,16 @@ def listar_personas_sin_cuenta(
     salida = []
     for p in personas:
         roles = roles_de_persona(p)
-        if not roles:
+        if not roles or _empleado_dado_de_baja(p):
             continue
         salida.append(PersonaSinCuentaOut(
             id_persona=p.id_persona,
             dni=p.dni,
             nombre_completo=p.nombre_completo,
             email=p.email,
+            # Para ofrecer las credenciales por WhatsApp apenas se crea la
+            # cuenta, igual que el alta de socio y de personal.
+            telefono=_telefono_principal(p),
             roles=roles,
         ))
     return salida
@@ -255,6 +294,9 @@ def crear_cuenta(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"{persona.nombre_completo} ya tiene una cuenta ('{persona.usuario.username}').",
         )
+
+    if _empleado_dado_de_baja(persona):
+        _rechazar_empleado_dado_de_baja(persona)
 
     roles = roles_de_persona(persona)
     if not roles:
@@ -460,17 +502,8 @@ def alternar_estado(
     # faltaba era este lado: la vuelta se da desde Personal con "Reactivar",
     # que devuelve el puesto y el acceso juntos — que es el orden correcto,
     # porque el acceso se justifica en el puesto y no al revés.
-    if destino and not usuario.activo:
-        empleado = usuario.persona.empleado if usuario.persona else None
-        if empleado is not None and not empleado.activo:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    f"{usuario.persona.nombre_completo} está dado de baja como "
-                    "empleado. Reactivalo desde Personal: ahí se le devuelve el "
-                    "acceso junto con el puesto."
-                ),
-            )
+    if destino and not usuario.activo and _empleado_dado_de_baja(usuario.persona):
+        _rechazar_empleado_dado_de_baja(usuario.persona)
 
     usuario.activo = destino
     if usuario.activo:
@@ -566,7 +599,10 @@ def editar_usuario(
     _validar_no_es_propia(sesion, usuario)
     _validar_jerarquia(sesion, usuario)
 
-    username = datos.username.strip()
+    # En minúsculas, como los que genera el sistema y como los compara el
+    # login. Antes se guardaba tal cual: una cuenta renombrada "Mario.DJ"
+    # entraba por la PWA y no por Flet, que manda el usuario en minúsculas.
+    username = datos.username.strip().lower()
     if not username:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="El nombre de usuario es obligatorio.")
@@ -588,6 +624,22 @@ def editar_usuario(
         if choca:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                                 detail="Ese email ya está registrado para otra persona.")
+
+    # La misma regla que el alta y la edición de personal: un empleado sin
+    # mail NI teléfono no se puede contactar. Sin esto, vaciarle el mail desde
+    # acá salteaba la regla que su propio formulario hace cumplir.
+    if (not datos.email and usuario.persona.empleado is not None
+            and not usuario.persona.telefonos):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cargá un email o un teléfono: hace falta para contactarlo.")
+
+    # La traba por intentos fallidos se guarda por nombre de usuario: al
+    # renombrar, se muda con la cuenta. Si se quedara en el nombre viejo,
+    # renombrar una cuenta trabada la destrabaría.
+    if username != usuario.username:
+        import limite_intentos
+        limite_intentos.renombrar(usuario.username, username)
 
     usuario.username = username
     usuario.persona.email = datos.email

@@ -110,7 +110,10 @@ export function UsuariosView() {
     (usuario: UsuarioListado) => {
       confirmDialog(
         `¿Desactivar el acceso de ${usuario.nombre}?`,
-        'Pierde la posibilidad de iniciar sesión en la app. Esta acción queda registrada en Auditoría.',
+        // Antes prometía "queda registrada en Auditoría", y no hay auditoría.
+        // Lo que sí conviene decir: la cuenta y la ficha son dos banderas, y
+        // un socio sin acceso sigue siendo socio.
+        'Pierde la posibilidad de iniciar sesión en la app. Su ficha no cambia: si es socio, sigue siéndolo. Se puede volver a activar.',
         () => {
           darDeBajaUsuario(usuario.idUsuario)
             .then(() => {

@@ -93,9 +93,9 @@ class Rol:
     models.Rol del backend y con RolUsuario de config.ts.
 
     El Profesor entró en la lista el 2026-09-16. Antes no iniciaba sesión;
-    ahora sí, pero SÓLO en la PWA, donde tiene "Mis clases". En esta app no
-    tiene nada que hacer —sus diez secciones quedan en NINGUNO— y por eso
-    ROLES_CON_ACCESO lo deja afuera solo y el login le dice que use la web.
+    ahora sí. Su pantalla ("Mis clases") está en la PWA y acá sus diez
+    secciones quedan en NINGUNO, pero entra igual: ver
+    ROLES_SIN_SECCIONES_QUE_ENTRAN al final.
     """
     DUENO = "dueno"
     SOCIO = "socio"
@@ -308,9 +308,9 @@ PERMISOS: dict[str, dict] = {
 
     # El Profesor dicta las clases grupales y su pantalla ("Mis clases") vive
     # en la PWA, no acá: esta app es la del mostrador. Las diez secciones en
-    # NINGUNO no son un olvido — son la forma de que ROLES_CON_ACCESO lo
-    # excluya y el login lo mande a la web en vez de dejarlo entrar a un
-    # sidebar vacío. Mismo tratamiento que el Socio, y por el mismo motivo.
+    # NINGUNO no son un olvido. Lo que NO comparte con el Socio es el rechazo
+    # del login: entra, y SinSeccionesView le dice dónde está su pantalla. Ver
+    # ROLES_SIN_SECCIONES_QUE_ENTRAN.
     Rol.PROFESOR: {
         "secciones": dict(_SIN_ACCESO),
         "acciones": _todas_en(False),
@@ -325,6 +325,18 @@ ROLES_CON_ACCESO = frozenset(
     rol for rol, permisos in PERMISOS.items()
     if any(nivel != Acceso.NINGUNO for nivel in permisos["secciones"].values())
 )
+
+# Roles que entran aunque no tengan ninguna sección. Hoy, sólo el Profesor.
+#
+# Es personal del gimnasio y tiene cuenta, así que el rechazo del login —que
+# está escrito para socios ("Si sos socio, entrá desde la web…")— le decía algo
+# falso. Entra, y SinSeccionesView le explica que su pantalla está en la PWA.
+# Hasta acá, esa vista existía pero no la alcanzaba nadie: este chequeo lo
+# frenaba antes.
+#
+# El Socio NO va acá: esta app no es la suya y su portal entero está en la web,
+# así que para él el rechazo con ese mensaje es lo correcto.
+ROLES_SIN_SECCIONES_QUE_ENTRAN = frozenset({Rol.PROFESOR})
 
 
 # =============================================================================
@@ -383,5 +395,9 @@ def tiene_acceso_a_la_app(roles: list[str]) -> bool:
     válida— pero esta app no es la suya. Sin este chequeo entraría y vería un
     sidebar vacío y una pantalla en blanco, sin ninguna explicación de por
     qué. Es mejor no dejarlo pasar y decirle que use la web.
+
+    El Profesor sí pasa aunque no tenga secciones: ver
+    ROLES_SIN_SECCIONES_QUE_ENTRAN.
     """
-    return any(rol in ROLES_CON_ACCESO for rol in roles)
+    return any(rol in ROLES_CON_ACCESO or rol in ROLES_SIN_SECCIONES_QUE_ENTRAN
+               for rol in roles)

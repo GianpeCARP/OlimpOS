@@ -140,9 +140,12 @@ D:\OlimpOs\
 
 **Plata**
 - **Prepago puro. No hay tabla `Deuda`.** "Debe" = no tiene membresía vigente. El
-  estado del socio se calcula en orden: De baja > Sin membresía > Suspendido >
+  estado del socio se calcula en orden: Dado de baja > Sin membresía > Suspendido >
   Vencido > Por vencer (0 a 7 días) > Activo. **Queda vencido el día siguiente al
-  vencimiento.**
+  vencimiento.** Hay una séptima etiqueta, **"En pausa"**: es la misma fila
+  `SUSPENDIDA` de la base, dicha para el socio. El portal la muestra "En pausa" y la
+  grilla del personal "Suspendido" —la palabra la decide quién mira, no quién pausó—, y
+  hoy toda pausa la pide el socio (el portal es el único que crea un `Congelamiento`).
 - **La caja existe para 4 casos:** efectivo, el socio que no usa la app, un pago que
   entró por fuera y corregir un cobro. El resto lo paga el socio desde la app. Lo
   mismo vale para la clase suelta.
@@ -197,7 +200,12 @@ D:\OlimpOs\
 - **Objetivo y observaciones** (columnas de `Socio`) se cargan en el alta y la edición,
   en las dos apps. El PUT de socio **sólo toca lo que vino en el pedido**: un campo
   ausente se conserva, uno vacío borra. Sin eso, un formulario al que le falte un campo
-  lo borra en silencio.
+  lo borra en silencio. **La misma regla vale para los datos del rol de un empleado**
+  (título, especialidad, matrícula, franja): la PWA muestra uno por rol y Flet todos.
+- **Cambiar el rol de un empleado con historial en ese rol** (socios que tuvo a cargo,
+  horarios o turnos a su nombre) **no se puede**: el cambio borra la fila del rol viejo y
+  el historial apunta a ella. Responde 409 con el motivo. Es un límite conocido, anotado
+  para resolver a futuro (ver `docs/ESTADO-ACTUAL.md`).
 - **Datos personales del socio** (fecha de nacimiento, domicilio, contacto de
   emergencia) se cargan en el **alta y la edición**, nunca al cobrar. Los contactos de
   emergencia se llaman desde un botón de la grilla, que ven todos los que ven
@@ -220,8 +228,12 @@ D:\OlimpOs\
   devuelve. En empleados el acople es total, porque ahí el acceso se justifica
   en el puesto.
 - **Bajas lógicas y reversibles.** Dar de baja un empleado lo desasigna de sus
-  actividades, pero no toca los turnos ya programados. **Usuarios no reactiva la
-  cuenta de alguien dado de baja** (eso se hace desde Personal) **ni crea personas**:
+  actividades, pero no toca los turnos ya programados (es la intención: con un horario
+  o un turno a su nombre, hoy la base lo rechaza; ver `docs/ESTADO-ACTUAL.md`). Si es
+  entrenador, **finaliza sus asignaciones activas** (el socio deja de verlo en "Mi
+  entrenador"); reactivarlo no las reabre. **Usuarios no reactiva la
+  cuenta de alguien dado de baja** (eso se hace desde Personal, y tampoco le crea una cuenta
+  NUEVA a un empleado dado de baja) **ni crea personas**:
   la cuenta nace con el alta en Socios o Personal.
 - **Resetear la propia contraseña está permitido y CORTA la sesión**: el backend
   rechaza (401) cualquier token de una cuenta marcada para cambiar la clave, y la PWA
@@ -254,8 +266,10 @@ D:\OlimpOs\
   asignado a esa actividad): de ahí salen "Mis clases", "Mis turnos" y la agenda del
   personal. **Actividades la gestionan el Dueño y el Recepcionista** con los mismos
   permisos.
-- **El Profesor tiene cuenta, sólo para "Mis clases"** en la PWA. En Flet no tiene
-  secciones.
+- **El Profesor tiene cuenta, sólo para "Mis clases"** en la PWA, y el alta se la crea
+  desde las dos apps. En Flet no tiene secciones: entra y `SinSeccionesView` le dice
+  que su pantalla está en la PWA (`ROLES_SIN_SECCIONES_QUE_ENTRAN`). El Socio, en
+  cambio, queda afuera en el login de Flet.
 - **Registros vs planes.** `Registro_*` es un log append-only por fecha, nunca se pisa.
   `Asignacion_Rutina` y `Asignacion_Dieta` tienen `estado`, con **una sola ACTIVA**
   por socio (índice único parcial).

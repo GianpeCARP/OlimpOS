@@ -31,7 +31,7 @@ TURNO_COLORS = {
 # Los cuatro roles de empleado que acepta el backend (RolEmpleado en
 # schemas.py). "Administrativo" que figuraba antes en el Dropdown no existe
 # como tabla: elegirlo hacía fallar el alta con un 422 sin explicación.
-# Profesor sí existe pero NO usa el sistema — da clases y no tiene cuenta.
+# Los cuatro tienen cuenta; el Profesor, para "Mis clases" en la PWA (acá no tiene secciones).
 ROLES_EMPLEADO = ["Entrenador", "Nutricionista", "Recepcionista", "Profesor"]
 
 
@@ -213,8 +213,8 @@ class PersonalView:
         ("María de los Ángeles Del Valle" no se resuelve con un split), así
         que nombre y apellido van separados desde el formulario.
 
-        Los campos de especialidad (título, matrícula, turno) se muestran
-        todos y el backend ignora los que no apliquen al rol elegido. Es la
+        Los campos de especialidad (título, especialidad, matrícula, turno) se
+        muestran todos y el backend ignora los que no apliquen al rol elegido. Es la
         misma decisión que está documentada en EmpleadoAltaRequest: un
         formulario que manda siempre los mismos campos es más simple —y
         rompe menos— que uno que se rearma solo cada vez que cambia un
@@ -228,6 +228,9 @@ class PersonalView:
         email_ref     = ft.Ref[ft.TextField]()
         telefono_ref  = ft.Ref[ft.TextField]()
         titulo_ref    = ft.Ref[ft.TextField]()
+        # La especialidad no estaba: la PWA la edita (es su único campo para
+        # Entrenador y Profesor) y acá no se podía ni ver ni cargar.
+        especialidad_ref = ft.Ref[ft.TextField]()
         matricula_ref = ft.Ref[ft.TextField]()
         rol_ref       = ft.Ref[ft.Dropdown]()
         turno_ref     = ft.Ref[ft.Dropdown]()
@@ -306,6 +309,10 @@ class PersonalView:
                                 ref=titulo_ref, icon=ft.Icons.SCHOOL_OUTLINED,
                                 value=empleado["titulo"] if is_edit else ""),
                     ft.Container(height=12),
+                    input_field("Especialidad", "Ej: Hipertrofia", ref=especialidad_ref,
+                                icon=ft.Icons.FITNESS_CENTER_OUTLINED,
+                                value=empleado["especialidad"] if is_edit else ""),
+                    ft.Container(height=12),
                     input_field("Matrícula", "Ej: MN 12345", ref=matricula_ref,
                                 icon=ft.Icons.VERIFIED_OUTLINED,
                                 value=empleado["matricula"] if is_edit else ""),
@@ -323,6 +330,7 @@ class PersonalView:
                                   {"nombre": nombre_ref, "apellido": apellido_ref,
                                    "dni": dni_ref, "email": email_ref,
                                    "telefono": telefono_ref, "titulo": titulo_ref,
+                                   "especialidad": especialidad_ref,
                                    "matricula": matricula_ref},
                                   rol_ref, turno_ref,
                               )),
@@ -346,8 +354,8 @@ class PersonalView:
             return
         open_dialog(self.page, confirm_dialog(
             self.page, f"¿Dar de baja a {p['nombre']}?",
-            "Deja de figurar como activo y su cuenta de acceso se desactiva. "
-            "Se puede reactivar.",
+            "Deja de figurar como activo y su cuenta de acceso se desactiva. Si entrena "
+            "socios, deja de estar a cargo de ellos. Se puede reactivar.",
             on_confirm=lambda: aplicar(app_state.baja_empleado(p["id"])),
             texto_confirmar="Dar de baja",
         ))
@@ -405,6 +413,7 @@ class PersonalView:
             "telefono": datos["telefono"] or None,
             "rol": rol,
             "titulo": datos["titulo"] or None,
+            "especialidad": datos["especialidad"] or None,
             "matricula": datos["matricula"] or None,
             # El turno es ahora una FK: se manda el id de la franja elegida.
             "id_franja_laboral": (
@@ -418,9 +427,9 @@ class PersonalView:
             # endpoint que las liste. El día que haya una segunda, esto y sus
             # dos gemelos de la PWA son los tres lugares a tocar.
             cuerpo["id_sede"] = 1
-            # Un Profesor no usa el sistema; el router le fuerza esto a False
-            # igual, pero mandarlo bien deja claro qué se está pidiendo.
-            cuerpo["crear_cuenta"] = rol != "Profesor"
+            # Siempre, como la PWA: el Profesor también tiene sesión (desde el
+            # 2026-09-16). Mandarle False lo dejaba sin acceso a "Mis clases".
+            cuerpo["crear_cuenta"] = True
             resultado = app_state.alta_empleado(cuerpo)
         else:
             resultado = app_state.editar_empleado(id_empleado, cuerpo)

@@ -81,3 +81,15 @@ def destrabar(username: str) -> None:
     """Lo usa el desbloqueo manual desde Usuarios."""
     with _candado:
         _trabada_hasta.pop(username, None)
+
+
+def renombrar(viejo: str, nuevo: str) -> None:
+    """
+    Muda la traba de un nombre de usuario a otro. La usa la edición de la
+    cuenta: la traba cuelga del nombre, y sin esto renombrar una cuenta
+    trabada la destrababa.
+    """
+    with _candado:
+        hasta = _trabada_hasta.pop(viejo, None)
+        if hasta is not None:
+            _trabada_hasta[nuevo] = hasta

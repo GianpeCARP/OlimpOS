@@ -1,6 +1,6 @@
 # OlimpOS — Estado actual
 
-**Foto al 2026-09-17.** Sólo el presente: dónde estamos, qué falta y qué no se
+**Foto al 2026-09-26.** Sólo el presente: dónde estamos, qué falta y qué no se
 probó. Lo permanente (idea, reglas del negocio, trampas) está en `CLAUDE.md`, y el
 historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tanda.**
 
@@ -38,6 +38,19 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
 ## Lo que falta, en orden
 
 ### 1. Hecho pero sin probar en pantalla
+- **Baja voluntaria desde el mostrador** (backend): la baja inmediata ahora respeta el tipo,
+  así que la voluntaria deja viva la cuenta de acceso y la de mora o administrativa la apaga,
+  igual que la baja programada y la del portal. Antes `dar_de_baja()` la apagaba siempre.
+  Verificado con la función real sobre SQLite en memoria (6 caminos, los 6 bien; contra el
+  código viejo fallan los 2 de voluntaria inmediata). Falta verlo en pantalla, con el backend
+  reiniciado.
+- **Estado del socio en el Dashboard** (backend): la tarjeta de socios recientes calcula el
+  estado con `_estado_socio()`, la misma función que la grilla de Socios. Antes tenía su propia
+  regla y mostraba "Vencido" a socios en pausa, sin membresía, dados de baja o con membresía sin
+  vencimiento; el más visible era el recién dado de alta, en rojo. Los días de aviso quedaron en
+  una sola definición del backend (`socios.py`, el dashboard la importa). Verificado corriendo la
+  función real sobre SQLite en memoria (7 casos, todos iguales a la grilla); falta verlo en
+  pantalla, **con el backend reiniciado** (uvicorn corre sin `--reload`).
 - **Horarios y turnos (PWA + Flet):** en Actividades, el horario semanal (crear con
   profesor, dar de baja, regenerar) y la agenda de 7 días con los anotados de cada
   turno y cancelar. Con un horario cargado deberían aparecer turnos en "Mis clases"
@@ -56,7 +69,8 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
 - **Sin cobros por adelantado** (backend, PWA y Flet): Cobros muestra "se puede renovar
   desde el X" en vez del botón; Recepción de Flet sólo ofrece "Cobrar cuota" cuando se
   puede; "Mi cuota" dice desde cuándo renovar; el combo cuota + abono sólo aparece sin
-  cuota vigente. Probado por API (rechazos 409 y los tres casos de la regla).
+  cuota vigente. Probado por API (rechazos 409 y los tres casos de la regla). **Ojo: cobrar
+  ese combo da 500** (ver hallazgos de B-05).
 - **Baja programada** (backend, PWA y Flet): con la cuota paga la baja corre desde el
   día siguiente al vencimiento, se ve "Baja el dd/mm" en la grilla de Socios y en Mi
   cuota, y se puede anular. Probado a nivel base (programar, bloqueo de renovación y
@@ -64,6 +78,38 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   El personal también puede **dar de baja ahora** (al vencer o ahora en el modal de la
   PWA, casilla en Flet; con una baja programada, la adelanta). Probado llamando al
   endpoint en una transacción descartada.
+- **Usuarios: los cinco arreglos de B-04** (backend, PWA y Flet). (1) A un **empleado dado de
+  baja** no se le crea una cuenta nueva: no aparece entre los candidatos y el alta da 409; se
+  reactiva desde Personal (antes entraba con su rol y veía a todos los socios). (2) El **nombre
+  de usuario** se guarda y se compara en minúsculas (login, cambio de clave, edición y seeder):
+  una cuenta renombrada `Mario.DJ` ya no queda afuera de Flet; renombrar muda la traba por
+  intentos. (3) El **mail** de Usuarios pasa por `_email_valido()`, y ese validador corre ANTES
+  que `EmailStr` en todos los esquemas (`mode="before"`): el error sale siempre en castellano y
+  el mail siempre en minúsculas; y a un empleado no se le puede dejar sin mail ni teléfono. (4)
+  El Dueño ya no ve "Desactivar" sobre su propia cuenta, y una cuenta **bloqueada** ofrece
+  Desbloquear y Desactivar (antes había que destrabarla para apagarla). (5) **Crear una cuenta**
+  abre el panel de entrega con mail y WhatsApp, como el reseteo (la lista de candidatos trae el
+  teléfono). Probado por HTTP contra un PostgreSQL descartable y Flet con estado simulado; falta
+  en pantalla, **con el backend reiniciado**.
+- **Edición y cambio de rol de empleados** (backend, PWA y Flet). Editar con el mismo rol
+  **sólo toca los campos que vinieron** (`model_fields_set`, igual que el socio): antes
+  editarle el teléfono a un entrenador desde la PWA le borraba título y matrícula, desde
+  Flet la especialidad, y a una nutricionista la PWA le mudaba la matrícula al título. La
+  PWA manda sólo el campo que muestra, precargado con la columna exacta
+  (`detalleEditable()`); Flet suma el campo Especialidad. El cambio de rol revisa todo lo
+  que apunta al rol viejo y responde 409 con el motivo en vez de un 500 (ver Menores). Y el
+  selector de nutricionistas se recorta a la propia, como el de entrenadores (antes la PWA
+  preseleccionaba a otra y la dieta nueva daba 403). Probado con las funciones reales contra
+  un PostgreSQL descartable y el diálogo de Flet auditado armándolo con estado simulado;
+  falta en pantalla, **con el backend reiniciado**.
+- **La baja de un entrenador finaliza sus asignaciones activas** (backend): el socio deja
+  de verlo en "Mi entrenador"; las ya finalizadas conservan su fecha y reactivarlo no las
+  reabre. Las confirmaciones de baja de Personal (PWA y Flet) lo avisan. Probado con la
+  función real contra un PostgreSQL local descartable; falta en pantalla, **con el backend
+  reiniciado**.
+- **Confirmaciones sin "Auditoría"** (PWA): Personal, Usuarios, Rutinas y Nutrición
+  prometían *"queda registrada en Auditoría"* y no hay auditoría. Ahora dicen lo que pasa
+  (Rutinas y Nutrición, con el texto de sus gemelas de Flet). Compila.
 - **Borrar una cuenta de acceso** (`DELETE /usuarios/{id}`, PWA y Flet): borra sólo la
   cuenta; la persona y su historial quedan y se le puede crear otra.
   `Asistencia.id_registrado_por` pasa a NULL. Nadie borra la propia, sólo un Dueño
@@ -71,9 +117,11 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
 - **Los 4 menores de la tanda** (backend, PWA y Flet):
   **Homónimos:** `ProfesorActividadOut` suma `dni` y `legajo`, y la asignación y el
   selector del horario muestran "Legajo X" (o el DNI si no tiene). Verificado por API.
-  **Profesor en Flet:** entraba y caía en el Dashboard que no puede ver, porque
-  `primera_seccion()` da None y el fallback lo mandaba igual; ahora le sale
-  `SinSeccionesView` diciéndole que su pantalla está en la PWA.
+  **Profesor en Flet:** entra y ve `SinSeccionesView` ("tu pantalla está en la app del
+  celular"). Hasta el 26/09 el login lo frenaba antes con el mensaje de los socios; ahora
+  `ROLES_SIN_SECCIONES_QUE_ENTRAN` (`app/permisos.py`) lo deja pasar y el Socio sigue afuera.
+  Y el alta de Flet ya le crea cuenta (mandaba `crear_cuenta = rol != "Profesor"`).
+  Verificado armando la carga real con una sesión de profesor simulada; falta en pantalla.
   **Cambiar el profesor de un horario ya creado:** `PUT /actividades/horarios/{id}/profesor`,
   con la misma validación que el alta. Arrastra a los turnos futuros HABILITADOS (de ahí
   sale "Mis clases"); los pasados y los cancelados no se tocan. Probado contra la base
@@ -142,24 +190,159 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   llegada, los vencidos recientes, búsqueda por DNI con la cuota y el próximo turno
   resueltos, y fichar o cobrar sin salir de la pantalla. El dueño lo quiere también en
   la web. **El backend ya está entero** (`GET /recepcion/panel`, `/recepcion/turnos/{id}`
-  y `/recepcion/buscar`, sección ASISTENCIA) y la PWA ya consume dos de esos endpoints
-  en `AgendaTurnos`, así que falta la pantalla: ruta nueva, ítem de menú y la matriz de
-  permisos en sus tres copias (hoy `RECEPCION` sólo existe en la de Flet).
-- **Masterclass del código, sin escribir.** El dueño quiere una explicación completa del
-  código a nivel de cátedra de maestría: conceptos generales primero y después, proceso
-  por proceso, qué archivo y qué rango de líneas lo implementa en las tres capas. El
-  prompt ya está escrito y acordado en **`PROMPT-ZARPADO.md`** (raíz). Define cuatro
-  partes —A0 cimientos (14 capítulos), A el sistema (12 + glosario + mapa de conexiones),
-  B los 173 procesos y C los 8 subsistemas que no cuelgan de ningún endpoint— y, sobre
-  todo, el método: explicar cada concepto por el problema que lo originó, bajar de capa
-  hasta un piso declarado por tema (una tabla con 16), volver a subir hasta código de
-  este repo, **una sola explicación por concepto** (el resto son enlaces), conexiones
-  como punteros de una línea e ingeniería inversa del código hacia la decisión
-  estratégica. Más la plantilla obligatoria de cada proceso y la regla de que todo rango
-  de líneas se verifica abriendo el archivo. Los entregables van a `docs/masterclass/`,
-  que **todavía no existe**.
+  y `/recepcion/buscar`, sección ASISTENCIA). La PWA consume **uno solo**,
+  `/recepcion/turnos/{id}` (`getDetalleTurno` en `turnosService.ts`, usado por
+  `AgendaTurnos`); el panel y la búsqueda no los llama nadie todavía. Falta la pantalla:
+  ruta nueva, ítem de menú, los servicios de panel y búsqueda, y la matriz de permisos en
+  sus tres copias (hoy `RECEPCION` sólo existe en la de Flet).
+- **Masterclass del código: Partes A0 y A cerradas, B en curso (B-01 a B-05), C sin escribir.** El dueño quiere
+  una explicación completa del código a nivel de cátedra de maestría: conceptos generales
+  primero y después, proceso por proceso, qué archivo y qué rango de líneas lo implementa en
+  las tres capas. El prompt está en **`PROMPT-ZARPADO.md`** (raíz): cuatro partes —A0
+  cimientos, A el sistema, B los 173 procesos, C los 8 subsistemas que no cuelgan de ningún
+  endpoint— y el método (cada concepto por el problema que lo originó, bajar hasta un piso
+  declarado, volver al código, **una sola explicación por concepto**, conexiones de una línea,
+  ingeniería inversa), más la plantilla de cada proceso de B. Los entregables van a
+  `docs/masterclass/`.
+  **Hecho:** los 26 capítulos de A0 y A, el glosario (`A-98`: 144 conceptos, remisiones y
+  32 patrones con nombre), el mapa de conexiones (`A-99`; sus notas de mantenimiento dicen
+  qué semillas del contrato se corrigieron), el índice (`00-indice.md`, con la tabla de
+  ruteo) y el paso de coherencia de la sección 11 del prompt. **De la Parte B: B-01**
+  (Acceso y sesión, 1 a 5), que fija la forma de los demás —la plantilla de cada proceso, las
+  tablas cruzadas contra la línea DFD y una nota única sobre el 403 de CSRF, que ninguna
+  línea del archivo de procesos nombra—, **B-02** (Socios, 6 a 28), que abre con las piezas
+  comunes de la sección y explica V-10, **B-03** (Personal, 29 a 37), que además explica
+  qué ve la pantalla con un 500 (proceso 36; lo cita A-04), y **B-04** (Usuarios y cuentas,
+  38 a 45), que explica por qué el validador del mail corre antes que `EmailStr` (lo cita B-02), y
+  **B-05** (Cobros y pagos, 46 a 51), que se apoya en A-02 y A-04 para no repetir el cobro.
+  **Lo que sigue es B-06 (Asistencia, 52 a 56)**, y así hasta B-15; después C. Todo capítulo
+  de B cierra con su "Con qué se conecta" y agrega sus conexiones nuevas al mapa: **una
+  conexión va en los dos lugares, nunca en uno solo**.
+  **Se escriben de a uno y directamente, sin workflows en paralelo:** el dueño lo decidió
+  por costo, después de que una corrida de 30 agentes gastara 2,2M tokens y entregara sólo
+  el contrato. Los workflows de `.claude/workflows/` quedaron de ese intento: no
+  relanzarlos.
+  **Herramientas, fuera del repo**, en el scratchpad de la sesión `0ed151dd-…`
+  (`%TEMP%/claude/D--OlimpOs/0ed151dd-21e2-452f-8c62-06065f5b0e32/scratchpad`): el
+  **contrato de vocabulario** (`CONTRATO-VOCABULARIO.md`: 144 conceptos con un único dueño,
+  los nombres de los 52 archivos y los nombres canónicos) y, en `slug/`, los verificadores
+  que se corren después de cada capítulo: `anclas.mjs` (anclas contra `github-slugger`),
+  `citas.mjs` (cada cita de código), `tablas_b.mjs` (rango y símbolo de cada fila de las
+  tablas de B), `rango_simbolo.mjs B-0X-….md` (que el símbolo de cada fila caiga adentro de su
+  rango), `coherencia.mjs` (enlaces y encabezados) y los generadores: el glosario
+  (`glosario_datos.mjs` + `node glosario_generar.mjs && node glosario_armar.mjs`) y el mapa
+  (`mapa_datos.mjs` + `node mapa_generar.mjs && node mapa_armar.mjs`, con los totales
+  calculados). Si el scratchpad no está, hay que regenerar el
+  contrato antes de escribir. **Anclas:** GitHub las arma **conservando las tildes y la ñ**
+  (`#transacción-…`), y un símbolo como `≠` deja doble guion.
+  **Lo que depende de cómo PostgreSQL aplica una restricción se corre, no se lee**, en un
+  Postgres local descartable: esta máquina tiene PostgreSQL 17 en `D:\PostgreSQL`; `initdb` en
+  el scratchpad, un puerto propio, `db/schema.sql`, y las funciones del router llamadas
+  directamente con `DATABASE_URL` apuntando ahí **antes** de importar el backend. Nunca Neon, y
+  el clúster se borra al terminar. B-03 lo usó para seis hallazgos. B-04 fue más lejos: **por
+  HTTP**, con el `TestClient` de FastAPI contra la app real (sin el `with`, no corre el
+  arranque). `httpx` no está en el venv y no se instala ahí: vive en
+  `pruebas_pg/pylib` del scratchpad de herramientas, sumado AL FINAL de `sys.path`;
+  `pruebas_pg/usuarios_http_pg.py` y `usuarios_arreglos_pg.py` son los moldes. Cuando se arregla
+  código que la masterclass cita por línea, `pruebas_pg/remapear_citas2.py <copia de antes>`
+  recalcula las citas de todos los capítulos (guardar la copia ANTES de editar); las referencias
+  en texto plano ("línea 529", "(134-136)") no las toca y hay que buscarlas aparte.
+- **Hallazgos de código que salieron escribiendo la masterclass, pendientes de decisión**
+  (cada uno quedó explicado en su capítulo como nota marcada; ninguno se tocó):
+  - **`gestionDeudas` no protege nada:** está en la matriz en sus tres copias y ningún
+    endpoint la exige (0 usos), porque no existe la deuda. Y `ACCIONES_SIN_PANTALLA` de
+    `PermisosPanel.tsx` le dice al dueño que `gestionPromociones` y `gestionTurnos` no se
+    aplican, cuando se exigen en 8 endpoints cada una. Arreglarlo toca las tres copias de la
+    matriz y `check_permisos.py` (A-08).
+  - **Los diálogos de Flet nunca salen de `page.overlay`:** `close_dialog()` sólo los oculta,
+    así que se acumulan en la PC del mostrador. Flet 0.84 trae `page.show_dialog()`, que sí
+    los saca, pero la técnica de auditar diálogos leyendo `page.overlay` depende de la forma
+    actual (A0-13).
+  - **La PWA no muestra el aviso al fichar:** `registrarAsistenciaManual()`
+    (`services/actividadService.ts`) se queda sólo con `asistencia` y descarta `advertencia`,
+    `permitido`, `mensaje`, `clase_acreditada` y `turno_perdido`, y `AsistenciaView` saca
+    siempre un aviso verde propio. Un socio con la cuota vencida ficha y el mostrador ve verde,
+    contra *"se muestra un aviso"* de `CLAUDE.md`. Flet sí lo muestra, en ámbar (A-01).
+  - **Menores de B-01:** el largo mínimo de la contraseña nueva responde en inglés
+    (*"String should have at least 8 characters"*, lo arma Pydantic), tapado porque las dos
+    apps controlan el largo antes. Y la línea DFD del login no nombra su 400 ni su 429.
+  - **La PWA registra todas las bajas del mostrador como `ADMINISTRATIVA`**, sin preguntar
+    el tipo ni el motivo (`sociosService.ts`, `darDeBajaSocio()`); Flet pregunta los dos, con
+    voluntaria por defecto. Como la voluntaria deja viva la cuenta y la administrativa la
+    apaga, el socio que se va por su cuenta conserva la app si lo da de baja Flet y la pierde
+    si lo da de baja la PWA, que es la referencia (B-02, proceso 13).
+  - **Flet sugiere cargar lesiones en `observaciones`** (*"Lesiones, restricciones..."*),
+    un campo que el Recepcionista sí ve; la PWA dice lo contrario, *"las lesiones y
+    condiciones van en la ficha médica"* (B-02, proceso 7).
+  - **El alta que reusa una persona** (un empleado que se hace socio) descarta sin aviso la
+    fecha de nacimiento, el domicilio y el contacto de emergencia del formulario, y agrega el
+    teléfono como principal sin desmarcar el que tenía: la ficha queda con dos principales.
+    Y el comentario del reuso cita "alguien que se dio de baja y vuelve", que en realidad
+    recibe un 409: el que vuelve se reactiva (B-02, proceso 7).
+  - **La baja inmediata no cierra la pausa en curso:** la membresía se cancela pero su
+    `Congelamiento` queda `ACTIVO`, y el portal lo encontraría como pausa vigente si el socio
+    se reactiva y paga antes de la fecha de fin de esa pausa (B-02, proceso 13).
+  - **Quién entrena a quién:** `CLAUDE.md` dice que lo deciden el Dueño y el Recepcionista;
+    el código deja además que el Entrenador se asigne o se suelte a sí mismo (`socios.py`,
+    `GESTION_RUTINAS`). Decidir cuál rige y alinear el otro (B-02, proceso 19).
+  - **Menores de B-02:** `GET /socios/entrenadores/{id}/socios` no tiene ningún cliente
+    (su docstring dice que lo usa el entrenador, y no hay pantalla de "mis socios"); editar
+    un teléfono o un contacto no controla el número repetido (hoy inalcanzable: las pantallas
+    sólo usan el `PUT` para marcar el principal); vaciar el teléfono en la edición de la
+    ficha borra el principal sin ascender a otro.
+  - **Un profesor que tuvo un turno no se puede dar de baja** (500, corrido): la baja borra su
+    `Profesor_Actividad`, y las claves compuestas `fk_horario_profesor_habilitado` y
+    `fk_turno_profesor_habilitado` lo impiden mientras un horario o un turno —y los pasados
+    no se borran nunca— use ese par. Nada queda a medias, pero la baja no ocurre.
+    `desasignar_profesor()` de Actividades tiene el mismo choque. Decidir qué hace la baja con
+    la habilitación (B-03, proceso 36).
+  - **Menores de B-03:** el `motivo` de la baja de un empleado viaja en el pedido pero no
+    lo pide ninguna pantalla ni se guarda; la grilla de personal no carga Profesor, cuenta ni franja (una
+    consulta más por empleado); en Flet el subtítulo cuenta a los de baja como activos, el chip
+    dice "Turno —" a quien no es recepcionista, el DNI se puede tipear en la edición y se
+    descarta, y un teléfono no se puede quitar; el alta que reusa a un ex socio conserva su
+    cuenta aunque esté apagada; reactivar borra la fecha de egreso y no devuelve las
+    habilitaciones; el docstring de `personal.py` llama "estado válido" a un empleado sin rol,
+    que la base rechaza.
+  - **La cuenta de un socio dado de baja por mora o administrativa se puede volver a prender
+    desde Usuarios** (o crearle una nueva) sin reactivarlo como socio. No se tocó porque
+    depende del tipo de baja: la voluntaria le deja la cuenta viva a propósito. Decidir si
+    Usuarios tiene que frenar las otras dos (B-04, proceso 45).
+  - **Cobrar la cuota junto con un abono de actividad da 500, siempre** (corrido, por HTTP):
+    `schemas.py` define DOS clases `InscripcionOut`; la segunda (Actividades, 2026-08-11)
+    pisa a la primera para `cobros.py`, que la arma con ocho campos de los catorce que exige.
+    No queda nada escrito. Las dos apps ofrecen ese combo. El arreglo es renombrar la primera
+    y usarla en `cobros.py` (B-05, proceso 46).
+  - **Ninguna pantalla anula un pago**: `anularPago()` (PWA) y `anular_pago()` (Flet) existen
+    y no los llama ninguna vista, así que "corregir un cobro", uno de los cuatro casos de la
+    caja, sólo se puede por API. Y anular cancela la membresía pero deja ACTIVO el abono de
+    actividad cobrado en el mismo pago (corrido) (B-05, proceso 47).
+  - **Los planes de membresía no se administran desde ninguna app**: el alta existe en la API
+    sin pantalla, y editar el precio o dar de baja un plan no existe en ningún lado. Cambiar
+    un precio exige editar la base (B-05, proceso 50).
+  - **Un reembolso de Mercado Pago no le quita la membresía al socio** (corrido): el pago
+    pasa a `REEMBOLSADO` y la membresía sigue `ACTIVA`; anular en el mostrador sí la cancela.
+    Hoy no se manifiesta porque Mercado Pago no está conectado (B-05, proceso 51).
+  - **Menores de B-05:** el nombre duplicado de un plan se compara con `ilike` y el `_` hace
+    de comodín (corrido: "Pase_libre" choca con "PaseXlibre"); el pago online confirmado sin
+    membresía sólo queda en un `print`; las dos apps siguen armando "deudas" que llegan
+    vacías; la PWA tiene funciones de Cobros que nadie usa y comentarios viejos (deudas en
+    `anularPago`, `id_membresia NOT NULL` en el combo, el selector del alta en
+    `listarTiposMembresia`); Flet no filtra los planes dados de baja.
+  - **Menores de B-04:** el cartel "exclusiva para administradores" lo ve el Recepcionista,
+    que usa la sección; el rol que se muestra es el primero de la lista, así que un socio
+    contratado sale "Socio"; el comentario de la PWA que dice "no hay backend de email"
+    (`UsuariosView.tsx`); contar los dueños al borrar una cuenta de dueño deriva roles sin
+    carga anticipada.
 
 ### 3. Menores
+- **Cambiar el rol de un empleado con historial** (anotado a pedido del dueño, para
+  resolver a futuro): un entrenador que alguna vez tuvo un socio a cargo —aunque ya haya
+  terminado— o horarios o turnos a su nombre, y un profesor con horarios o clases, **no
+  pueden cambiar de rol**. Hoy el sistema lo frena con un 409 que lo explica (antes era un
+  500). La causa: cambiar de rol BORRA la fila del rol viejo, y ese historial apunta a ella
+  y no se borra nunca. El camino sería conservar la fila vieja, lo que obliga a decidir cómo
+  se deriva el rol de un empleado con dos filas de subtipo (B-03, proceso 35).
 - **Contador de repeticiones** (el único que el dueño dejó afuera de la tanda):
   rediseñar el overlay (las líneas verdes del esqueleto son sólo para afinar) y
   seguir ajustando umbrales probando en el celular.

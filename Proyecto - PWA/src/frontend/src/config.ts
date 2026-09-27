@@ -634,10 +634,10 @@ export function puedeAccion(roles: string[], accion: keyof AccionesRol): boolean
 
 /**
  * Regla de fila del panel de Usuarios: nadie fuera del Dueño puede editar
- * ni dar de baja/reactivar SU PROPIA cuenta desde acá — se banearía o se
- * cambiaría el usuario a sí mismo sin que nadie más lo viera venir. El
- * Dueño queda exento porque es la autoridad última del sistema, no tiene
- * sentido restringirlo a él también.
+ * ni dar de baja/reactivar SU PROPIA cuenta desde acá. El Dueño queda exento
+ * para EDITARSE; desactivarse o borrarse no lo puede nadie, ni él (el backend
+ * responde 403), y eso lo mira UsuarioRow con `esLaMisma`, aparte de esta
+ * regla.
  *
  * "Resetear contraseña" no pasa por esta regla a propósito: no hay riesgo
  * en resetearse la propia (es, de hecho, lo único que casi cualquier
