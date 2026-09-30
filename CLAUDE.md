@@ -110,8 +110,11 @@ D:\OlimpOs\
 
 - **Roles (6): dueno, recepcionista, entrenador, nutricionista, profesor, socio.** No
   son una columna: se **derivan** de las tablas subtipo (`roles_de_persona` en
-  `models.py`). `id_socio` e `id_profesor` viajan firmados en el JWT, así que los
-  endpoints "mis cosas" nunca aceptan ids por parámetro.
+  `models.py`), y **se acumulan**: los subtipos son SOLAPADOS, así que un empleado
+  puede ser entrenador y profesor a la vez. Lo que decide qué es alguien HOY es la
+  bandera `activo` de cada fila de subtipo, no que la fila exista. `id_socio` e
+  `id_profesor` viajan firmados en el JWT, así que los endpoints "mis cosas" nunca
+  aceptan ids por parámetro.
 - **Permisos: una matriz en TRES copias** (`backend/permisos.py`, `app/permisos.py` y
   `config.ts`) que `backend/check_permisos.py` verifica. Hay secciones con nivel
   NINGUNO, LECTURA o TOTAL, más acciones sueltas (`verIngresos`, `gestionPromociones`,
@@ -202,10 +205,18 @@ D:\OlimpOs\
   ausente se conserva, uno vacío borra. Sin eso, un formulario al que le falte un campo
   lo borra en silencio. **La misma regla vale para los datos del rol de un empleado**
   (título, especialidad, matrícula, franja): la PWA muestra uno por rol y Flet todos.
-- **Cambiar el rol de un empleado con historial en ese rol** (socios que tuvo a cargo,
-  horarios o turnos a su nombre) **no se puede**: el cambio borra la fila del rol viejo y
-  el historial apunta a ella. Responde 409 con el motivo. Es un límite conocido, anotado
-  para resolver a futuro (ver `docs/ESTADO-ACTUAL.md`).
+- **Un rol de empleado se APAGA, no se borra, y se pueden tener varios.** La fila de
+  `Entrenador` / `Nutricionista` / `Profesor` / `Recepcionista` es el destino de claves
+  foráneas sin ON DELETE (rutinas, socios a cargo, dietas, horarios, turnos y, por la
+  cadena `Turno` → `Reserva`, las clases consumidas y su pago). Borrarla no borra el rol:
+  borra el trabajo hecho en ese rol. Por eso queda con `activo=false` sosteniendo su
+  historial, y `roles_de_persona` mira ese flag. Consecuencias: el alta y la edición
+  reciben una **lista** de roles (al menos uno) y las dos apps los eligen con **casillas**;
+  volver a un rol viejo **reactiva** su fila con sus datos intactos; y **sacarle
+  Entrenador FINALIZA sus asignaciones activas** (el socio deja de verlo en "Mi
+  entrenador"; la rutina que le armó le queda asignada igual), el mismo cierre que la
+  baja del empleado. Hasta el 2026-09-29 el cambio de rol borraba la fila y respondía 409
+  a cualquiera con historial.
 - **Datos personales del socio** (fecha de nacimiento, domicilio, contacto de
   emergencia) se cargan en el **alta y la edición**, nunca al cobrar. Los contactos de
   emergencia se llaman desde un botón de la grilla, que ven todos los que ven
@@ -227,11 +238,13 @@ D:\OlimpOs\
   administrativa apaga la cuenta (la voluntaria no) y reactivar al socio la
   devuelve. En empleados el acople es total, porque ahí el acceso se justifica
   en el puesto.
-- **Bajas lógicas y reversibles.** Dar de baja un empleado lo desasigna de sus
-  actividades, pero no toca los turnos ya programados (es la intención: con un horario
-  o un turno a su nombre, hoy la base lo rechaza; ver `docs/ESTADO-ACTUAL.md`). Si es
-  entrenador, **finaliza sus asignaciones activas** (el socio deja de verlo en "Mi
-  entrenador"); reactivarlo no las reabre. **Usuarios no reactiva la
+- **Bajas lógicas y reversibles.** Dar de baja un empleado **no le toca las
+  habilitaciones para dictar actividades**: los cuatro lugares que ofrecen profesores ya
+  filtran por `Empleado.activo`, así que de baja no figura en ninguna lista, y al volver
+  sus actividades vuelven con él. Antes se le **borraban**, lo que además de innecesario
+  era imposible: con un turno dictado la base rechazaba el borrado y la baja entera daba
+  500. Si es entrenador, **finaliza sus asignaciones activas** (el socio deja de verlo en
+  "Mi entrenador"); reactivarlo no las reabre. **Usuarios no reactiva la
   cuenta de alguien dado de baja** (eso se hace desde Personal, y tampoco le crea una cuenta
   NUEVA a un empleado dado de baja) **ni crea personas**:
   la cuenta nace con el alta en Socios o Personal.
@@ -261,6 +274,13 @@ D:\OlimpOs\
 - **Clase suelta = `Plan_Actividad` con `tipo_limite=CLASE_SUELTA`.** Las clases
   restantes **se cuentan** en `Reserva`, no se guardan. Topes: 7 por semana, 31 por
   mes, 1 la suelta; cupo por turno de 1 a 100.
+- **Sacar a un profesor de una actividad lo APAGA, no lo borra.** `Profesor_Actividad`
+  hace dos trabajos con una sola fila: es el permiso para programarle esa actividad y, a la
+  vez, el destino de las claves compuestas que hacen legítimo cada horario y cada turno que
+  ya dictó. Las claves no miran fechas y los turnos nunca se borran, así que borrar la fila
+  era imposible desde la primera clase dictada. Con `activo`, sacarlo siempre funciona, lo
+  que dictó queda en pie, y **volver a habilitarlo reactiva la misma fila** en vez de crear
+  otra. Sacarlo dos veces da 404.
 - **Sin horario no hay turnos.** Los turnos los genera el backend (4 semanas) desde
   `Horario_Actividad`, que se carga en Actividades con su **profesor** (tiene que estar
   asignado a esa actividad): de ahí salen "Mis clases", "Mis turnos" y la agenda del
@@ -330,6 +350,12 @@ D:\OlimpOs\
   no borrar esas notas.
 - Soft delete con los dos caminos (baja y reactivación). Al cambiar el estado de una
   entidad, decidir qué pasa con todo lo que la referencia.
+- **Crear un horario en una prueba escribe turnos de OTROS horarios.** `generar_turnos`
+  (`turnos.py`) no genera sólo para el horario nuevo: recorre todos los activos en una
+  ventana móvil de 28 días desde hoy. Con horarios ya cargados, eso crea los turnos de la
+  semana que entró en la ventana desde la última corrida. Son legítimos —el generador es
+  idempotente y los volvería a crear solo— pero no estaban antes de la prueba: hay que
+  anotar el último `id_turno` ANTES y borrar los nuevos que no tengan reserva.
 - **Una "transacción descartada" NO protege la base si lo que se prueba hace su
   propio `commit()`.** Casi todos los endpoints commitean adentro: llamarlos
   desde un `db.begin()` y cerrar con `rollback()` no revierte nada —el commit

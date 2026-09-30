@@ -26,8 +26,14 @@ export interface UsuarioListado {
   email?: string;
   /** El principal. Para ofrecer las credenciales por WhatsApp si no hay mail. */
   telefono?: string;
+  /**
+   * El de mayor jerarquía, para las reglas que dependen de uno solo (nadie
+   * opera sobre la cuenta de un Dueño salvo otro Dueño).
+   */
   rol: RolValue;
   rolLabel: string;
+  /** TODOS, que es lo que la tabla muestra: los roles se acumulan. */
+  roles: { rol: RolValue; label: string }[];
   ultimoAcceso?: string;
   bloqueado: boolean;
   activo: boolean;
@@ -52,12 +58,22 @@ interface UsuarioApi {
 
 /**
  * El backend devuelve TODOS los roles de la persona, porque se acumulan: el
- * dueño que además entrena tiene ['dueno', 'socio']. La tabla muestra uno
- * solo, y el primero es el de mayor jerarquía por el orden en que
- * roles_de_persona los arma (dueño, socio, y después los de empleado).
+ * dueño que además entrena tiene ['dueno', 'socio'], y desde que los roles de
+ * empleado dejaron de ser excluyentes, un entrenador que también es profesor
+ * tiene los dos. La tabla los muestra todos (ver `rolesDe`); hasta el
+ * 2026-09-29 mostraba sólo el primero, así que a un socio contratado como
+ * entrenador se lo veía como "Socio" y nada más.
+ *
+ * Éste sigue existiendo para las reglas que necesitan UNO: el primero es el de
+ * mayor jerarquía por el orden en que roles_de_persona los arma (dueño, socio,
+ * y después los de empleado).
  */
 function rolPrincipal(roles: string[]): RolValue {
   return (roles[0] ?? 'socio') as RolValue;
+}
+
+function rolesDe(roles: string[]): { rol: RolValue; label: string }[] {
+  return roles.map((r) => ({ rol: r as RolValue, label: RolLabel[r as RolValue] ?? r }));
 }
 
 function estadoDe(u: UsuarioApi): EstadoUsuarioValue {
@@ -79,6 +95,7 @@ function aUsuarioListado(u: UsuarioApi): UsuarioListado {
     telefono: u.telefono ?? undefined,
     rol,
     rolLabel: RolLabel[rol] ?? rol,
+    roles: rolesDe(u.roles),
     ultimoAcceso: u.ultimo_acceso ?? undefined,
     bloqueado: u.bloqueado,
     activo: u.activo,

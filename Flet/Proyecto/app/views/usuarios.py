@@ -22,6 +22,11 @@ ROLE_CONFIG = {
     "recepcionista": ("Recepción",     Colors.ACCENT_CORAL, alpha(Colors.ACCENT_CORAL, 0.10), ft.Icons.SUPPORT_AGENT_ROUNDED),
     "nutricionista": ("Nutricionista", Colors.STATUS_WARN,  alpha(Colors.STATUS_WARN, 0.10),  ft.Icons.RESTAURANT_MENU_ROUNDED),
     "socio":         ("Socio",         Colors.INFO,         alpha(Colors.INFO, 0.10),         ft.Icons.PERSON_ROUNDED),
+    # Faltaba: la fila de un profesor decía "Sin rol" y la tarjeta de permisos
+    # de abajo —que se arma recorriendo este diccionario— no lo mostraba, aunque
+    # tiene rol de sesión desde el 2026-09-16 y PermisosPanel.tsx sí lo lista.
+    # Mismo ícono de calendario que usa la PWA para reconocerlo.
+    "profesor":      ("Profesor",      Colors.ACCENT_DIM,   alpha(Colors.ACCENT_DIM, 0.10),   ft.Icons.EVENT_AVAILABLE_ROUNDED),
 }
 
 # Secciones que ve cada rol, para la tarjeta informativa de abajo.
@@ -157,10 +162,39 @@ class UsuariosView:
 
         return body
 
+    def _chips_de_rol(self, roles: list[str]) -> list[ft.Control]:
+        """
+        Un chip por rol. En Column y no en Row(wrap=True): la trampa 8 de Flet
+        0.84 —wrap con contenido mixto adentro dibuja un bloque gris— y acá
+        además son a lo sumo tres o cuatro, que en columna se leen mejor.
+        """
+        if not roles:
+            roles = [None]
+        chips = []
+        for rol in roles:
+            label, color, bg, icono = ROLE_CONFIG.get(rol, self.SIN_ROL)
+            chips.append(ft.Row([
+                ft.Container(
+                    content=ft.Icon(icono, color=color, size=14),
+                    width=24, height=24, border_radius=6,
+                    bgcolor=bg, alignment=ft.Alignment.CENTER,
+                ),
+                ft.Text(label, color=Colors.TEXT_SECONDARY, size=13),
+            ], spacing=8))
+        return chips
+
+    SIN_ROL = ("Sin rol", Colors.TEXT_MUTED, Colors.BG_INPUT, ft.Icons.PERSON_ROUNDED)
+
     def _user_row(self, u: dict) -> ft.Container:
-        role_label, role_color, role_bg, role_icon = ROLE_CONFIG.get(
-            u["rol"], ("Sin rol", Colors.TEXT_MUTED, Colors.BG_INPUT, ft.Icons.PERSON_ROUNDED)
-        )
+        # TODOS los roles, no el primero. Se acumulan (un socio que trabaja de
+        # entrenador es las dos cosas, y desde que los roles de empleado dejaron
+        # de ser excluyentes puede ser entrenador y profesor), así que mostrar
+        # uno solo escondía la mitad de lo que esa cuenta puede hacer.
+        # Gemelo de UsuarioRow.tsx.
+        roles = u.get("roles") or []
+        # El color del avatar sale del rol de mayor jerarquía, que es el primero
+        # por el orden en que roles_de_persona los arma.
+        _l, role_color, _bg, _i = ROLE_CONFIG.get(u["rol"], self.SIN_ROL)
         # El nombre puede venir vacío; la inicial se saca del usuario en ese caso
         # para no reventar con un IndexError sobre una cadena vacía.
         etiqueta = u["nombre"] if u["nombre"] not in ("", "—") else u["usuario"]
@@ -306,14 +340,7 @@ class UsuariosView:
                     ], spacing=1, tight=True),
                 ], spacing=10, expand=3),
                 ft.Container(
-                    content=ft.Row([
-                        ft.Container(
-                            content=ft.Icon(role_icon, color=role_color, size=14),
-                            width=24, height=24, border_radius=6,
-                            bgcolor=role_bg, alignment=ft.Alignment.CENTER,
-                        ),
-                        ft.Text(role_label, color=Colors.TEXT_SECONDARY, size=13),
-                    ], spacing=8),
+                    content=ft.Column(self._chips_de_rol(roles), spacing=4, tight=True),
                     expand=2,
                 ),
                 ft.Container(

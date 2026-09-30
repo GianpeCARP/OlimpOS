@@ -251,6 +251,20 @@ class Entrenador(Base):
     titulo = Column(String(100))
     especialidad = Column(String(100))
     matricula = Column(String(50))
+    # UN ROL SE APAGA, NO SE BORRA
+    # ------------------------------
+    # Cambiar de rol borraba esta fila, y esta fila es el destino de claves
+    # foráneas sin ON DELETE: Rutina, Asignacion_Entrenador, Horario_Actividad
+    # y Turno apuntan acá. Borrarla no borra "el rol", borra el trabajo hecho
+    # en ese rol —y por la cadena Turno → Reserva, también las clases ya
+    # consumidas y su pago—. Por eso el DELETE fallaba y el cambio de rol
+    # respondía 409.
+    #
+    # Ahora la fila queda y este flag dice si la persona cumple HOY ese rol.
+    # `roles_de_persona` (abajo) mira el flag, no la existencia de la fila, así
+    # que un rol apagado no da sesión, ni permisos, ni aparece en ningún
+    # selector; lo único que sigue haciendo es sostener su historial.
+    activo = Column(Boolean, nullable=False, default=True, server_default=text("true"))
 
     empleado = relationship("Empleado", back_populates="entrenador")
 
@@ -262,6 +276,8 @@ class Nutricionista(Base):
     id_empleado = Column(Integer, ForeignKey("Empleado.id_empleado"), unique=True, nullable=False)
     titulo = Column(String(100))
     matricula = Column(String(50))
+    # Se apaga en vez de borrarse al cambiar de rol — ver Entrenador.activo.
+    activo = Column(Boolean, nullable=False, default=True, server_default=text("true"))
 
     empleado = relationship("Empleado", back_populates="nutricionista")
 
@@ -290,6 +306,8 @@ class Recepcionista(Base):
     # El turno de trabajo ahora es una FK al catálogo Franja_Laboral, no un
     # varchar libre: así 'Tarde' es una sola cosa y no 'tarde'/'Tarde'/'T'.
     id_franja_laboral = Column(Integer, ForeignKey("Franja_Laboral.id_franja_laboral"))
+    # Se apaga en vez de borrarse al cambiar de rol — ver Entrenador.activo.
+    activo = Column(Boolean, nullable=False, default=True, server_default=text("true"))
 
     empleado = relationship("Empleado", back_populates="recepcionista")
     franja = relationship("FranjaLaboral")
@@ -310,6 +328,8 @@ class Profesor(Base):
     id_empleado = Column(Integer, ForeignKey("Empleado.id_empleado"), unique=True, nullable=False)
     titulo = Column(String(100))
     especialidad = Column(String(100))
+    # Se apaga en vez de borrarse al cambiar de rol — ver Entrenador.activo.
+    activo = Column(Boolean, nullable=False, default=True, server_default=text("true"))
 
     empleado = relationship("Empleado", back_populates="profesor")
 
@@ -838,6 +858,18 @@ class ProfesorActividad(Base):
 
     id_profesor = Column(Integer, ForeignKey("Profesor.id_profesor"), primary_key=True)
     id_actividad = Column(Integer, ForeignKey("Actividad.id_actividad"), primary_key=True)
+    # LA HABILITACIÓN SE APAGA, NO SE BORRA
+    # -------------------------------------
+    # Esta fila hace dos trabajos: es el permiso para programarle la actividad
+    # y, a la vez, el destino de las FK compuestas que hacen legítimo cada
+    # horario y cada turno ya dictado a su nombre. Sacarlo de la actividad es
+    # sólo lo primero, pero borrar la fila se llevaba lo segundo, y las FK no
+    # miran fechas: con un turno dictado el par queda referenciado para siempre
+    # (los turnos se cancelan, no se borran) y el DELETE daba 500.
+    #
+    # Volver a habilitarlo REACTIVA esta fila: la misma habilitación, con su
+    # historia intacta, y no una nueva. Mismo criterio que Entrenador.activo.
+    activo = Column(Boolean, nullable=False, default=True, server_default=text("true"))
 
     profesor = relationship("Profesor")
     actividad = relationship("Actividad")
@@ -999,6 +1031,19 @@ class Asistencia(Base):
 # DERIVACIÓN DEL ROL
 # =============================================================================
 
+def rol_activo(fila) -> bool:
+    """
+    Si esa fila de subtipo existe Y está prendida.
+
+    Una sola función porque la pregunta se hace en seis lugares —acá, en los
+    selectores de personal, en `_entrenador_de_sesion`, en
+    `_nutricionista_de_sesion` y al firmar el `id_profesor` del JWT— y escrita
+    a mano en cada uno es cuestión de tiempo que alguno olvide el flag y deje
+    entrar a un rol apagado.
+    """
+    return fila is not None and bool(fila.activo)
+
+
 def roles_de_persona(persona: Persona) -> list[str]:
     """
     Devuelve los roles de sesión de una Persona, leyéndolos de las tablas de
@@ -1029,13 +1074,21 @@ def roles_de_persona(persona: Persona) -> list[str]:
 
     empleado = persona.empleado
     if empleado is not None:
-        if empleado.entrenador is not None:
+        # `is not None and .activo`, no sólo `is not None`: la fila de un rol
+        # NO se borra cuando la persona deja de cumplirlo (ver
+        # Entrenador.activo), porque todo su historial apunta a ella. La fila
+        # apagada existe para sostener ese historial y nada más: acá no cuenta.
+        #
+        # Los subtipos son SOLAPADOS a propósito (schema.sql): alguien puede
+        # tener varias filas prendidas a la vez y ser entrenador Y profesor. La
+        # lista devuelve todas, y la matriz de permisos ya las combina.
+        if rol_activo(empleado.entrenador):
             roles.append(Rol.ENTRENADOR)
-        if empleado.nutricionista is not None:
+        if rol_activo(empleado.nutricionista):
             roles.append(Rol.NUTRICIONISTA)
-        if empleado.recepcionista is not None:
+        if rol_activo(empleado.recepcionista):
             roles.append(Rol.RECEPCIONISTA)
-        if empleado.profesor is not None:
+        if rol_activo(empleado.profesor):
             roles.append(Rol.PROFESOR)
 
     return roles

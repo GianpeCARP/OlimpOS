@@ -6,12 +6,16 @@
 // fila. Esa traversal la hacía este archivo recorriendo arrays; ahora la hace
 // el servidor y el rol viaja resuelto en la respuesta.
 //
-// Se ganó algo concreto con la mudanza: la regla que impide cambiar el rol de
-// alguien que tiene rutinas o dietas a su nombre ahora corre del lado del
-// servidor. Antes vivía sólo acá, y su propio comentario advertía que "contra
-// el Postgres real el DELETE directamente fallaría por violación de FK" — o
-// sea, la regla existía en el mock pero nada la habría hecho valer en
-// producción.
+// Y SON VARIOS: LOS ROLES SE ACUMULAN
+// Los cuatro subtipos son SOLAPADOS en el esquema, así que la misma persona
+// puede ser entrenadora y profesora a la vez. Este archivo hablaba de `rol` en
+// singular porque el backend borraba la fila del rol viejo al cambiarlo —y con
+// eso se llevaba puesto el trabajo hecho en ese rol, así que cambiar de rol
+// respondía 409 a cualquiera con historial—. Desde el 2026-09-29 la fila se
+// apaga en vez de borrarse, y la API habla de `roles` y `detalles` en plural.
+//
+// Por eso la vieja regla "no se puede cambiar el rol de alguien con rutinas o
+// dietas a su nombre" ya no existe en ningún lado: no hay nada que romper.
 
 import type { RolEmpleadoValue, TurnoLaboralValue, EstadoEmpleadoValue } from '../config';
 import { EstadoEmpleado, RolEmpleado } from '../config';
@@ -30,32 +34,54 @@ export interface EmpleadoListado {
   iniciales: string;
   email?: string;
   telefono?: string;
-  rol: RolEmpleadoValue;
   /**
-   * Dato propio del rol, listo para mostrar: el turno del recepcionista, la
-   * especialidad del entrenador, el título del nutricionista. Undefined si
-   * ese empleado no lo tiene cargado (todas esas columnas son nullable).
+   * Todos los roles que la persona cumple HOY, en el orden en que los devuelve
+   * el backend. Puede tener más de uno; vacío sólo si se lo cargó sin función
+   * asignada (el alta ya no lo permite).
    */
-  detalle?: string;
-  /** Solo los recepcionistas tienen turno — ver comentario de arriba. */
-  turno?: TurnoLaboralValue;
-  /** FK a la franja del recepcionista, para preseleccionar en el form. */
-  idFranjaLaboral?: number;
+  roles: RolEmpleadoValue[];
   /**
-   * Los datos del rol tal cual están en la base. `detalle` es para MOSTRAR
-   * (elige uno con fallback); para precargar el formulario hace falta el campo
-   * exacto, o se guardaría la matrícula como si fuera el título.
+   * Los datos propios de cada rol, indexados por rol. Cada uno en su casillero
+   * porque son columnas distintas en tablas distintas: la especialidad del
+   * entrenador y la del profesor no son el mismo dato, y aplanarlas hacía que
+   * una pisara a la otra.
    */
-  titulo?: string;
-  especialidad?: string;
-  matricula?: string;
+  detalles: Partial<Record<RolEmpleadoValue, DetalleRol>>;
   estado: EstadoEmpleadoValue;
   activo: boolean;
   fechaIngreso: string;
   tieneCuenta: boolean;
 }
 
+/**
+ * Los datos propios de UN rol, tal cual están en la base.
+ *
+ * `detalle` es para MOSTRAR (elige un campo con fallback); para precargar el
+ * formulario hacen falta los campos exactos, o se guardaría la matrícula como
+ * si fuera el título.
+ */
+export interface DetalleRol {
+  titulo?: string;
+  especialidad?: string;
+  matricula?: string;
+  /** Solo el recepcionista tiene franja: el nombre, para mostrar. */
+  turno?: TurnoLaboralValue;
+  /** Y su FK, para preseleccionar en el formulario. */
+  idFranjaLaboral?: number;
+  /** El campo que se muestra en el chip de la tarjeta, ya elegido. */
+  detalle?: string;
+}
+
 /** La forma exacta en que responde el backend. */
+interface DetalleRolApi {
+  rol: string;
+  titulo: string | null;
+  especialidad: string | null;
+  matricula: string | null;
+  turno_laboral: string | null;      // nombre de la franja (para mostrar)
+  id_franja_laboral: number | null;  // FK, para preseleccionar en el form
+}
+
 interface EmpleadoApi {
   id_empleado: number;
   id_persona: number;
@@ -63,12 +89,8 @@ interface EmpleadoApi {
   fecha_ingreso: string;
   fecha_egreso: string | null;
   activo: boolean;
-  rol: string | null;
-  titulo: string | null;
-  especialidad: string | null;
-  matricula: string | null;
-  turno_laboral: string | null;      // nombre de la franja (para mostrar)
-  id_franja_laboral: number | null;  // FK, para preseleccionar en el form
+  roles: string[];
+  detalles: DetalleRolApi[];
   dni: string;
   nombre: string;
   apellido: string;
@@ -81,19 +103,19 @@ interface EmpleadoApi {
 }
 
 /**
- * El dato que la tarjeta muestra debajo del nombre. Cada rol tiene el suyo, y
+ * El dato que la tarjeta muestra al lado de cada rol. Cada rol tiene el suyo, y
  * por eso no se puede resolver con un solo campo: un recepcionista no tiene
  * especialidad y un entrenador no tiene turno.
  */
-function detalleDeRol(e: EmpleadoApi): string | undefined {
-  switch (e.rol) {
+function detalleDeRol(d: DetalleRolApi): string | undefined {
+  switch (d.rol) {
     case RolEmpleado.RECEPCIONISTA:
-      return e.turno_laboral ?? undefined;
+      return d.turno_laboral ?? undefined;
     case RolEmpleado.ENTRENADOR:
     case RolEmpleado.PROFESOR:
-      return e.especialidad ?? e.titulo ?? undefined;
+      return d.especialidad ?? d.titulo ?? undefined;
     case RolEmpleado.NUTRICIONISTA:
-      return e.titulo ?? e.matricula ?? undefined;
+      return d.titulo ?? d.matricula ?? undefined;
     default:
       return undefined;
   }
@@ -115,16 +137,20 @@ function aEmpleadoListado(e: EmpleadoApi): EmpleadoListado {
     iniciales: iniciales(e.nombre, e.apellido),
     email: e.email ?? undefined,
     telefono: e.telefono ?? undefined,
-    // Un empleado sin fila en ninguna hija es alguien cargado a quien
-    // todavía no se le asignó función. Se lo muestra como Recepcionista
-    // —el rol más genérico— en vez de romper la tarjeta con undefined.
-    rol: (e.rol ?? RolEmpleado.RECEPCIONISTA) as RolEmpleadoValue,
-    detalle: detalleDeRol(e),
-    turno: (e.turno_laboral ?? undefined) as TurnoLaboralValue | undefined,
-    idFranjaLaboral: e.id_franja_laboral ?? undefined,
-    titulo: e.titulo ?? undefined,
-    especialidad: e.especialidad ?? undefined,
-    matricula: e.matricula ?? undefined,
+    roles: e.roles as RolEmpleadoValue[],
+    detalles: Object.fromEntries(
+      e.detalles.map((d) => [
+        d.rol,
+        {
+          titulo: d.titulo ?? undefined,
+          especialidad: d.especialidad ?? undefined,
+          matricula: d.matricula ?? undefined,
+          turno: (d.turno_laboral ?? undefined) as TurnoLaboralValue | undefined,
+          idFranjaLaboral: d.id_franja_laboral ?? undefined,
+          detalle: detalleDeRol(d),
+        },
+      ]),
+    ),
     estado: e.activo ? EstadoEmpleado.ACTIVO : EstadoEmpleado.INACTIVO,
     activo: e.activo,
     fechaIngreso: e.fecha_ingreso,
@@ -150,55 +176,91 @@ export interface EmpleadoInput {
   apellido: string;
   email?: string;
   telefono?: string;
-  rol: RolEmpleadoValue;
-  /** Turno (recepcionista), especialidad (entrenador) o título (nutricionista). */
-  detalle?: string;
+  /** Todos los roles que tienen que quedar prendidos. Al menos uno. */
+  roles: RolEmpleadoValue[];
+  /** Entrenador y Profesor. */
+  especialidad?: string;
+  /** Nutricionista. */
+  titulo?: string;
+  /** Recepcionista: el id de la franja, tal como lo da el <select>. */
+  idFranjaLaboral?: string;
 }
 
 /**
- * Pone el campo único `detalle` del formulario en la columna que corresponde
- * a cada rol, y SÓLO en esa.
+ * Qué campo propio pide cada rol en el formulario.
  *
- * El formulario tiene UN campo porque para el usuario es "el dato de este
- * rol", pero en el esquema son columnas distintas en tablas distintas. La
- * traducción vive acá y no en el componente para que el formulario no tenga
- * que saber cómo está modelada la base.
- *
- * Los campos que el formulario no muestra NO viajan: el backend conserva lo
- * que no viene en el pedido (editar_empleado). Antes se mandaban en null, y
- * editarle el teléfono a un entrenador le borraba el título y la matrícula
- * cargados desde Flet.
+ * La base guarda más columnas que las que se muestran —un Entrenador tiene
+ * título, especialidad y matrícula—, pero acá se pide UNA por rol: la que el
+ * mostrador realmente carga. Las otras las edita Flet, y el backend conserva
+ * todo campo que no venga en el pedido, así que mostrar menos no borra nada.
  */
-function repartirDetalle(rol: RolEmpleadoValue, detalle?: string) {
-  const valor = detalle?.trim() || null;
-  switch (rol) {
-    case RolEmpleado.RECEPCIONISTA:
-      // El turno del recepcionista ahora es una FK a Franja_Laboral: `detalle`
-      // trae el id de la franja elegida (ver listarFranjas y el formulario).
-      return { id_franja_laboral: valor ? Number(valor) : null };
-    case RolEmpleado.NUTRICIONISTA:
-      return { titulo: valor };
-    default: // Entrenador y Profesor
-      return { especialidad: valor };
-  }
+const CAMPO_DEL_ROL: Record<RolEmpleadoValue, 'especialidad' | 'titulo' | 'franja'> = {
+  [RolEmpleado.ENTRENADOR]: 'especialidad',
+  [RolEmpleado.PROFESOR]: 'especialidad',
+  [RolEmpleado.NUTRICIONISTA]: 'titulo',
+  [RolEmpleado.RECEPCIONISTA]: 'franja',
+};
+
+/**
+ * Los campos que hay que mostrar para un conjunto de roles: la UNIÓN de los
+ * que pide cada uno, sin repetir.
+ *
+ * Entrenador y Profesor piden los dos "Especialidad", y con dos inputs iguales
+ * en pantalla nadie sabría cuál es cuál. Va uno solo y su valor se escribe en
+ * las dos filas: es la misma especialidad de la misma persona, guardada dos
+ * veces porque son dos tablas.
+ */
+export function camposDeRoles(roles: RolEmpleadoValue[]): ('especialidad' | 'titulo' | 'franja')[] {
+  const orden = ['especialidad', 'titulo', 'franja'] as const;
+  const pedidos = new Set(roles.map((r) => CAMPO_DEL_ROL[r]));
+  return orden.filter((c) => pedidos.has(c));
 }
 
 /**
- * El valor con que el formulario precarga el campo del rol: la columna exacta
- * que `repartirDetalle` va a escribir. No sirve `detalle`, que es el de la
- * tarjeta y cae a otra columna si la primera está vacía —a una nutricionista
- * con matrícula y sin título le precargaba la matrícula, y guardar la mudaba
- * al título—.
+ * Traduce los campos del formulario a las columnas del pedido, y manda SÓLO
+ * los que los roles elegidos usan.
+ *
+ * Lo que no viaja, el backend lo conserva (editar_empleado). Mandar todo
+ * siempre era lo que hacía que editarle el teléfono a un entrenador desde acá
+ * le borrara el título y la matrícula cargados desde Flet.
  */
-export function detalleEditable(e: EmpleadoListado): string {
-  switch (e.rol) {
-    case RolEmpleado.RECEPCIONISTA:
-      return e.idFranjaLaboral ? String(e.idFranjaLaboral) : '';
-    case RolEmpleado.NUTRICIONISTA:
-      return e.titulo ?? '';
-    default: // Entrenador y Profesor
-      return e.especialidad ?? '';
+function camposDelPedido(input: EmpleadoInput): Record<string, unknown> {
+  const campos = camposDeRoles(input.roles);
+  const cuerpo: Record<string, unknown> = {};
+  if (campos.includes('especialidad')) cuerpo.especialidad = input.especialidad?.trim() || null;
+  if (campos.includes('titulo')) cuerpo.titulo = input.titulo?.trim() || null;
+  if (campos.includes('franja')) {
+    cuerpo.id_franja_laboral = input.idFranjaLaboral ? Number(input.idFranjaLaboral) : null;
   }
+  return cuerpo;
+}
+
+/**
+ * Con qué precargar cada campo del formulario: el valor que ya tiene el primer
+ * rol elegido que lo use.
+ *
+ * Tiene que salir de la columna EXACTA que se va a guardar y no del `detalle`
+ * de la tarjeta, que elige un campo con fallback: a una nutricionista con
+ * matrícula y sin título le precargaba la matrícula, y guardar la mudaba al
+ * título.
+ */
+export function valoresDeRoles(
+  empleado: EmpleadoListado | null,
+  roles: RolEmpleadoValue[],
+): { especialidad: string; titulo: string; idFranjaLaboral: string } {
+  const de = (campo: 'especialidad' | 'titulo' | 'franja'): string => {
+    if (!empleado) return '';
+    for (const rol of roles) {
+      if (CAMPO_DEL_ROL[rol] !== campo) continue;
+      const d = empleado.detalles[rol];
+      if (!d) continue;
+      if (campo === 'especialidad' && d.especialidad) return d.especialidad;
+      if (campo === 'titulo' && d.titulo) return d.titulo;
+      if (campo === 'franja' && d.idFranjaLaboral) return String(d.idFranjaLaboral);
+    }
+    return '';
+  };
+  return { especialidad: de('especialidad'), titulo: de('titulo'), idFranjaLaboral: de('franja') };
 }
 
 /**
@@ -262,9 +324,9 @@ export async function crearEmpleado(input: EmpleadoInput): Promise<AltaEmpleadoR
       email: input.email?.trim() || null,
       telefono: input.telefono?.trim() || null,
       id_sede: 1,
-      rol: input.rol,
+      roles: input.roles,
       crear_cuenta: true,
-      ...repartirDetalle(input.rol, input.detalle),
+      ...camposDelPedido(input),
     },
   });
 
@@ -281,13 +343,17 @@ export async function crearEmpleado(input: EmpleadoInput): Promise<AltaEmpleadoR
 }
 
 /**
- * Edita un empleado, incluido su rol.
+ * Edita un empleado, incluidos sus roles.
  *
- * Si el cambio de rol dejaría rutinas o dietas huérfanas, el backend responde
- * 409 con un mensaje que dice cuántas hay que reasignar. Esa validación tiene
- * que estar del lado del servidor: la fila del rol es destino de claves
- * foráneas NOT NULL, así que sin ella el DELETE fallaría con un error de
- * Postgres incomprensible en pantalla.
+ * `roles` es el conjunto completo que tiene que quedar prendido: el backend
+ * prende los que falten y apaga los que no vengan, sin borrar ninguna fila.
+ * Ya no hay 409 por cambio de rol —antes lo había para cualquiera con rutinas,
+ * socios a cargo u horarios a su nombre, porque el cambio BORRABA la fila del
+ * rol viejo y todo ese historial apunta a ella—.
+ *
+ * Lo que sí cambia, y las pantallas lo avisan: sacarle el rol de Entrenador
+ * FINALIZA sus asignaciones activas, así que el socio deja de verlo en "Mi
+ * entrenador". La rutina que le armó queda asignada igual.
  */
 export async function actualizarEmpleado(
   idEmpleado: number,
@@ -300,8 +366,8 @@ export async function actualizarEmpleado(
       apellido: input.apellido.trim(),
       email: input.email?.trim() || null,
       telefono: input.telefono?.trim() ?? null,
-      rol: input.rol,
-      ...repartirDetalle(input.rol, input.detalle),
+      roles: input.roles,
+      ...camposDelPedido(input),
     },
   });
   return aEmpleadoListado(datos);

@@ -88,12 +88,14 @@ export function PersonalView() {
     if (!personal) return [];
     const texto = busqueda.trim().toLowerCase();
     return personal.filter((e) => {
+      // Cualquiera de sus roles, no "el" rol: alguien que es entrenador y
+      // profesor tiene que aparecer con los dos filtros y en las dos búsquedas.
       const coincideTexto =
         texto === '' ||
         e.nombreCompleto.toLowerCase().includes(texto) ||
-        e.rol.toLowerCase().includes(texto) ||
-        (e.detalle?.toLowerCase().includes(texto) ?? false);
-      return coincideTexto && (filtro === 'Todos' || e.rol === filtro);
+        e.roles.some((r) => r.toLowerCase().includes(texto)) ||
+        Object.values(e.detalles).some((d) => d?.detalle?.toLowerCase().includes(texto));
+      return coincideTexto && (filtro === 'Todos' || e.roles.includes(filtro));
     });
   }, [personal, busqueda, filtro]);
 

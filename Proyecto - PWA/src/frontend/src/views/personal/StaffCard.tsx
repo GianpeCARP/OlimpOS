@@ -92,11 +92,7 @@ export function StaffCard({
   onDarDeBaja,
   onActivar,
 }: StaffCardProps) {
-  const IconoRol = ICONOS_ROL[empleado.rol];
   const contacto = vinculoDeContacto(empleado);
-  // Solo los recepcionistas tienen turno; para el resto el chip lleva el
-  // color neutro y muestra su dato propio (especialidad o título).
-  const colorChip = empleado.turno ? COLORES_TURNO[empleado.turno] : colors.textSecondary;
   const yaInactivo = empleado.estado === EstadoEmpleado.INACTIVO;
 
   return (
@@ -137,22 +133,40 @@ export function StaffCard({
         {empleado.nombreCompleto}
       </h3>
 
-      <div className="mt-1 flex items-center gap-2 font-body text-sm text-text-secondary">
-        <IconoRol size={14} />
-        <span className="truncate">{empleado.rol}</span>
+      {/* UNA LÍNEA POR ROL. Los subtipos de Empleado son solapados: la misma
+          persona puede ser entrenadora y profesora, y mostrar uno solo —lo que
+          hacía esta tarjeta— escondía la mitad de lo que hace. Cada rol trae su
+          propio dato (la franja del recepcionista, la especialidad del
+          entrenador), así que el chip va al lado de su rol y no suelto al pie. */}
+      <div className="mt-2 flex flex-col gap-1.5">
+        {empleado.roles.length === 0 && (
+          <span className="font-body text-sm text-text-muted">Sin rol asignado</span>
+        )}
+        {empleado.roles.map((rol) => {
+          const IconoRol = ICONOS_ROL[rol];
+          const d = empleado.detalles[rol];
+          // Solo el recepcionista tiene turno; para el resto el chip lleva el
+          // color neutro y muestra su dato propio (especialidad o título).
+          const colorChip = d?.turno ? COLORES_TURNO[d.turno] : colors.textSecondary;
+          return (
+            <div key={rol} className="flex min-w-0 items-center gap-2">
+              <IconoRol size={14} className="shrink-0 text-text-secondary" />
+              <span className="shrink-0 font-body text-sm text-text-secondary">{rol}</span>
+              {/* Si el campo está vacío en la base no se dibuja el chip, en vez
+                  de uno con texto de relleno. */}
+              {d?.detalle && (
+                <span
+                  className="inline-flex min-w-0 items-center gap-1 rounded-full px-2 py-0.5 font-body text-xs font-medium"
+                  style={{ backgroundColor: `${colorChip}1A`, color: colorChip }}
+                >
+                  {d.turno && <Clock size={11} className="shrink-0" />}
+                  <span className="truncate">{d.detalle}</span>
+                </span>
+              )}
+            </div>
+          );
+        })}
       </div>
-
-      {/* Chip del dato propio del rol. Si el campo está vacío en la base no
-          se dibuja nada, en vez de un chip con texto de relleno. */}
-      {empleado.detalle && (
-        <div
-          className="mt-3 inline-flex w-fit max-w-full items-center gap-1.5 rounded-full px-3 py-1 font-body text-xs font-medium"
-          style={{ backgroundColor: `${colorChip}1A`, color: colorChip }}
-        >
-          {empleado.turno && <Clock size={12} className="shrink-0" />}
-          <span className="truncate">{empleado.detalle}</span>
-        </div>
-      )}
 
       {/* mt-auto empuja los botones al pie: las tarjetas de una misma fila
           tienen alto distinto según cuántos datos tenga cada empleado. */}

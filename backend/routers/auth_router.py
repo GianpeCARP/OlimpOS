@@ -33,7 +33,7 @@ from auth import crear_token_acceso, hashear_password, verificar_password
 from cookies import borrar_cookies_sesion, setear_cookies_sesion
 from csrf import generar_token_csrf
 from database import get_db
-from models import Socio, Usuario, roles_de_persona
+from models import Socio, Usuario, rol_activo, roles_de_persona
 from schemas import (
     CambiarPasswordRequest, LoginRequest, LoginResponse, MensajeResponse,
     PersonaOut, UsuarioOut,
@@ -200,8 +200,11 @@ def login(
     # firmado en el token y no se resuelve en cada endpoint. Se navega desde
     # la persona porque Profesor cuelga de Empleado, no de Persona.
     empleado = persona.empleado
+    # `rol_activo` y no `is not None`: la fila de Profesor queda aunque la
+    # persona haya dejado de dictar clases (ver Entrenador.activo), y firmar su
+    # id en el token le devolvería "Mis clases" con las de antes.
     id_profesor = (empleado.profesor.id_profesor
-                   if empleado is not None and empleado.profesor is not None
+                   if empleado is not None and rol_activo(empleado.profesor)
                    else None)
 
     usuario.intentos_fallidos = 0

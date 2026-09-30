@@ -32,6 +32,12 @@ TURNO_COLORS = {
 # schemas.py). "Administrativo" que figuraba antes en el Dropdown no existe
 # como tabla: elegirlo hacía fallar el alta con un 422 sin explicación.
 # Los cuatro tienen cuenta; el Profesor, para "Mis clases" en la PWA (acá no tiene secciones).
+#
+# Y son ACUMULABLES: los cuatro subtipos son solapados en el esquema, así que
+# la misma persona puede ser entrenadora y profesora. El formulario los ofrece
+# con casillas y no con un Dropdown — era un Dropdown porque el backend borraba
+# la fila del rol viejo al cambiarlo, y con eso se llevaba el historial puesto.
+# Gemelo de EmpleadoFormModal.tsx.
 ROLES_EMPLEADO = ["Entrenador", "Nutricionista", "Recepcionista", "Profesor"]
 
 
@@ -86,14 +92,54 @@ class PersonalView:
 
         return body
 
+    @staticmethod
+    def _renglones_de_rol(p: dict) -> list[ft.Control]:
+        """
+        Un renglón por rol prendido: ícono, nombre del rol y su dato propio.
+
+        El chip del dato va al lado de su rol y no suelto al pie, porque con dos
+        roles no se sabría a cuál pertenece. El único con color es la franja del
+        recepcionista (Mañana/Tarde/Noche); el resto lleva el neutro.
+
+        Un empleado sin ningún rol prendido es alguien cargado a quien todavía
+        no se le asignó función. El alta y la edición piden al menos uno, así
+        que el caso queda para fichas viejas.
+        """
+        detalles = {d["rol"]: d.get("texto") or "" for d in p.get("detalles") or []}
+        roles = p.get("roles") or []
+        if not roles:
+            return [ft.Text("Sin rol asignado", color=Colors.TEXT_MUTED, size=13)]
+
+        renglones = []
+        for rol in roles:
+            texto = detalles.get(rol, "")
+            chip_c, chip_bg = TURNO_COLORS.get(texto, (Colors.TEXT_SECONDARY, Colors.BG_INPUT))
+            es_franja = texto in TURNO_COLORS
+            fila = [
+                ft.Icon(ROL_ICONS.get(rol, ft.Icons.PERSON_ROUNDED),
+                        color=Colors.TEXT_SECONDARY, size=14),
+                ft.Text(rol, color=Colors.TEXT_SECONDARY, size=13),
+            ]
+            if texto:
+                fila.append(ft.Container(
+                    content=ft.Row([
+                        *([ft.Icon(ft.Icons.SCHEDULE_ROUNDED, color=chip_c, size=12)]
+                          if es_franja else []),
+                        ft.Text(texto, color=chip_c, size=11, weight=ft.FontWeight.W_500),
+                    ], spacing=4, tight=True),
+                    bgcolor=chip_bg, border_radius=20,
+                    padding=ft.Padding.symmetric(horizontal=8, vertical=3),
+                ))
+            renglones.append(ft.Row(fila, spacing=6,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER))
+        return renglones
+
     def _staff_card(self, p: dict) -> ft.Container:
         """
         Construye la tarjeta de un empleado individual.
         Layout vertical: avatar + estado | nombre | rol | chip de turno | acciones
         """
         initial   = p["nombre"][0].upper()  # Inicial para el avatar
-        turno_c, turno_bg = TURNO_COLORS.get(p["turno"], (Colors.TEXT_SECONDARY, Colors.BG_INPUT))
-        rol_icon  = ROL_ICONS.get(p["rol"], ft.Icons.PERSON_ROUNDED)
 
         # Regla de FILA: nadie se da de baja a sí mismo aunque tenga el permiso
         # (se dejaría afuera de un click). Misma regla que PersonalView.tsx.
@@ -161,23 +207,10 @@ class PersonalView:
                 # Nombre del empleado
                 ft.Text(p["nombre"], color=Colors.TEXT_PRIMARY, size=15,
                         weight=ft.FontWeight.BOLD),
-                # Rol con ícono correspondiente
-                ft.Row([
-                    ft.Icon(rol_icon, color=Colors.TEXT_SECONDARY, size=14),
-                    ft.Text(p["rol"], color=Colors.TEXT_SECONDARY, size=13),
-                ], spacing=4),
-                ft.Container(height=12),
-                # Chip de turno coloreado según horario (Mañana/Tarde/Noche)
-                ft.Container(
-                    content=ft.Row([
-                        ft.Icon(ft.Icons.SCHEDULE_ROUNDED, color=turno_c, size=14),
-                        ft.Text(f"Turno {p['turno']}", color=turno_c, size=12,
-                                weight=ft.FontWeight.W_500),
-                    ], spacing=6),
-                    bgcolor=turno_bg,
-                    border_radius=20,
-                    padding=ft.Padding.symmetric(horizontal=10, vertical=5),
-                ),
+                # UN RENGLÓN POR ROL, cada uno con su ícono y su dato propio.
+                # Mostrar uno solo —lo que hacía esta tarjeta— escondía la mitad
+                # de lo que hace alguien con dos roles. Gemelo de StaffCard.tsx.
+                *self._renglones_de_rol(p),
                 ft.Container(height=16),
                 # Botones de acción: Editar (sólo con acceso TOTAL) y Contactar.
                 # Con lectura queda únicamente Contactar: el Recepcionista
@@ -232,32 +265,29 @@ class PersonalView:
         # Entrenador y Profesor) y acá no se podía ni ver ni cargar.
         especialidad_ref = ft.Ref[ft.TextField]()
         matricula_ref = ft.Ref[ft.TextField]()
-        rol_ref       = ft.Ref[ft.Dropdown]()
         turno_ref     = ft.Ref[ft.Dropdown]()
 
-        # El rol que llega del backend puede ser "Sin asignar" (un Empleado
-        # cargado sin fila de especialidad todavía). Ese valor no existe como
-        # opción del Dropdown, y asignárselo lo dejaría en blanco, así que se
-        # cae a Entrenador.
-        rol_actual = empleado["rol"] if is_edit else "Entrenador"
-        if rol_actual not in ROLES_EMPLEADO:
-            rol_actual = "Entrenador"
+        # Los roles se acumulan, así que son casillas y no un Dropdown. Un
+        # empleado viejo puede no tener ninguno prendido (cargado sin función):
+        # en ese caso arranca con Entrenador marcado, como el alta.
+        roles_actuales = [r for r in (empleado.get("roles") or []) if r in ROLES_EMPLEADO] if is_edit else []
+        if not roles_actuales:
+            roles_actuales = ["Entrenador"]
+        casillas = {
+            rol: ft.Checkbox(
+                label=rol,
+                value=rol in roles_actuales,
+                label_style=ft.TextStyle(color=Colors.TEXT_SECONDARY, size=13),
+                active_color=Colors.ACCENT,
+                check_color=Colors.SURFACE_BASE,
+            )
+            for rol in ROLES_EMPLEADO
+        }
 
         # El turno del recepcionista ahora es una FK a Franja_Laboral: se
         # ofrecen las franjas reales (catálogo), no un enum hardcodeado.
         franjas = app_state.get_franjas()
         franja_sel = str(empleado.get("id_franja_laboral")) if is_edit and empleado.get("id_franja_laboral") else None
-
-        def _dropdown(label, opciones, valor, ref):
-            return ft.Dropdown(
-                ref=ref,
-                label=label,
-                options=[ft.dropdown.Option(o) for o in opciones],
-                value=valor,
-                color=Colors.TEXT_PRIMARY, bgcolor=Colors.BG_INPUT,
-                border_color=Colors.BORDER, focused_border_color=Colors.ACCENT,
-                border_radius=10,
-            )
 
         dlg = ft.AlertDialog(
             modal=True,
@@ -285,7 +315,20 @@ class PersonalView:
                                 icon=ft.Icons.BADGE_OUTLINED,
                                 value=empleado["dni"] if is_edit else ""),
                     ft.Container(height=12),
-                    _dropdown("Rol", ROLES_EMPLEADO, rol_actual, rol_ref),
+                    # Casillas y no un Dropdown: se puede marcar más de uno.
+                    # Gemelo del <fieldset> de EmpleadoFormModal.tsx.
+                    #
+                    # Column y no Row(wrap=True): la trampa 8 de Flet 0.84 —un
+                    # Row(wrap=True) con controles de formulario adentro dibuja
+                    # un bloque gris—. Cuatro casillas en columna entran de
+                    # sobra en el alto del diálogo, que ya tiene scroll.
+                    ft.Text("Roles", color=Colors.TEXT_SECONDARY, size=12),
+                    ft.Column([casillas[rol] for rol in ROLES_EMPLEADO],
+                              spacing=0, tight=True),
+                    ft.Text("Se puede marcar más de uno. Sacarle un rol no borra nada de "
+                            "lo que hizo con él; si le sacás Entrenador, deja de estar a "
+                            "cargo de sus socios.",
+                            color=Colors.TEXT_MUTED, size=11),
                     ft.Container(height=12),
                     ft.Dropdown(
                         ref=turno_ref,
@@ -332,7 +375,7 @@ class PersonalView:
                                    "telefono": telefono_ref, "titulo": titulo_ref,
                                    "especialidad": especialidad_ref,
                                    "matricula": matricula_ref},
-                                  rol_ref, turno_ref,
+                                  casillas, turno_ref,
                               )),
             ],
             actions_alignment=ft.MainAxisAlignment.END,
@@ -365,7 +408,7 @@ class PersonalView:
         """Lee un campo aunque todavía no esté montado, sin reventar."""
         return (ref.current.value or "").strip() if ref.current else ""
 
-    def _save(self, dlg, id_empleado, refs, rol_ref, turno_ref):
+    def _save(self, dlg, id_empleado, refs, casillas, turno_ref):
         """
         Da de alta o edita el empleado.
 
@@ -375,7 +418,14 @@ class PersonalView:
         formulario.
         """
         datos = {campo: self._texto(ref) for campo, ref in refs.items()}
-        rol   = rol_ref.current.value if rol_ref.current else "Entrenador"
+        roles = [rol for rol, casilla in casillas.items() if casilla.value]
+
+        # El backend lo exige igual (`roles` con min_length=1) y un empleado sin
+        # ningún rol no podría entrar a ninguna sección, pero avisar acá evita
+        # el viaje con el formulario todavía a la vista.
+        if not roles:
+            show_snack(self.page, "Marcá al menos un rol.", Colors.STATUS_DANGER)
+            return
 
         faltan = [c for c in ("nombre", "apellido", "dni") if not datos[c]]
         if faltan:
@@ -411,7 +461,7 @@ class PersonalView:
             # haría fallar el alta de alguien que simplemente no dejó mail.
             "email": datos["email"] or None,
             "telefono": datos["telefono"] or None,
-            "rol": rol,
+            "roles": roles,
             "titulo": datos["titulo"] or None,
             "especialidad": datos["especialidad"] or None,
             "matricula": datos["matricula"] or None,

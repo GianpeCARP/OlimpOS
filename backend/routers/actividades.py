@@ -583,10 +583,16 @@ def listar_todos_los_profesores(
     Declarado ANTES de /{id_actividad}/profesores: si fuera después, FastAPI
     intentaría leer "profesores" como si fuera un id de actividad.
     """
+    # Dos filtros, no uno: `Empleado.activo` es seguir trabajando acá y
+    # `Profesor.activo` es seguir dictando clases. Alguien que pasó de profesor
+    # a recepcionista cumple el primero y no el segundo, y su fila de Profesor
+    # queda igual porque sus horarios y turnos pasados apuntan a ella (ver
+    # Entrenador.activo en models.py).
     profesores = (
         db.query(Profesor)
         .join(Empleado, Profesor.id_empleado == Empleado.id_empleado)
-        .filter(Empleado.activo == True)  # noqa: E712
+        .filter(Empleado.activo == True,  # noqa: E712
+                Profesor.activo == True)  # noqa: E712
         .all()
     )
     salida = []
@@ -816,10 +822,23 @@ def listar_profesores(
     db: Session = Depends(get_db),
     sesion: Sesion = Depends(_LEER_PARA_COBRAR),
 ):
-    """Quiénes pueden dictar esta actividad."""
+    """Quiénes pueden dictar esta actividad HOY."""
     _buscar_actividad(db, id_actividad)
+    # TRES filtros, y son tres preguntas distintas:
+    #   · ProfesorActividad.activo → sigue habilitado para ESTA actividad
+    #   · Profesor.activo          → sigue cumpliendo el rol de profesor
+    #   · Empleado.activo          → sigue trabajando en el gimnasio
+    # Ninguna fila se borra cuando alguna de las tres deja de valer, porque las
+    # tres sostienen historial (ver ProfesorActividad.activo en models.py), así
+    # que sin los filtros la lista ofrecería para un horario nuevo a gente que
+    # ya no lo va a dictar.
     filas = (db.query(ProfesorActividad)
-             .filter(ProfesorActividad.id_actividad == id_actividad)
+             .join(Profesor, Profesor.id_profesor == ProfesorActividad.id_profesor)
+             .join(Empleado, Empleado.id_empleado == Profesor.id_empleado)
+             .filter(ProfesorActividad.id_actividad == id_actividad,
+                     ProfesorActividad.activo == True,  # noqa: E712
+                     Profesor.activo == True,            # noqa: E712
+                     Empleado.activo == True)            # noqa: E712
              .all())
 
     salida = []
@@ -850,8 +869,44 @@ def asignar_profesor(
     if profesor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="El profesor no existe.")
+    # Su fila puede seguir existiendo apagada, porque sus clases pasadas
+    # apuntan a ella: habilitarlo para una actividad nueva sería asignarle
+    # trabajo a alguien que ya no da clases.
+    if not profesor.activo:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Esa persona ya no cumple el rol de Profesor. "
+                   "Devolvele el rol desde Personal si vuelve a dar clases.")
+    # Y lo mismo si dejó el gimnasio. Este control es el que permite que la baja
+    # de un empleado NO toque sus habilitaciones (ver dar_de_baja_empleado):
+    # mientras esté de baja no se le puede agregar ninguna, y las que tenía
+    # quedan esperándolo.
+    if profesor.empleado is None or not profesor.empleado.activo:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ese profesor está dado de baja. Reactivalo desde Personal "
+                   "antes de asignarle actividades.")
 
     ya = db.get(ProfesorActividad, (id_profesor, id_actividad))
+    # Si la habilitación existe APAGADA, esto es volver a habilitarlo: se
+    # reactiva la misma fila en vez de crear otra. La diferencia importa porque
+    # esa fila es la que hace legítimos los horarios y turnos que ya dictó de
+    # esta actividad (ver ProfesorActividad.activo en models.py): reactivarla lo
+    # devuelve con su historia, y no como si nunca hubiera dado la clase. Es la
+    # misma vuelta que el rol de un empleado en editar_empleado.
+    if ya is not None and not ya.activo:
+        ya.activo = True
+        db.commit()
+        persona = profesor.empleado.persona if profesor.empleado else None
+        return ProfesorActividadOut(
+            id_profesor=id_profesor,
+            nombre=persona.nombre_completo if persona else "?",
+            titulo=profesor.titulo,
+            especialidad=profesor.especialidad,
+            dni=persona.dni if persona else None,
+            legajo=profesor.empleado.legajo if profesor.empleado else None,
+        )
+
     if ya:
         persona = profesor.empleado.persona if profesor.empleado else None
         nombre = persona.nombre_completo if persona else "Ese profesor"
@@ -888,12 +943,22 @@ def desasignar_profesor(
     Los turnos ya programados con él NO se tocan: el vínculo se guarda en
     Turno.id_profesor, y borrarlo dejaría clases sin responsable. Lo que se
     quita es la habilitación para asignarlo a turnos FUTUROS.
+
+    Y para quitarla se APAGA la fila, no se borra. Hasta el 2026-09-29 se
+    borraba, y eso no podía funcionar: la fila es además el destino de las FK
+    compuestas `fk_horario_profesor_habilitado` y `fk_turno_profesor_habilitado`,
+    que no miran fechas. Apenas el profesor dictaba una clase de esta actividad,
+    ese par quedaba referenciado para siempre —los turnos se cancelan, nunca se
+    borran— y el DELETE respondía 500 sin explicación. Con el flag, sacarlo
+    siempre funciona y lo que ya dictó sigue en pie.
+
+    Sacar a alguien que ya estaba sacado responde 404, igual que antes.
     """
     fila = db.get(ProfesorActividad, (id_profesor, id_actividad))
-    if fila is None:
+    if fila is None or not fila.activo:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="Ese profesor no está asignado a esta actividad.")
-    db.delete(fila)
+    fila.activo = False
     db.commit()
 
 
@@ -1413,7 +1478,9 @@ def crear_horario(
                     .join(Empleado, Empleado.id_empleado == Profesor.id_empleado)
                     .filter(ProfesorActividad.id_actividad == datos.id_actividad,
                             ProfesorActividad.id_profesor == datos.id_profesor,
-                            Empleado.activo.is_(True))
+                            ProfesorActividad.activo.is_(True),
+                            Empleado.activo.is_(True),
+                            Profesor.activo.is_(True))
                     .first())
         if asignado is None:
             raise HTTPException(
@@ -1550,7 +1617,9 @@ def cambiar_profesor_de_horario(
                     .join(Empleado, Empleado.id_empleado == Profesor.id_empleado)
                     .filter(ProfesorActividad.id_actividad == horario.id_actividad,
                             ProfesorActividad.id_profesor == id_profesor,
-                            Empleado.activo.is_(True))
+                            ProfesorActividad.activo.is_(True),
+                            Empleado.activo.is_(True),
+                            Profesor.activo.is_(True))
                     .first())
         if asignado is None:
             actividad = horario.actividad

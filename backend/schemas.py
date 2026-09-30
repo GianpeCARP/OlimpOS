@@ -1692,11 +1692,26 @@ class EmpleadoAltaRequest(BaseModel):
     fecha_ingreso: date | None = None      # por defecto, hoy
 
     # --- Especialidad ---
-    rol: RolEmpleado
+    # LISTA, no un rol solo: los subtipos de Empleado son SOLAPADOS en el
+    # esquema (schema.sql), así que la misma persona puede ser entrenadora y
+    # profesora a la vez. La app lo trataba como uno solo; ahora el pedido
+    # trae el conjunto completo de roles que tiene que quedar prendido.
+    roles: list[RolEmpleado] = Field(min_length=1)
+
+    @field_validator("roles")
+    @classmethod
+    def _sin_repetidos(cls, v: list[RolEmpleado]) -> list[RolEmpleado]:
+        # dict.fromkeys y no set(): conserva el orden en que llegaron, que es
+        # el que después se muestra en la tarjeta.
+        return list(dict.fromkeys(v))
+
     # Campos de las tablas hijas. Cada uno aplica solo a algunos roles y el
     # router ignora los que no correspondan, en vez de rechazar el pedido: un
     # formulario que manda todos los campos siempre es más simple de escribir
-    # que uno que arma un cuerpo distinto por rol.
+    # que uno que arma un cuerpo distinto por rol. Con varios roles prendidos,
+    # cada campo se escribe en TODAS las filas que tengan esa columna: `titulo`
+    # va al Entrenador y al Nutricionista, y es el mismo título de la misma
+    # persona.
     titulo: str | None = None              # Entrenador, Nutricionista, Profesor
     especialidad: str | None = None        # Entrenador, Profesor
     matricula: str | None = None           # Entrenador, Nutricionista
@@ -1718,6 +1733,25 @@ class FranjaLaboralOut(BaseModel):
     activo: bool
 
 
+class DetalleRolOut(BaseModel):
+    """
+    Los datos propios de UN rol de un empleado.
+
+    Van en una lista y no aplanados en `EmpleadoOut` porque una misma persona
+    puede tener varios roles prendidos y cada uno guarda lo suyo en su propia
+    tabla: la especialidad del entrenador y la del profesor son dos columnas
+    distintas, y aplanarlas hacía que la de un rol pisara la del otro en
+    pantalla. Cada campo viene en None cuando esa tabla no lo tiene (un
+    Recepcionista no tiene matrícula).
+    """
+    rol: RolEmpleado
+    titulo: str | None = None
+    especialidad: str | None = None
+    matricula: str | None = None
+    turno_laboral: str | None = None       # nombre de la franja (Recepcionista)
+    id_franja_laboral: int | None = None
+
+
 class EmpleadoOut(BaseModel):
     id_empleado: int
     id_persona: int
@@ -1726,12 +1760,13 @@ class EmpleadoOut(BaseModel):
     fecha_ingreso: date
     fecha_egreso: date | None = None
     activo: bool
-    rol: RolEmpleado | None = None         # None: cargado sin especialidad todavía
-    titulo: str | None = None
-    especialidad: str | None = None
-    matricula: str | None = None
-    turno_laboral: str | None = None       # nombre de la franja
-    id_franja_laboral: int | None = None
+    # Los roles PRENDIDOS hoy, en el orden canónico de RolEmpleado. Vacía = un
+    # Empleado cargado sin especialidad todavía, o alguien a quien se le
+    # apagaron todos (que el alta y la edición no permiten: piden al menos uno).
+    # Las filas apagadas por un cambio de rol NO viajan: existen para sostener
+    # el historial, no para mostrarse.
+    roles: list[RolEmpleado] = []
+    detalles: list[DetalleRolOut] = []
     # Aplanados desde Persona, para que la grilla no navegue objetos anidados.
     dni: str
     nombre: str
@@ -1747,15 +1782,28 @@ class EmpleadoOut(BaseModel):
 
 class EmpleadoEditarRequest(BaseModel):
     """
-    Edición de un empleado. Puede incluir un CAMBIO DE ROL, que no es un
-    cambio cualquiera: implica borrar la fila de su especialidad actual y
-    crear otra. Ver `validar_cambio_de_rol` en el router.
+    Edición de un empleado, incluidos sus roles.
+
+    `roles` es el conjunto COMPLETO que tiene que quedar prendido, no un
+    delta: el router prende los que falten, reactiva los que ya existían
+    apagados y apaga los que no vinieron. Se manda entero porque así el
+    formulario no tiene que llevar la cuenta de qué cambió, y porque un delta
+    ("sacale entrenador") no distingue entre "no lo mandé" y "sacalo".
+
+    Cambiar de rol ya NO borra nada: la fila del rol viejo queda apagada
+    (ver Entrenador.activo en models.py). Por eso desapareció la validación
+    que frenaba con 409 a quien tuviera rutinas, socios a cargo u horarios.
     """
     nombre: str = Field(min_length=1, max_length=100)
     apellido: str = Field(min_length=1, max_length=100)
     email: EmailStr | None = None
     telefono: str | None = None
-    rol: RolEmpleado
+    roles: list[RolEmpleado] = Field(min_length=1)
+
+    @field_validator("roles")
+    @classmethod
+    def _sin_repetidos(cls, v: list[RolEmpleado]) -> list[RolEmpleado]:
+        return list(dict.fromkeys(v))
 
     _validar_telefono = field_validator("telefono")(_telefono_valido)
     _validar_email = field_validator("email", mode="before")(_email_valido)
@@ -1779,7 +1827,7 @@ class BajaEmpleadoRequest(BaseModel):
 class EmpleadoAltaResponse(BaseModel):
     id_empleado: int
     legajo: str
-    rol: RolEmpleado
+    roles: list[RolEmpleado]
     persona: PersonaOut
     username: str | None = None
     password_temporal: str | None = None

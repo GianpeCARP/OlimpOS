@@ -17,13 +17,33 @@ está dado por en cuál de las cuatro tablas hijas existe su fila:
 Es el mismo criterio que hace que Persona no tenga columna `rol`: en vez de un
 campo de texto que hay que mantener sincronizado con la realidad, el tipo se
 DERIVA de qué datos existen. Un entrenador sin matrícula es un entrenador con
-la matrícula vacía; un empleado sin fila en ninguna hija es alguien cargado a
-quien todavía no se le asignó función, que es un estado válido.
+la matrícula vacía.
 
 La ventaja concreta: `turno_laboral` solo existe para Recepcionista, y
 `matricula` no existe para Profesor. Con una columna `rol` en Empleado
 habría que poner las siete columnas en la misma tabla y dejarlas nulas la
 mayor parte del tiempo.
+
+SON VARIOS ROLES, Y SE APAGAN EN VEZ DE BORRARSE
+------------------------------------------------
+Las cuatro hijas son subtipos SOLAPADOS en el esquema desde el primer día
+(`schema.sql`): nada impide que la misma persona tenga fila en dos. Lo que
+imponía "un rol y uno solo" era esta capa, que leía la primera fila que
+encontraba y, al cambiar de rol, BORRABA la vieja.
+
+Borrarla no borraba "el rol": borraba el trabajo hecho en ese rol, porque esa
+fila es el destino de claves foráneas sin ON DELETE (Rutina,
+Asignacion_Entrenador, Horario_Actividad, Turno, Dieta, Profesor_Actividad).
+Postgres rechazaba el DELETE y el cambio de rol respondía 409 para siempre a
+cualquiera con un socio a cargo o un horario a su nombre.
+
+Desde el 2026-09-29 la fila no se borra: se apaga (`activo`). Quién es alguien
+HOY lo dice ese flag —`roles_de_persona` en models.py— y la fila apagada queda
+sosteniendo su historial. Como consecuencia directa, un empleado puede tener
+varios roles prendidos a la vez, y por eso la API habla de `roles` y
+`detalles` en plural. Un empleado sin ninguna fila prendida es alguien cargado
+a quien todavía no se le asignó función; el alta y la edición piden al menos
+uno.
 
 EL PROFESOR TAMBIÉN INICIA SESIÓN
 ---------------------------------
@@ -40,14 +60,13 @@ from sqlalchemy.orm import Session, selectinload
 from auth import generar_password_temporal, generar_username, hashear_password
 from database import get_db
 from models import (
-    AsignacionEntrenador, Dieta, Empleado, Entrenador, FranjaLaboral, HorarioActividad,
-    Nutricionista, Persona, Profesor, ProfesorActividad, Recepcionista, Rutina, Sede,
-    Telefono, Turno, Usuario,
+    AsignacionEntrenador, Empleado, Entrenador, FranjaLaboral, Nutricionista,
+    Persona, Profesor, Recepcionista, Sede, Telefono, Usuario, rol_activo,
 )
 from notificaciones import enviar_credenciales
 from permisos import Accion, Seccion
 from schemas import (
-    BajaEmpleadoRequest, EmpleadoAltaRequest, EmpleadoAltaResponse,
+    BajaEmpleadoRequest, DetalleRolOut, EmpleadoAltaRequest, EmpleadoAltaResponse,
     EmpleadoEditarRequest, EmpleadoOut, FranjaLaboralOut, PersonaOut,
     ProfesionalOpcion, RolEmpleado,
 )
@@ -78,16 +97,38 @@ def _legajo(id_empleado: int) -> str:
     return f"E-{id_empleado:04d}"
 
 
-def _especialidad_de(empleado: Empleado):
+def _fila_de_rol(empleado: Empleado, rol: RolEmpleado):
     """
-    Devuelve (rol, fila) mirando cuál de las cuatro hijas tiene datos, o
-    (None, None) si el empleado todavía no tiene función asignada.
+    La fila del subtipo de ese rol, prendida o apagada, o None si nunca existió.
+
+    Hace falta distinguir los dos casos: si existe apagada, un cambio de rol la
+    REACTIVA (y la persona recupera su título y su matrícula tal como estaban);
+    si no existe, hay que crearla.
     """
-    for rol, (clase, _campos) in ESPECIALIDADES.items():
-        fila = getattr(empleado, clase.__name__.lower(), None)
-        if fila is not None:
-            return rol, fila
-    return None, None
+    clase, _campos = ESPECIALIDADES[rol]
+    return getattr(empleado, clase.__name__.lower(), None)
+
+
+def _especialidades_de(empleado: Empleado) -> list[tuple[RolEmpleado, object]]:
+    """
+    Los roles PRENDIDOS de un empleado, con su fila, en el orden de
+    ESPECIALIDADES. Lista vacía = cargado sin función todavía.
+
+    Devuelve una lista y no un solo par porque los subtipos de Empleado son
+    SOLAPADOS en el esquema (schema.sql): la misma persona puede ser
+    entrenadora y profesora a la vez. La versión anterior cortaba en la primera
+    fila que encontraba, así que a alguien con dos roles la pantalla le mostraba
+    uno solo —el primero del diccionario— y editarlo le borraba el otro.
+
+    Las filas APAGADAS quedan afuera: existen para sostener el historial de un
+    rol que la persona ya no cumple (ver Entrenador.activo en models.py).
+    """
+    prendidos = []
+    for rol in ESPECIALIDADES:
+        fila = _fila_de_rol(empleado, rol)
+        if rol_activo(fila):
+            prendidos.append((rol, fila))
+    return prendidos
 
 
 def _telefono_principal(persona) -> str | None:
@@ -97,9 +138,27 @@ def _telefono_principal(persona) -> str | None:
     return telefonos[0].numero if telefonos else None
 
 
+def _a_detalle_out(rol: RolEmpleado, fila) -> DetalleRolOut:
+    """Los datos propios de un rol, listos para la pantalla."""
+    return DetalleRolOut(
+        rol=rol,
+        # getattr con default: cada hija tiene solo algunos de estos campos, y
+        # pedirle `titulo` a un Recepcionista tiene que dar None, no romper.
+        titulo=getattr(fila, "titulo", None),
+        especialidad=getattr(fila, "especialidad", None),
+        matricula=getattr(fila, "matricula", None),
+        # El turno laboral del recepcionista es una FK a Franja_Laboral; se
+        # expone su NOMBRE (la franja), no el id.
+        turno_laboral=(fila.franja.nombre
+                       if rol == RolEmpleado.RECEPCIONISTA and getattr(fila, "franja", None)
+                       else None),
+        id_franja_laboral=getattr(fila, "id_franja_laboral", None),
+    )
+
+
 def _a_empleado_out(empleado: Empleado) -> EmpleadoOut:
     persona = empleado.persona
-    rol, fila = _especialidad_de(empleado)
+    especialidades = _especialidades_de(empleado)
 
     return EmpleadoOut(
         id_empleado=empleado.id_empleado,
@@ -109,18 +168,8 @@ def _a_empleado_out(empleado: Empleado) -> EmpleadoOut:
         fecha_ingreso=empleado.fecha_ingreso,
         fecha_egreso=empleado.fecha_egreso,
         activo=bool(empleado.activo),
-        rol=rol,
-        # getattr con default: cada hija tiene solo algunos de estos campos, y
-        # pedirle `titulo` a un Recepcionista tiene que dar None, no romper.
-        titulo=getattr(fila, "titulo", None),
-        especialidad=getattr(fila, "especialidad", None),
-        matricula=getattr(fila, "matricula", None),
-        # El turno laboral del recepcionista ahora es una FK a Franja_Laboral;
-        # se expone su NOMBRE (la franja), no el id.
-        turno_laboral=(fila.franja.nombre
-                       if rol == RolEmpleado.RECEPCIONISTA and getattr(fila, "franja", None)
-                       else None),
-        id_franja_laboral=getattr(fila, "id_franja_laboral", None),
+        roles=[rol for rol, _fila in especialidades],
+        detalles=[_a_detalle_out(rol, fila) for rol, fila in especialidades],
         dni=persona.dni,
         nombre=persona.nombre,
         apellido=persona.apellido,
@@ -139,16 +188,21 @@ def listar_personal(
     Lista el personal. Alcanza con LECTURA: el Recepcionista ve la grilla pero
     no puede dar de alta ni de baja (eso es exclusivo del Dueño).
     """
-    # Misma carga anticipada que en /usuarios y /socios: el rol de un empleado
-    # se deriva de cual de los tres subtipos tiene fila, y con carga perezosa
-    # eso eran tres consultas por empleado. Ver CARGA_DE_ROLES en
-    # routers/usuarios.py.
+    # Misma carga anticipada que en /usuarios y /socios: los roles de un
+    # empleado se derivan de cuales de los CUATRO subtipos tienen fila
+    # prendida, y con carga perezosa eso eran cuatro consultas por empleado.
+    # (El comentario decia "tres" y cargaba tres: faltaba Profesor.)
+    # Ver CARGA_DE_ROLES en routers/usuarios.py.
     empleados = (db.query(Empleado)
                  .options(
                      selectinload(Empleado.persona).selectinload(Persona.telefonos),
                      selectinload(Empleado.entrenador),
                      selectinload(Empleado.nutricionista),
-                     selectinload(Empleado.recepcionista),
+                     # Faltaba la del recepcionista y la del profesor: la
+                     # franja y el cuarto subtipo se leían con carga perezosa,
+                     # dos consultas más por empleado.
+                     selectinload(Empleado.recepcionista).selectinload(Recepcionista.franja),
+                     selectinload(Empleado.profesor),
                  )
                  .order_by(Empleado.id_empleado)
                  .all())
@@ -228,12 +282,16 @@ def alta_empleado(
     db.flush()                         # ahora existe id_empleado
     empleado.legajo = _legajo(empleado.id_empleado)
 
-    # --- 3. Especialidad ----------------------------------------------------
-    # Acá se materializa el rol: crear la fila en la tabla hija ES asignarle
-    # la función. Solo se copian los campos que esa hija tiene.
-    clase, campos = ESPECIALIDADES[datos.rol]
-    valores = {campo: getattr(datos, campo) for campo in campos}
-    db.add(clase(id_empleado=empleado.id_empleado, **valores))
+    # --- 3. Especialidades --------------------------------------------------
+    # Acá se materializan los roles: crear la fila en la tabla hija ES
+    # asignarle la función. Una fila por rol pedido, y de cada una solo se
+    # copian los campos que esa hija tiene. Un entrenador que además es
+    # profesor comparte título y especialidad: es la misma persona con el mismo
+    # título, guardado dos veces porque son dos tablas.
+    for rol in datos.roles:
+        clase, campos = ESPECIALIDADES[rol]
+        valores = {campo: getattr(datos, campo) for campo in campos}
+        db.add(clase(id_empleado=empleado.id_empleado, activo=True, **valores))
 
     # --- 4. Cuenta ----------------------------------------------------------
     username = None
@@ -274,23 +332,28 @@ def alta_empleado(
             password_temporal=password_temporal,
         )
 
+    # "Entrenador y Profesor" y no "Entrenador": con varios roles, nombrar uno
+    # solo haría dudar de si los otros se guardaron.
+    nombres = [r.value for r in datos.roles]
+    quien = nombres[0] if len(nombres) == 1 else ", ".join(nombres[:-1]) + " y " + nombres[-1]
+
     if password_temporal:
         mensaje = (
-            f"{datos.rol.value} dado de alta (legajo {empleado.legajo}) con usuario "
+            f"{quien} dado de alta (legajo {empleado.legajo}) con usuario "
             f"'{username}'. En el primer ingreso va a tener que cambiar la contraseña."
         )
     elif username:
         mensaje = (
-            f"{datos.rol.value} dado de alta (legajo {empleado.legajo}). "
+            f"{quien} dado de alta (legajo {empleado.legajo}). "
             f"Ya tenía cuenta ('{username}'), se conserva."
         )
     else:
-        mensaje = f"{datos.rol.value} dado de alta (legajo {empleado.legajo})."
+        mensaje = f"{quien} dado de alta (legajo {empleado.legajo})."
 
     return EmpleadoAltaResponse(
         id_empleado=empleado.id_empleado,
         legajo=empleado.legajo,
-        rol=datos.rol,
+        roles=datos.roles,
         persona=PersonaOut.model_validate(persona),
         username=username,
         password_temporal=password_temporal,
@@ -305,80 +368,97 @@ def alta_empleado(
 # EDICIÓN Y BAJA
 # =============================================================================
 
-def _validar_cambio_de_rol(db: Session, empleado: Empleado, rol_nuevo: RolEmpleado) -> None:
+def _aplicar_roles(db: Session, empleado: Empleado,
+                   roles_pedidos: list[RolEmpleado], datos) -> None:
     """
-    Frena un cambio de rol que la base no dejaría hacer, y dice por qué.
+    Deja prendidos exactamente los roles pedidos, sin borrar ninguna fila.
 
-    Cambiar de rol implica BORRAR la fila de la especialidad actual, y esa fila
-    es el destino de claves foráneas sin ON DELETE: a Entrenador apuntan
-    `Rutina`, `Asignacion_Entrenador`, `Horario_Actividad` y `Turno`; a
-    Nutricionista, `Dieta`; a Profesor, `Profesor_Actividad` (y a través de
-    ella, sus horarios y turnos). Con algo apuntando, el DELETE falla, y sin
-    este chequeo eso llegaba a la pantalla como un 500 sin explicación. Hasta
-    el 2026-09-26 sólo se miraban rutinas y dietas.
+    HASTA EL 2026-09-29 ESTO BORRABA
+    --------------------------------
+    Cambiar de rol hacía `db.delete(fila_vieja)`, y esa fila es el destino de
+    claves foráneas sin ON DELETE: a `Entrenador` apuntan `Rutina`,
+    `Asignacion_Entrenador`, `Horario_Actividad` y `Turno`; a `Nutricionista`,
+    `Dieta`; a `Profesor`, `Profesor_Actividad` y, por ella, sus horarios y
+    turnos. El DELETE fallaba, y para que no llegara a pantalla como un 500
+    había una validación que devolvía 409: quien tuviera un socio a cargo o un
+    horario a su nombre no podía cambiar de rol NUNCA.
 
-    Hay dos clases de bloqueo, y el mensaje las distingue:
-      · lo que se puede reasignar o sacar (rutinas, dietas, las actividades de
-        un profesor que todavía no dio clases): se dice qué hacer primero;
-      · el HISTORIAL (los socios que tuvo a cargo, aunque ya hayan terminado;
-        horarios y turnos a su nombre), que no se borra nunca: con eso el rol
-        hoy no se puede cambiar. Es un límite conocido, anotado en
-        docs/ESTADO-ACTUAL.md: a futuro, cambiar de rol tendría que conservar
-        la fila vieja en vez de borrarla.
+    El arreglo no fue relajar la validación sino dejar de borrar. La fila queda
+    con `activo=false` sosteniendo su historial, y quién es alguien HOY lo dice
+    ese flag (`roles_de_persona`). Con eso la validación entera sobra: no hay
+    nada que se pueda romper, así que no hay nada que frenar.
+
+    Tres caminos por rol:
+      · pedido y con fila apagada  → se reactiva, con sus datos como estaban;
+      · pedido y sin fila          → se crea;
+      · no pedido y prendido       → se apaga, más la limpieza de ese rol.
+
+    `datos` es el pedido (alta o edición) y de él salen los campos propios de
+    cada tabla. Se aplica la misma regla que el resto de la edición: un campo
+    que no vino en el pedido NO se toca.
     """
-    rol_actual, fila = _especialidad_de(empleado)
-    if rol_actual is None or rol_actual == rol_nuevo:
+    pedidos = set(roles_pedidos)
+    prendidos = {rol for rol, _fila in _especialidades_de(empleado)}
+
+    for rol in ESPECIALIDADES:
+        clase, campos = ESPECIALIDADES[rol]
+        fila = _fila_de_rol(empleado, rol)
+
+        if rol in pedidos:
+            if fila is None:
+                # Nueva. Acá sí se escriben todos los campos: no hay nada que
+                # conservar.
+                valores = {campo: getattr(datos, campo) for campo in campos}
+                db.add(clase(id_empleado=empleado.id_empleado, activo=True, **valores))
+                continue
+
+            fila.activo = True
+            # Sólo lo que vino en el pedido, la misma regla que el PUT de socio
+            # (editar_socio). Cada app muestra campos distintos —la PWA los del
+            # rol, Flet título, especialidad y matrícula—, y con "todos,
+            # siempre" cada una borraba en silencio lo que la otra había
+            # cargado: editarle el teléfono a una nutricionista desde la PWA le
+            # borraba la matrícula. Ausente se conserva; en null, se borra.
+            for campo in campos:
+                if campo in datos.model_fields_set:
+                    setattr(fila, campo, getattr(datos, campo))
+
+        elif rol in prendidos:
+            fila.activo = False
+            _limpiar_al_apagar(db, rol, fila)
+
+
+def _limpiar_al_apagar(db: Session, rol: RolEmpleado, fila) -> None:
+    """
+    Lo que hay que cerrar cuando alguien deja de cumplir un rol.
+
+    Apagar el flag alcanza para que la persona no entre más con ese rol, pero
+    no para que desaparezca de las pantallas de los demás: un entrenador que
+    pasa a recepción seguía figurando en "Mi entrenador" del socio, que lista
+    las asignaciones ACTIVA. Es el mismo cierre que hace la baja del empleado
+    (`dar_de_baja_empleado`), por el mismo motivo.
+
+    Se FINALIZA, no se borra: el historial de quién entrenó a quién queda, con
+    su fecha de fin. Volver al rol de entrenador NO las reabre — a la vuelta, a
+    quién entrena se decide de nuevo, que es lo que el gimnasio haría de
+    verdad.
+
+    Los otros tres roles no necesitan nada. El nutricionista: sus dietas
+    quedan asignadas y el socio sigue comiendo lo mismo, porque `Asignacion_Dieta`
+    ata socio con dieta y no socio con nutricionista. El profesor: sus horarios
+    y turnos guardan su `id_profesor` y siguen teniendo responsable; deja de
+    aparecer como opción porque los selectores filtran por `activo`. El
+    recepcionista no produce nada propio.
+    """
+    if rol != RolEmpleado.ENTRENADOR:
         return
 
-    def rechazar(motivo: str):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail=f"No se puede cambiarle el rol: {motivo}")
-
-    if rol_actual == RolEmpleado.ENTRENADOR:
-        cuantas = db.query(Rutina).filter(Rutina.id_entrenador == fila.id_entrenador).count()
-        if cuantas:
-            rechazar(f"tiene {cuantas} rutina(s) a su nombre. "
-                     "Reasignalas a otro entrenador primero.")
-
-        alumnos = (db.query(AsignacionEntrenador)
-                   .filter(AsignacionEntrenador.id_entrenador == fila.id_entrenador)
-                   .count())
-        a_cargo = (db.query(HorarioActividad)
-                   .filter(HorarioActividad.id_entrenador_a_cargo == fila.id_entrenador)
-                   .count()
-                   + db.query(Turno)
-                   .filter(Turno.id_entrenador_a_cargo == fila.id_entrenador)
-                   .count())
-        if alumnos or a_cargo:
-            partes = []
-            if alumnos:
-                partes.append(f"tuvo {alumnos} socio(s) a cargo, contando los que ya terminaron")
-            if a_cargo:
-                partes.append(f"tiene {a_cargo} horario(s) o turno(s) de sala a su nombre")
-            rechazar(" y ".join(partes) + ". Ese historial no se borra, así que hoy "
-                     "el rol no se puede cambiar.")
-
-    if rol_actual == RolEmpleado.NUTRICIONISTA:
-        cuantas = db.query(Dieta).filter(Dieta.id_nutricionista == fila.id_nutricionista).count()
-        if cuantas:
-            rechazar(f"tiene {cuantas} dieta(s) a su nombre. "
-                     "Reasignalas a otro nutricionista primero.")
-
-    if rol_actual == RolEmpleado.PROFESOR:
-        clases = (db.query(HorarioActividad)
-                  .filter(HorarioActividad.id_profesor == fila.id_profesor)
-                  .count()
-                  + db.query(Turno).filter(Turno.id_profesor == fila.id_profesor).count())
-        if clases:
-            rechazar(f"tiene {clases} horario(s) o clase(s) a su nombre. Ese historial "
-                     "no se borra, así que hoy el rol no se puede cambiar.")
-
-        habilitaciones = (db.query(ProfesorActividad)
-                          .filter(ProfesorActividad.id_profesor == fila.id_profesor)
-                          .count())
-        if habilitaciones:
-            rechazar(f"está habilitado para {habilitaciones} actividad(es). "
-                     "Sacalo de esas actividades en Actividades primero.")
+    (db.query(AsignacionEntrenador)
+     .filter(AsignacionEntrenador.id_entrenador == fila.id_entrenador,
+             AsignacionEntrenador.estado == "ACTIVA")
+     .update({AsignacionEntrenador.estado: "FINALIZADA",
+              AsignacionEntrenador.fecha_fin: date.today()},
+             synchronize_session=False))
 
 
 # =============================================================================
@@ -391,16 +471,21 @@ def _validar_cambio_de_rol(db: Session, empleado: Empleado, rol_nuevo: RolEmplea
 
 def _opciones(db: Session, clase, id_attr: str) -> list[ProfesionalOpcion]:
     """
-    Los profesionales de un tipo cuyo empleado está ACTIVO.
+    Los profesionales de un tipo que siguen cumpliendo ese rol, y cuyo empleado
+    está ACTIVO.
 
-    El filtro por activo importa: ofrecer a alguien que ya no trabaja en el
-    gimnasio haría que el formulario permita asignarle trabajo nuevo, y el
-    backend lo rechazaría después con un mensaje que el usuario no esperaba.
+    Son DOS filtros distintos y hacen falta los dos. `Empleado.activo` es
+    trabajar todavía en el gimnasio; `clase.activo` es cumplir todavía ESE rol
+    —una entrenadora que pasó a recepción sigue trabajando acá y no tiene que
+    aparecer en el selector de entrenadores—. Ofrecer a cualquiera de los dos
+    haría que el formulario permita asignarle trabajo nuevo a alguien que no
+    lo va a hacer.
     """
     filas = (
         db.query(clase)
         .join(Empleado, clase.id_empleado == Empleado.id_empleado)
-        .filter(Empleado.activo == True)  # noqa: E712
+        .filter(Empleado.activo == True,  # noqa: E712
+                clase.activo == True)     # noqa: E712
         .all()
     )
     opciones = []
@@ -493,11 +578,12 @@ def editar_empleado(
     sesion: Sesion = Depends(requiere_accion(Accion.ALTA_BAJA_PERSONAL)),
 ):
     """
-    Edita un empleado, incluido su rol.
+    Edita un empleado, incluidos sus roles.
 
-    El cambio de rol es la parte delicada: borra la fila de la especialidad
-    vieja y crea la nueva. Antes de tocar nada se valida que eso no deje
-    trabajo huérfano — ver _validar_cambio_de_rol.
+    `datos.roles` es el conjunto completo que tiene que quedar prendido. Los
+    que falten se crean o se reactivan y los que no vengan se apagan, sin
+    borrar ninguna fila — ver `_aplicar_roles`. Ya no hay 409 por cambio de
+    rol: nada se borra, así que no hay historial que se pueda romper.
     """
     empleado = db.get(Empleado, id_empleado)
     if empleado is None:
@@ -514,8 +600,6 @@ def editar_empleado(
         if choca:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                                 detail="Ese email ya está registrado para otra persona.")
-
-    _validar_cambio_de_rol(db, empleado, datos.rol)
 
     persona.nombre = datos.nombre.strip()
     persona.apellido = datos.apellido.strip()
@@ -536,30 +620,8 @@ def editar_empleado(
         elif principal:
             db.delete(principal)
 
-    # --- El rol -------------------------------------------------------------
-    rol_actual, fila_actual = _especialidad_de(empleado)
-    clase, campos = ESPECIALIDADES[datos.rol]
-
-    if rol_actual == datos.rol and fila_actual is not None:
-        # Mismo rol: sólo se tocan sus campos propios QUE VINIERON en el pedido,
-        # la misma regla que el PUT de socio (editar_socio). Cada app muestra
-        # campos distintos —la PWA uno por rol, Flet título, especialidad y
-        # matrícula—, y con "todos, siempre" cada una borraba en silencio lo que
-        # la otra había cargado: editarle el teléfono a una nutricionista desde
-        # la PWA le borraba la matrícula. Ausente se conserva; en null, se borra.
-        for campo in campos:
-            if campo in datos.model_fields_set:
-                setattr(fila_actual, campo, getattr(datos, campo))
-    else:
-        # Cambio de rol: fuera la vieja, adentro la nueva.
-        if fila_actual is not None:
-            db.delete(fila_actual)
-            # flush antes del insert: sin esto SQLAlchemy puede reordenar las
-            # operaciones y el UNIQUE de id_empleado chocaría con la fila vieja
-            # todavía sin borrar.
-            db.flush()
-        valores = {campo: getattr(datos, campo) for campo in campos}
-        db.add(clase(id_empleado=empleado.id_empleado, **valores))
+    # --- Los roles ----------------------------------------------------------
+    _aplicar_roles(db, empleado, datos.roles, datos)
 
     db.commit()
     db.refresh(empleado)
@@ -607,19 +669,30 @@ def dar_de_baja_empleado(
     if empleado.persona.usuario is not None:
         empleado.persona.usuario.activo = False
 
-    # Y se lo saca de las actividades que tenía habilitadas. Sin esto, un
-    # profesor dado de baja seguía figurando como asignado: la lista de
-    # "quiénes pueden dictar Yoga" mostraba a alguien que ya no trabaja acá, y
-    # nada impedía programarle un turno futuro.
+    # LAS HABILITACIONES DEL PROFESOR NO SE TOCAN, Y ES A PROPÓSITO
+    # -------------------------------------------------------------
+    # Hasta el 2026-09-29 acá se BORRABAN las filas de Profesor_Actividad, con
+    # un motivo razonable —que no siguiera figurando en "quiénes pueden dictar
+    # Yoga"— y dos problemas.
     #
-    # Se borra la habilitación (Profesor_Actividad) y NO los turnos ya
-    # programados: esos guardan su propio id_profesor, y borrarlo dejaría
-    # clases sin responsable. Es exactamente el mismo criterio que
-    # desasignar_profesor en el router de actividades.
-    if empleado.profesor is not None:
-        (db.query(ProfesorActividad)
-         .filter(ProfesorActividad.id_profesor == empleado.profesor.id_profesor)
-         .delete(synchronize_session=False))
+    # El primero: no funcionaba. Esa fila es el destino de las FK compuestas
+    # fk_horario_profesor_habilitado y fk_turno_profesor_habilitado, que no
+    # miran fechas. Apenas el profesor había dictado una clase, el DELETE
+    # fallaba y la baja entera se deshacía con un 500 sin explicación. Todo
+    # profesor con un turno a su nombre era imposible de dar de baja.
+    #
+    # El segundo: era innecesario. Los cuatro lugares que ofrecen profesores ya
+    # filtran por Empleado.activo —listar_profesores y listar_todos_los_profesores
+    # de actividades.py, las dos validaciones del profesor a cargo de un horario,
+    # y asignar_profesor, que además lo rechaza con 409—, así que un empleado de
+    # baja ya no figura en ninguna lista sin borrarle nada.
+    #
+    # Dejarlas en pie tiene además el efecto que el gimnasio espera: cuando la
+    # persona vuelve (reactivar_empleado), sus habilitaciones vuelven con ella.
+    # Antes había que asignárselas de nuevo actividad por actividad.
+    #
+    # Sacarlo de UNA actividad sigue siendo una decisión aparte y explícita, y
+    # ésa apaga la fila: desasignar_profesor en actividades.py.
 
     # Si entrenaba socios, deja de estar a cargo de ellos. Sin esto el socio
     # seguía viendo en "Mi entrenador" a alguien que ya no trabaja acá (el
@@ -630,7 +703,7 @@ def dar_de_baja_empleado(
     # en routers/socios.py, y el historial de quién entrenó a quién queda.
     # Reactivar al entrenador NO las reabre: a la vuelta, a quién entrena se
     # decide de nuevo, que es lo que el gimnasio haría de verdad.
-    if empleado.entrenador is not None:
+    if rol_activo(empleado.entrenador):
         (db.query(AsignacionEntrenador)
          .filter(AsignacionEntrenador.id_entrenador == empleado.entrenador.id_entrenador,
                  AsignacionEntrenador.estado == "ACTIVA")

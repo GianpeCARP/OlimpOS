@@ -10,8 +10,9 @@ import { mensajeDeError } from '../../services/api';
 import {
   crearEmpleado,
   actualizarEmpleado,
-  detalleEditable,
+  camposDeRoles,
   listarFranjas,
+  valoresDeRoles,
   type AltaEmpleadoResultado,
   type EmpleadoListado,
 } from '../../services/personalService';
@@ -21,23 +22,19 @@ import { useUiStore } from '../../store/uiStore';
 import { PanelCredenciales } from '../../components/PanelCredenciales';
 
 // Equivalente de _open_form/_save (estructura_personal.md), adaptado al
-// esquema real. El doc tiene un campo "turno" fijo para todos; acá el
-// último campo cambia según el rol, porque en la base cada rol guarda una
-// cosa distinta: turno_laboral el recepcionista, especialidad el entrenador
-// y titulo el nutricionista.
+// esquema real. El doc tiene un campo "turno" fijo para todos; acá los campos
+// que se muestran dependen de los roles marcados, porque en la base cada rol
+// guarda una cosa distinta: la franja el recepcionista, la especialidad el
+// entrenador y el profesor, el título el nutricionista.
+//
+// LOS ROLES SON CASILLAS, NO UN SELECTOR
+// Los cuatro subtipos de Empleado son SOLAPADOS en el esquema: la misma
+// persona puede ser entrenadora y profesora. Esto era un <select> de un solo
+// valor porque el backend borraba la fila del rol viejo al cambiarlo; desde
+// que la apaga en vez de borrarla (ver Entrenador.activo en models.py), los
+// roles se acumulan y se eligen con casillas.
 
-const OPCIONES_ROL: SelectOption[] = Object.values(RolEmpleado).map((rol) => ({
-  value: rol,
-  label: rol,
-}));
-
-/** Etiqueta y tipo de control del campo específico de cada rol. */
-const CAMPO_POR_ROL: Record<RolEmpleadoValue, { label: string; select: boolean }> = {
-  [RolEmpleado.ENTRENADOR]: { label: 'Especialidad', select: false },
-  [RolEmpleado.NUTRICIONISTA]: { label: 'Título', select: false },
-  [RolEmpleado.RECEPCIONISTA]: { label: 'Turno / franja', select: true },
-  [RolEmpleado.PROFESOR]: { label: 'Especialidad', select: false },
-};
+const TODOS_LOS_ROLES = Object.values(RolEmpleado);
 
 interface EmpleadoFormModalProps {
   /** null = alta nueva. Con un empleado, abre en modo edición. */
@@ -52,11 +49,16 @@ export function EmpleadoFormModal({ empleado, onClose, onGuardado }: EmpleadoFor
   const [apellido, setApellido] = useState(empleado?.apellido ?? '');
   const [email, setEmail] = useState(empleado?.email ?? '');
   const [telefono, setTelefono] = useState(empleado?.telefono ?? '');
-  const [rol, setRol] = useState<RolEmpleadoValue>(empleado?.rol ?? RolEmpleado.ENTRENADOR);
-  // Para recepcionista `detalle` es el ID de la franja (FK Franja_Laboral);
-  // para los demás roles es texto libre (especialidad/título), precargado con
-  // la columna exacta que se va a guardar (ver detalleEditable).
-  const [detalle, setDetalle] = useState(empleado ? detalleEditable(empleado) : '');
+  const [roles, setRoles] = useState<RolEmpleadoValue[]>(
+    empleado?.roles.length ? empleado.roles : [RolEmpleado.ENTRENADOR],
+  );
+  // Un estado por campo, y no uno solo: con dos roles marcados puede haber dos
+  // campos distintos a la vista (Especialidad y Título), y un único `detalle`
+  // compartido los pisaba entre sí.
+  const iniciales = valoresDeRoles(empleado, empleado?.roles ?? []);
+  const [especialidad, setEspecialidad] = useState(iniciales.especialidad);
+  const [titulo, setTitulo] = useState(iniciales.titulo);
+  const [idFranja, setIdFranja] = useState(iniciales.idFranjaLaboral);
 
   /**
    * Alta recién hecha cuyas credenciales hay que entregar. Mientras tenga
@@ -77,14 +79,32 @@ export function EmpleadoFormModal({ empleado, onClose, onGuardado }: EmpleadoFor
 
   const showSnack = useUiStore((s) => s.showSnack);
 
-  const campo = CAMPO_POR_ROL[rol];
+  const campos = camposDeRoles(roles);
 
-  // Cambiar de rol vacía el campo específico: un turno no tiene sentido
-  // como especialidad, ni al revés. Volver al rol que ya tenía recupera su
-  // dato: si no, ir y volver en el selector lo guardaba vacío y lo borraba.
-  const cambiarRol = (nuevo: string) => {
-    setRol(nuevo as RolEmpleadoValue);
-    setDetalle(empleado && nuevo === empleado.rol ? detalleEditable(empleado) : '');
+  /**
+   * Marca o desmarca un rol. Al menos uno tiene que quedar: el backend lo
+   * exige igual (`roles` con min_length=1) y un empleado sin ningún rol no
+   * podría entrar a ninguna sección, así que la última casilla no se destilda.
+   *
+   * Al marcar un rol nuevo se precarga su campo con lo que esa persona ya
+   * tenía guardado en él, si es que lo tenía. Sin eso, marcar Nutricionista a
+   * alguien que ya lo había sido abría el Título vacío y guardar lo borraba.
+   */
+  const alternarRol = (rolTocado: RolEmpleadoValue) => {
+    const siguientes = roles.includes(rolTocado)
+      ? roles.filter((r) => r !== rolTocado)
+      : [...roles, rolTocado];
+    if (siguientes.length === 0) {
+      showSnack('Tiene que quedar al menos un rol.', colors.statusWarn);
+      return;
+    }
+    setRoles(siguientes);
+
+    const previos = valoresDeRoles(empleado, siguientes);
+    const visibles = camposDeRoles(siguientes);
+    if (visibles.includes('especialidad') && !especialidad) setEspecialidad(previos.especialidad);
+    if (visibles.includes('titulo') && !titulo) setTitulo(previos.titulo);
+    if (visibles.includes('franja') && !idFranja) setIdFranja(previos.idFranjaLaboral);
   };
 
   const handleSubmit = async (e: SubmitEvent) => {
@@ -102,7 +122,7 @@ export function EmpleadoFormModal({ empleado, onClose, onGuardado }: EmpleadoFor
 
     setGuardando(true);
     try {
-      const datos = { dni, nombre, apellido, email, telefono, rol, detalle };
+      const datos = { dni, nombre, apellido, email, telefono, roles, especialidad, titulo, idFranjaLaboral: idFranja };
 
       if (empleado) {
         const actualizado = await actualizarEmpleado(empleado.idEmpleado, datos);
@@ -194,31 +214,64 @@ export function EmpleadoFormModal({ empleado, onClose, onGuardado }: EmpleadoFor
             Email o teléfono: al menos uno de los dos, para poder contactarlo.
           </p>
 
-          <SelectField
-            label="Rol"
-            value={rol}
-            onChange={cambiarRol}
-            options={OPCIONES_ROL}
-            name="rol"
-            required
-          />
+          {/* Casillas y no un selector: los roles se acumulan. Alguien puede
+              ser entrenador Y profesor, y con un selector había que elegir. */}
+          <fieldset>
+            <legend className="mb-2 font-body text-xs font-medium text-text-secondary">
+              Roles
+            </legend>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+              {TODOS_LOS_ROLES.map((r) => (
+                <label
+                  key={r}
+                  className="flex items-center gap-2 font-body text-sm text-text-secondary"
+                >
+                  <input
+                    type="checkbox"
+                    checked={roles.includes(r)}
+                    onChange={() => alternarRol(r)}
+                    className="size-4 shrink-0 accent-primary-volt"
+                    name={`rol-${r}`}
+                  />
+                  <span className="truncate">{r}</span>
+                </label>
+              ))}
+            </div>
+            <p className="mt-2 font-body text-xs text-text-muted">
+              Se puede marcar más de uno. Sacarle un rol no borra nada de lo que hizo
+              con él; si le sacás Entrenador, deja de estar a cargo de sus socios.
+            </p>
+          </fieldset>
 
-          {campo.select ? (
+          {/* Un campo por dato, no por rol: Entrenador y Profesor piden los dos
+              "Especialidad" y con dos inputs iguales nadie sabría cuál es cuál
+              (ver camposDeRoles). */}
+          {campos.includes('especialidad') && (
+            <InputField
+              label="Especialidad"
+              value={especialidad}
+              onChange={setEspecialidad}
+              icon={Award}
+              name="especialidad"
+            />
+          )}
+          {campos.includes('titulo') && (
+            <InputField
+              label="Título"
+              value={titulo}
+              onChange={setTitulo}
+              icon={Award}
+              name="titulo"
+            />
+          )}
+          {campos.includes('franja') && (
             <SelectField
-              label={campo.label}
-              value={detalle}
-              onChange={setDetalle}
+              label="Turno / franja"
+              value={idFranja}
+              onChange={setIdFranja}
               options={franjasOpc}
               placeholder="Sin turno asignado"
-              name="detalle"
-            />
-          ) : (
-            <InputField
-              label={campo.label}
-              value={detalle}
-              onChange={setDetalle}
-              icon={Award}
-              name="detalle"
+              name="id_franja_laboral"
             />
           )}
         </div>

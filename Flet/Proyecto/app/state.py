@@ -441,24 +441,57 @@ class AppState:
 
     # ── Personal ──────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _primero_no_vacio(detalles: list[dict], campo: str):
+        """
+        El primer valor no vacío de ese campo entre los roles de un empleado.
+
+        El formulario de Flet muestra Título, Especialidad y Matrícula en tres
+        campos sueltos, sin separar por rol, así que necesita UN valor por
+        campo. Cuando alguien tiene dos roles, cada tabla guarda lo suyo: el
+        Entrenador tiene los tres, el Profesor no tiene matrícula. Se toma el
+        primero que esté cargado, y el backend después lo escribe en todas las
+        filas que tengan esa columna.
+        """
+        for d in detalles:
+            valor = d.get(campo)
+            if valor:
+                return valor
+        return None
+
     def get_personal(self) -> list[dict]:
         """
         Lista de empleados.
 
-        El `rol` no es una columna: el backend lo deriva de en cuál de las
-        cuatro tablas hijas de Empleado está la persona. Y `turno` solo existe
-        para el Recepcionista, así que para el resto viene vacío — se muestra
-        un guion en vez de dejar la celda en blanco.
+        Los roles no son una columna: el backend los deriva de en cuáles de las
+        cuatro tablas hijas de Empleado tiene fila PRENDIDA la persona. Son
+        varios a propósito —los subtipos son solapados y alguien puede ser
+        entrenador y profesor— así que viajan como lista, cada uno con sus
+        datos propios en `detalles`. La `franja` solo la tiene el
+        Recepcionista.
         """
         datos = self._datos(api_client.obtener_personal(), [])
-        return [
-            {
+        salida = []
+        for e in datos:
+            detalles = e.get("detalles") or []
+            roles = e.get("roles") or []
+            franja = self._primero_no_vacio(detalles, "turno_laboral")
+            salida.append({
                 "id": e["id_empleado"],
                 "id_persona": e.get("id_persona"),
                 "activo": bool(e.get("activo")),
                 "nombre": f"{e['nombre']} {e['apellido']}".strip(),
-                "rol": e.get("rol") or "Sin asignar",
-                "turno": e.get("turno_laboral") or "—",
+                "roles": roles,
+                # Lo que muestra cada renglón de la tarjeta: el rol y su dato.
+                "detalles": [
+                    {
+                        "rol": d.get("rol"),
+                        "texto": (d.get("turno_laboral") or d.get("especialidad")
+                                  or d.get("titulo") or d.get("matricula") or ""),
+                    }
+                    for d in detalles
+                ],
+                "turno": franja or "—",
                 "estado": "Activo" if e.get("activo") else "Inactivo",
                 # Los de abajo no se muestran en la tarjeta: los necesita el
                 # formulario de edición para precargarse. Si no viajaran acá,
@@ -472,14 +505,13 @@ class AppState:
                 # esto, editar un empleado reabría el campo vacío y guardar de
                 # nuevo le borraba el teléfono.
                 "telefono": e.get("telefono") or "",
-                "titulo": e.get("titulo") or "",
-                "especialidad": e.get("especialidad") or "",
-                "matricula": e.get("matricula") or "",
-                "turno_laboral": e.get("turno_laboral") or "",
-                "id_franja_laboral": e.get("id_franja_laboral"),
-            }
-            for e in datos
-        ]
+                "titulo": self._primero_no_vacio(detalles, "titulo") or "",
+                "especialidad": self._primero_no_vacio(detalles, "especialidad") or "",
+                "matricula": self._primero_no_vacio(detalles, "matricula") or "",
+                "turno_laboral": franja or "",
+                "id_franja_laboral": self._primero_no_vacio(detalles, "id_franja_laboral"),
+            })
+        return salida
 
     def get_franjas(self) -> list[dict]:
         """

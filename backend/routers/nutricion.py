@@ -35,7 +35,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import (
     AsignacionDieta, CatalogoComida, Comida, Dieta, Empleado, Nutricionista, RegistroComida,
-    Socio,
+    Socio, rol_activo,
 )
 from permisos import Acceso, Accion, Seccion
 from schemas import (
@@ -74,7 +74,10 @@ def _nutricionista_de_sesion(db: Session, sesion: Sesion) -> Nutricionista | Non
         .filter(Empleado.id_persona == sesion.id_persona)
         .first()
     )
-    return empleado.nutricionista if empleado else None
+    # Ver el comentario gemelo en _entrenador_de_sesion (rutinas.py): un rol
+    # apagado no es rol.
+    return (empleado.nutricionista
+            if empleado and rol_activo(empleado.nutricionista) else None)
 
 
 def _resolver_nutricionista(db: Session, sesion: Sesion, id_pedido: int | None) -> Nutricionista:

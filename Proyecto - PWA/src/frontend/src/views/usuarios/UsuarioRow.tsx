@@ -90,7 +90,14 @@ export function UsuarioRow({
         </div>
       </td>
       <td className="py-3">
-        <RoleChip rol={usuario.rol} label={usuario.rolLabel} />
+        {/* Todos los chips, no el primero: los roles se acumulan (un socio que
+            trabaja de entrenador es las dos cosas) y mostrar uno solo hacía que
+            la mitad de lo que esa cuenta puede hacer no se viera. */}
+        <div className="flex flex-wrap items-center gap-1">
+          {usuario.roles.map((r) => (
+            <RoleChip key={r.rol} rol={r.rol} label={r.label} />
+          ))}
+        </div>
       </td>
       <td className="py-3">
         <StatusBadge status={usuario.estado} />

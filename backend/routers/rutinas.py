@@ -36,7 +36,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import (
     AsignacionRutina, Ejercicio, Empleado, Entrenador, Persona, Rutina,
-    RutinaEjercicio, Socio,
+    RutinaEjercicio, Socio, rol_activo,
 )
 from permisos import Acceso, Accion, Seccion
 from schemas import (
@@ -77,7 +77,11 @@ def _entrenador_de_sesion(db: Session, sesion: Sesion) -> Entrenador | None:
         .filter(Empleado.id_persona == sesion.id_persona)
         .first()
     )
-    return empleado.entrenador if empleado else None
+    # `rol_activo` y no sólo `is not None`: la fila de un rol apagado sigue
+    # existiendo para sostener su historial (ver Entrenador.activo). Sin el
+    # flag, alguien que pasó de entrenador a recepcionista seguía siendo
+    # "entrenador de la sesión" y editaba rutinas.
+    return empleado.entrenador if empleado and rol_activo(empleado.entrenador) else None
 
 
 def _puede_editar(propio: Entrenador | None, rutina: Rutina) -> bool:
