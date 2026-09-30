@@ -46,7 +46,7 @@ problemas, y los tres aparecen en este gimnasio:
    recepcionista tiene una franja horaria; un entrenador, una especialidad. Con una tabla única, cada columna
    de cada rol estaría vacía para todos los que no lo tienen.
 3. **La columna sería una segunda fuente de verdad.** El comentario de la tabla `Usuario` lo dice
-   (`db/schema.sql:143-145`): *"El rol se DERIVA de en qué subtipo aparece la persona: no hay columna de rol
+   (`db/schema.sql:145-146`): *"El rol se DERIVA de en qué subtipo aparece la persona: no hay columna de rol
    porque sería una segunda fuente de verdad."* Si la columna dijera "socio" y no hubiera fila en `Socio`, ¿qué
    es esa persona?
 
@@ -73,7 +73,10 @@ abajo hacia arriba—, y cada tabla hija establece con la madre una relación "e
 persona. Esta especialización tiene dos propiedades con nombre propio:
 
 - **Superpuesta**, no disjunta: una persona puede estar a la vez en `Dueno` y en `Socio`, o en `Socio` y en
-  `Empleado`.
+  `Empleado`. También **entre los cuatro hijos de `Empleado`**: el comentario de `Entrenador` lo dice desde el
+  primer día (`schema.sql:213-215`, *"son subtipos SOLAPADOS, una misma persona puede tener las dos filas si
+  cumple los dos roles"*), y hasta el 2026-09-29 sólo la base lo permitía —la app trataba el rol de un empleado
+  como uno solo (ver [el rol que se apaga](A-10-bajas-logicas.md#el-rol-que-se-apaga))—.
 - **Parcial**, no total: una persona puede no estar en ninguna tabla hija.
 
 > **↓ Capa 1 — la fila que existe o no existe en la tabla hija.** Éste es el piso.
@@ -85,11 +88,11 @@ Cada tabla hija apunta a su madre con una clave foránea que es, además, **`NOT
 | `Usuario` | `id_persona integer NOT NULL UNIQUE` | `schema.sql:134` |
 | `Dueno` | `id_persona integer NOT NULL UNIQUE` | `schema.sql:153` |
 | `Empleado` | `id_persona integer NOT NULL UNIQUE` | `schema.sql:188` |
-| `Socio` | `id_persona integer NOT NULL UNIQUE` | `schema.sql:263` |
+| `Socio` | `id_persona integer NOT NULL UNIQUE` | `schema.sql:278` |
 | `Entrenador` | `id_empleado integer NOT NULL UNIQUE` | `schema.sql:205` |
-| `Profesor` | `id_empleado integer NOT NULL UNIQUE` | `schema.sql:219` |
-| `Nutricionista` | `id_empleado integer NOT NULL UNIQUE` | `schema.sql:230` |
-| `Recepcionista` | `id_empleado integer NOT NULL UNIQUE` | `schema.sql:247` |
+| `Profesor` | `id_empleado integer NOT NULL UNIQUE` | `schema.sql:225` |
+| `Nutricionista` | `id_empleado integer NOT NULL UNIQUE` | `schema.sql:238` |
+| `Recepcionista` | `id_empleado integer NOT NULL UNIQUE` | `schema.sql:260` |
 
 `UNIQUE` es lo que convierte la relación en uno a uno: una persona puede tener **a lo sumo una** fila en
 `Socio`. Y a partir de ahí, que alguien sea socio **no está escrito en ningún campo**: es la existencia de esa
@@ -97,9 +100,18 @@ fila. Preguntar si una persona es socio es preguntar si hay una fila en `Socio` 
 convierte eso en roles de sesión, y cuántas consultas cuesta, es tema de
 [derivación de roles](A-06-los-seis-roles.md#derivación-de-roles).
 
+**Con una excepción, en los cuatro subtipos del empleado.** Ahí la existencia de la fila dejó de alcanzar: las
+cuatro tienen una columna `activo` (`schema.sql:209`, `:228`, `:241`, `:262`) y la pregunta se responde con el
+flag, no con la fila. La fila de un rol que la persona dejó de cumplir **queda**, porque es la percha de todo su
+historial —rutinas, socios a cargo, horarios, turnos— y borrarla se lo llevaba puesto. El porqué completo, con
+lo que se descartó y lo que se paga, está en
+[el rol que se apaga](A-10-bajas-logicas.md#el-rol-que-se-apaga). Los otros cuatro subtipos —`Usuario`, `Dueno`,
+`Socio`, `Empleado`— no lo necesitan: `Socio.activo` y `Empleado.activo` ya existían por la baja lógica, y
+`Dueno` no se apaga.
+
 ### Nota marcada · lo que el esquema todavía llama "abierto"
 
-El mismo comentario de `Usuario` termina con una advertencia (`schema.sql:146-147`): *"ABIERTO: una Persona
+El mismo comentario de `Usuario` termina con una advertencia (`schema.sql:147-149`): *"ABIERTO: una Persona
 puede ser Socio Y Empleado a la vez (los UNIQUE son independientes entre sí). Si eso ocurre, la derivación del
 rol queda ambigua."*
 

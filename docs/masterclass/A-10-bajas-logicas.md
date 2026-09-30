@@ -64,8 +64,10 @@ de una baja, aparece un criterio preciso:
 | Se **marca** —pasó, y es historia | Se **borra** —no es historia |
 |---|---|
 | el socio dado de baja (`Socio.activo`) | la baja programada que se **anuló** antes de ocurrir |
-| el empleado dado de baja (`Empleado.activo`) | la habilitación de un profesor para dictar una actividad (`Profesor_Actividad`) |
-| el pago anulado (`CANCELADO`) | la cuenta de acceso, cuando se decide borrarla |
+| el empleado dado de baja (`Empleado.activo`) | la cuenta de acceso, cuando se decide borrarla |
+| el rol que la persona dejó de cumplir (`Entrenador.activo` y sus tres hermanos) | |
+| la habilitación para dictar una actividad (`Profesor_Actividad.activo`) | |
+| el pago anulado (`CANCELADO`) | |
 | la membresía y las reservas canceladas | |
 
 La columna izquierda son **hechos**: algo que ocurrió, con consecuencias —un pago que entró, una clase
@@ -79,6 +81,136 @@ pago anulado (*"un registro contable que desaparece es un agujero en la caja"*, 
 dudar, y no hay contradicción: el pago pasó, la baja no.
 
 **Se marca lo que pasó; se borra lo que nunca llegó a pasar o lo que no es historia.**
+
+Las filas tercera y cuarta de la izquierda son las últimas en haber entrado, y entraron de la
+manera más cara: antes se borraban, y lo que sigue cuenta qué se rompía con eso. La derecha, que
+tenía tres casos, se quedó con uno.
+
+### El rol que se apaga
+
+Esa regla tardó en llegarle al rol de un empleado, y el precio de la demora vale como clase entera.
+Es el mismo patrón de la fila marcada, aplicado a algo que no parecía un hecho sino un permiso.
+
+#### Lo que se estaba optimizando, y lo que salió
+
+El rol de un empleado **es** una fila: sos entrenador porque existe tu fila en `Entrenador`
+([tabla subtipo](A-05-modelo-de-datos.md#tabla-subtipo-especialización)). De esa forma sale una
+conclusión que parece obvia: si el rol es la fila, cambiar de rol es borrar una fila e insertar
+otra. Eso hizo `editar_empleado()` desde el primer día, y es un modelo **elegante**: una sola
+fuente de verdad, sin columna que mantener sincronizada, sin estados intermedios. No se estaba
+optimizando nada raro: se estaba siendo consistente.
+
+La restricción que no se vio es que esa fila no está sola. Es el destino de seis claves foráneas
+**sin acción al borrar**
+([acción referencial](A0-07-bases-de-datos-relacionales.md#acción-referencial-qué-le-pasa-al-hijo-cuando-muere-el-padre)):
+
+| Apunta a `Entrenador` | Apunta a `Nutricionista` | Apunta a `Profesor` |
+|---|---|---|
+| `Rutina` (`db/schema.sql:1080`) | `Dieta` (`:1091`) | `Profesor_Actividad` (`:1044`) |
+| `Asignacion_Entrenador` (`:1088`) | | y por ella, `Horario_Actividad` y `Turno` (`:1059-1065`) |
+| `Horario_Actividad`, `Turno` (`:1048`, `:1052`) | | |
+
+Con cualquiera de esas filas apuntando, Postgres rechaza el borrado. El síntoma en pantalla fue
+un 500 sin explicación; el 2026-09-26 se lo cambió por un 409 que decía cuántas rutinas, cuántos
+socios a cargo o cuántos horarios lo impedían. Pero ese 409 no arregló nada: **lo dijo mejor**.
+Un entrenador que alguna vez tuvo un alumno no podía cambiar de rol nunca, porque la historia de
+asignaciones no se borra jamás
+([asignación con estado](A-05-modelo-de-datos.md#asignación-con-estado)).
+
+#### Las tres salidas, y qué cuesta cada una
+
+**Poner `ON DELETE CASCADE` y que el borrado se lleve lo que apunta.** Es la salida más corta de
+escribir, y la primera que se propuso. Lo que se lleva puesto, siguiendo las cadenas hasta el
+final, es esto:
+
+| Se borraría | Y con eso |
+|---|---|
+| `Rutina` → `Rutina_Ejercicio` → `Asignacion_Rutina` | el socio abre la app y **no tiene rutina** |
+| `Asignacion_Entrenador`, entera | desaparece la respuesta a *"¿quién lo entrenaba en marzo?"*, que es la razón por la que esa tabla existe |
+| `Dieta` → `Comida` → `Registro_Comida` | se borra **el log de lo que el socio comió**, que es append-only a propósito ([log append-only](A-05-modelo-de-datos.md#log-append-only)) |
+| `Horario_Actividad` → `Turno` → `Reserva` | y acá está el peor: las clases consumidas **se cuentan** contando `Reserva` ([almacén que no es tabla](A-05-modelo-de-datos.md#almacén-que-no-es-tabla)), así que borrarlas le **devuelve clases ya usadas** al socio; y `Reserva.id_pago` ata la clase suelta a su cobro, así que queda un pago en la caja sin nada que explique qué se compró |
+
+El costo no es "perder historial". Es **desajustar la facturación cambiándole el rol a un
+profesor**. Una decisión de recursos humanos no puede tener ese alcance, y eso descarta la opción
+sola.
+
+**Dejar el 409.** Cuesta poco y es honesto, pero convierte un dato de la vida real —la gente
+cambia de puesto— en algo que el sistema no admite. El que decide es el gimnasio, no el esquema.
+
+**Apagar la fila en vez de borrarla.** Es la que ganó, el 2026-09-29, y lo que la hace posible ya
+estaba escrito en el esquema desde el primer día: los cuatro subtipos son **SOLAPADOS**
+(`db/schema.sql:213-215`, *"una misma persona puede tener las dos filas si cumple los dos
+roles"*). La base nunca prohibió que alguien fuera entrenador y profesor a la vez. El que imponía
+"un rol y uno solo" era el código, que leía la primera fila que encontraba y borraba la vieja al
+cambiar.
+
+#### Lo que se pagó por elegirla
+
+Un flag `activo` en cada una de las cuatro tablas (`db/schema.sql:209`, `:228`, `:241`, `:262`) y,
+con él, un desplazamiento conceptual que hay que decir en voz alta:
+
+> **La pregunta "¿qué es esta persona?" deja de responderse con la existencia de la fila y pasa a
+> responderse con su flag.**
+
+`roles_de_persona()` mira `rol_activo(fila)` y no `fila is not None`
+(`backend/models.py:1047-1094`, el bloque del empleado en `:1085-1092`). Eso tiene consecuencias que se pagan una por una,
+y cada lugar que las olvide deja entrar a un rol apagado: los tres selectores de profesionales
+(`backend/routers/personal.py:483-489`, `backend/routers/actividades.py:591-596`), quién es
+entrenador o nutricionista **de la sesión** (`backend/routers/rutinas.py:68-84`,
+`backend/routers/nutricion.py:71-80`) y el `id_profesor` que se firma en el token
+(`backend/routers/auth_router.py:202-209`). Son seis lugares, y por eso la pregunta se escribió
+una sola vez, en `rol_activo()` (`models.py:1034-1044`).
+
+Lo segundo que se paga es que **apagar el flag no alcanza**. La persona deja de entrar con ese rol
+al instante, pero no desaparece de las pantallas de los demás: un entrenador que pasa a recepción
+seguiría saliendo en "Mi entrenador" del socio, que lista las asignaciones `ACTIVA`. Ahí vuelve la
+regla de este capítulo —al cambiar el estado de una entidad, decidir qué pasa con todo lo que la
+referencia— y la respuesta es la misma que ya daba la baja del empleado: **se finalizan**, con
+fecha de hoy (`personal.py:430-460`, `_limpiar_al_apagar()`). El socio conserva la rutina que ese
+entrenador le armó; lo que pierde es al entrenador.
+
+**El patrón: soft delete de un rol, no de una persona.** Lo mismo que `Socio.activo` hace con la
+ficha, `Entrenador.activo` lo hace con una función. Y el nombre de lo que estaba pasando antes
+también sirve: *borrar un permiso vigente que además era la percha de un historial*.
+
+#### La segunda fila de esa clase, y cómo se cerró
+
+Puesto el nombre, el mismo patrón salta a la vista en otro lado: `Profesor_Actividad` —qué profesor
+está habilitado para dictar qué actividad— es **una fila de dos columnas y nada más**
+(`db/schema.sql:577-583`), y hace los mismos dos trabajos juntos:
+
+| El trabajo | Qué es |
+|---|---|
+| El **permiso** a futuro | "a esta persona se le puede programar Yoga". Es lo que el mostrador quiere revocar. |
+| El **hecho** del pasado | es el destino de las dos claves compuestas (`:1059-1065`), o sea lo que hace legítimo que cada horario y cada turno **ya dictado** esté a su nombre. |
+
+Y el borrado era peor que en el caso del rol, porque acá **nunca** se libera: las claves no miran
+fechas y los turnos no se borran jamás —dar de baja un horario los *cancela*, y lo dice en su propio
+comentario (`backend/routers/actividades.py:1541-1546`)—. Desde la primera clase dictada, ese par
+quedaba referenciado para siempre. Sacar al profesor de la actividad y darlo de baja respondían **500**
+para toda la vida del sistema. Estuvo invisible mucho tiempo porque el caso común del mostrador
+—lo asignaste mal y lo sacás antes de que dicte nada— funcionaba perfecto.
+
+La salida, el 2026-09-30, fue la misma: `Profesor_Actividad.activo` (`db/schema.sql:580`,
+`backend/models.py:861-872`). Lo que cambió con eso, y lo que **no** hubo que cambiar, es lo que
+enseña:
+
+- **Sacarlo de una actividad apaga la fila** (`actividades.py:958-962`), y volver a habilitarlo
+  **reactiva esa misma fila** en vez de crear otra (`:891-899`). Esa vuelta es el mismo movimiento
+  que el rol reactivado: la persona recupera su habilitación con su historia, no entra como si nunca
+  hubiera dado la clase.
+- **La baja del empleado dejó de tocarlas, y ésa fue la sorpresa.** El paso que las borraba existía
+  para que el profesor de baja *"no siguiera figurando entre quienes pueden dictar Yoga"*, y ese
+  objetivo ya estaba cumplido por otro lado: los cuatro lugares que ofrecen profesores filtran por
+  `Empleado.activo`. El borrado era **innecesario además de imposible**. Sacarlo cerró el 500 sin
+  agregar nada, y de yapa arregló otra pérdida que este capítulo anotaba aparte: al volver, sus
+  actividades vuelven con él, cuando antes había que reasignárselas una por una.
+
+**La lección de diseño, que es la que vale más que las dos columnas:** cuando el borrado de una fila
+falla contra una clave foránea, la primera pregunta no es cómo hacer que el borrado funcione, sino
+**cuántas cosas dice esa fila**. Si dice dos —un permiso y un hecho—, borrarla siempre va a ser
+imposible o destructivo, y la respuesta es separarlas. El flag es la forma más barata de separarlas
+sin partir la tabla.
 
 ---
 
@@ -116,7 +248,7 @@ Cada panel dice su verdad, y la grilla además dice la del otro.
 ### En los empleados, el acople es total
 
 Con el personal la regla es la contraria. Dar de baja a un empleado apaga siempre su cuenta
-(`backend/routers/personal.py:608`), y el docstring de `dar_de_baja_empleado()` dice por qué (línea 586): sin
+(`backend/routers/personal.py:669`), y el docstring de `dar_de_baja_empleado()` dice por qué (líneas 645-648): sin
 eso la baja *"sería cosmética —la ficha diría 'Inactivo' y la persona seguiría iniciando sesión con todos los
 permisos de su rol—, que es el agujero clásico de offboarding"*.
 
@@ -266,7 +398,7 @@ consecuencia la decide el código**, porque son decisiones de negocio —una res
 cambiar el estado de una entidad, decidir qué pasa con todo lo que la referencia"*.
 
 La baja de un empleado intenta la misma disciplina con sus propias conexiones. Borra su habilitación para
-dictar actividades (`personal.py:615-618`), para que no siga figurando entre quienes pueden dictar yoga, pero
+dictar actividades (`personal.py:677-677`), para que no siga figurando entre quienes pueden dictar yoga, pero
 **no toca los turnos ya programados**: *"esos guardan su propio id_profesor, y borrarlo dejaría clases sin
 responsable"*. Esa intención choca con una clave foránea compuesta del esquema. Y si el empleado era entrenador,
 la baja finaliza sus asignaciones activas, para que ningún socio siga viéndolo a cargo. Las dos cosas están
@@ -291,7 +423,7 @@ histórico, es una credencial.
 ### La clave foránea que queda en NULL
 
 Éste es el piso. Una sola tabla apunta a `Usuario`: `Asistencia.id_registrado_por`, que guarda quién fichó a
-alguien a mano. Y esa clave foránea (`db/schema.sql:1050`) **no tiene acción al borrar**:
+alguien a mano. Y esa clave foránea (`db/schema.sql:1062`) **no tiene acción al borrar**:
 
 ```sql
 ALTER TABLE "Asistencia" ADD CONSTRAINT "Asistencia_id_registrado_por_fkey"
@@ -329,6 +461,12 @@ con el mismo nombre no nazca trabada por los intentos fallidos de la anterior
 
 ## Con qué se conecta
 
+- **Es la misma idea que…** [el rol que se apaga](#el-rol-que-se-apaga) y la baja lógica del socio:
+  la fila queda marcada y un flag dice si cuenta hoy; la diferencia es que una marca a una persona y la
+  otra a una función suya.
+- **Existe por culpa de…** [clave foránea y acción referencial](A0-07-bases-de-datos-relacionales.md#clave-foránea-y-acción-referencial):
+  el rol se apaga en vez de borrarse porque seis claves foráneas sin acción al borrar apuntan a su fila
+  (→ [el rol que se apaga](#el-rol-que-se-apaga)).
 - **Es la misma idea que…** el [estado guardado](A-09-estados-derivados.md#estado-guardado): la baja es una
   decisión, y por eso se guarda con fecha y tipo en vez de deducirse.
 - **Es la misma idea que…** [la caja y sus cuatro casos](A-02-prepago-puro.md#la-caja-y-sus-cuatro-casos): un

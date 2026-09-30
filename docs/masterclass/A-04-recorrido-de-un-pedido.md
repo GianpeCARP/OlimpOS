@@ -67,7 +67,7 @@ secciones que siguen recorren la tabla de arriba abajo y después de abajo arrib
 | 14 | La dependencia de permisos | `backend/security.py:197-214` · `backend/permisos.py:358-361` | `requiere_accion()`, `puede_accion()` | [A-08](A-08-autorizacion.md#matriz-de-permisos) |
 | 15 | El handler | `backend/routers/cobros.py:237-486` | `cobrar()` | este capítulo |
 | 16 | La regla de negocio | `backend/renovacion.py:56-105` | `estado_renovacion()` | [A-02](A-02-prepago-puro.md#sin-cobros-por-adelantado) |
-| 17 | El ORM | `backend/models.py:453-478` y `481-524` | `Membresia`, `Pago` | [A0-09](A0-09-el-orm.md) |
+| 17 | El ORM | `backend/models.py:473-498` y `481-524` | `Membresia`, `Pago` | [A0-09](A0-09-el-orm.md) |
 | 18 | La conexión y el commit | `backend/database.py:92-113` · `backend/routers/cobros.py:465` | `engine`, `db.commit()` | [A0-07](A0-07-bases-de-datos-relacionales.md#transacción-acid-commit-y-rollback) |
 
 ### Vuelta
@@ -625,7 +625,7 @@ barrera real: un cuerpo con `"metodo": "MERCADO_PAGO"` no llega al handler, se r
 un 422 antes. Los cinco valores permitidos son [método de
 pago](A-02-prepago-puro.md#método-de-pago) en el sentido del negocio —cómo paga la persona,
 no qué proveedor procesa—, y son los mismos del tipo `metodo_pago` de la base
-(`db/schema.sql:471`).
+(`db/schema.sql:486`).
 
 `monto_manual` lleva `ge=1` y `allow_inf_nan=False` (línea 743), y el comentario de las
 líneas 740-742 dice qué pasaba sin eso: con `gt=0` pasaban `Infinity` y `NaN` —que el
@@ -812,7 +812,7 @@ rol directamente. Es la única comprobación de autorización de todo el recorri
 por la matriz, y vale anotarla como tal.
 
 `float(tipo.precio_actual)` es el primer cruce de tipos del lado del servidor: la columna es
-`numeric(10,2)` (`db/schema.sql:366`) y el ORM la entrega como `Decimal`. Se convierte acá y
+`numeric(10,2)` (`db/schema.sql:381`) y el ORM la entrega como `Decimal`. Se convierte acá y
 se vuelve a convertir en cada salida (`backend/routers/cobros.py:76`, `98`) porque los
 esquemas declaran `float`.
 
@@ -859,7 +859,7 @@ while (db.query(Membresia)
     inicio = inicio + timedelta(days=1)   # línea 379
 ```
 
-**La línea 359 protege el índice `membresia_una_activa_uidx`** (`db/schema.sql:1095-1096`),
+**La línea 359 protege el índice `membresia_una_activa_uidx`** (`db/schema.sql:1110-1111`),
 que es un [índice único parcial](A0-08-sql-indices-y-planes.md#índice-único-parcial) sobre
 `(id_socio) WHERE estado = 'ACTIVA'`: un socio no puede tener dos membresías ACTIVA a la
 vez. El punto es que `estado_renovacion` **no marca nada**: si encuentra una ACTIVA con
@@ -874,7 +874,7 @@ constraint queda en el registro del servidor, y la pantalla sólo dice el códig
 ([qué ve la pantalla con un 500](B-03-personal.md#36-dar-de-baja-a-un-empleado)).
 
 **Las líneas 375-379 protegen el otro índice**, `Membresia_id_socio_fecha_inicio_idx`
-(`db/schema.sql:1093`), que es único sobre `(id_socio, fecha_inicio)`. El comentario de las
+(`db/schema.sql:1108`), que es único sobre `(id_socio, fecha_inicio)`. El comentario de las
 líneas 362-374 cuenta el caso real que lo dispara: se cobra, se anula el pago por un error
 —lo que deja la membresía en `CANCELADA` pero con `fecha_inicio` de hoy— y se vuelve a
 cobrar el mismo día. La membresía nueva chocaría. La decisión es **correr el inicio al
@@ -904,8 +904,8 @@ vuelta el `id_membresia` que generó la secuencia, sin cerrar la transacción. S
 `membresia.id_membresia` sería `None` y el `Pago` quedaría huérfano.
 
 `es_adelanto=False` en la línea 408 es literal y siempre: la columna existe en el esquema
-(`db/schema.sql:476`) con un `CHECK` que la referencia y con su propio comentario
-(`db/schema.sql:496-499`) explicando que quedó en false desde el 2026-09-16. Es memoria de
+(`db/schema.sql:491`) con un `CHECK` que la referencia y con su propio comentario
+(`db/schema.sql:511-514`) explicando que quedó en false desde el 2026-09-16. Es memoria de
 una regla que cambió, no código olvidado.
 
 Y `fecha_pago=datetime.now()` (línea 405) usa el reloj del servidor. La misma decisión
@@ -1011,7 +1011,7 @@ Python](A-11-rendimiento.md#el-cuello-es-la-red-nunca-python).
 Tres notas sobre esa tabla.
 
 **La 14 es una carga perezosa y no molesta.** `_nombre_socio(socio)` toca `socio.persona`,
-que es una relación declarada en `backend/models.py:339` y que nadie había cargado. Una
+que es una relación declarada en `backend/models.py:359` y que nadie había cargado. Una
 sola consulta, una sola vez. Lo que sí sería un problema es esta misma jugada adentro de un
 bucle sobre cien socios: ahí se llama [N+1](A0-09-el-orm.md) y es el motivo por el que los
 listados de este sistema resuelven las relaciones en lote
@@ -1029,7 +1029,7 @@ copias.
 **Los viajes 12 y 13 se pueden discutir.** `db.refresh()` releé la fila completa después
 del `COMMIT`. Alcanzaba con los valores que el código ya tenía en memoria; lo que compra es
 que todo valor generado por la base —`fecha_pago` tiene un `DEFAULT now()` en
-`db/schema.sql:473`— llegue a la respuesta tal como quedó escrito, y no como lo calculó
+`db/schema.sql:488`— llegue a la respuesta tal como quedó escrito, y no como lo calculó
 Python. Dos viajes de ida y vuelta por una garantía de coherencia: es un precio que en este
 endpoint se paga y en un listado no se pagaría.
 
@@ -1270,7 +1270,7 @@ esenciales y cuáles eran consecuencia del navegador.
 | Escala | PWA | Flet |
 |---|---|---|
 | Vista | `CobrosView.tsx:233-268` · `cobrarMembresiaClick` | `Flet/Proyecto/app/views/cobros.py:760-793` · `_cobrar_membresia()` |
-| Capa intermedia | — | `Flet/Proyecto/app/state.py:954-979` · `cobrar_membresia()` |
+| Capa intermedia | — | `Flet/Proyecto/app/state.py:986-1011` · `cobrar_membresia()` |
 | Service | `services/cobrosService.ts:222-275` · `cobrar()` | `Flet/Proyecto/app/api_client.py:626-627` · `cobrar()` |
 | Cliente HTTP | `services/api.ts:194-247` · `pedir()` | `Flet/Proyecto/app/api_client.py:143-162` · `_pedir()` |
 | Sesión | Cookie `httponly` + cabecera CSRF | `Authorization: Bearer` + `X-Client-Type: escritorio` (`api_client.py:90-97`) |
@@ -1310,8 +1310,8 @@ Tres, marcadas acá y no corregidas en su archivo original, según la sección 7
 combo membresía + abono viaje en un solo pedido diciendo que
 "`Inscripcion_Actividad.id_membresia` es `NOT NULL`":
 `Proyecto - PWA/src/frontend/src/services/cobrosService.ts:9-14`,
-`backend/schemas.py:751-754` y `Flet/Proyecto/app/state.py:976-978`. Esa columna **no está**
-en la tabla: `db/schema.sql:639-647` declara siete columnas y ninguna es `id_membresia`, y
+`backend/schemas.py:751-754` y `Flet/Proyecto/app/state.py:1008-1010`. Esa columna **no está**
+en la tabla: `db/schema.sql:654-662` declara siete columnas y ninguna es `id_membresia`, y
 el comentario de la tabla no la menciona. El propio router lo dice al revés y en presente en
 `backend/routers/cobros.py:418-421`: *"La inscripción ya NO cuelga de la membresía
 (`Inscripcion_Actividad` perdió `id_membresia`): es del socio"*. **Gana el código y el
@@ -1323,13 +1323,13 @@ sobreviva a la cuota que da acceso al gimnasio. Los tres comentarios quedaron vi
 **2 · `saldar_deudas` es un campo muerto que la PWA sigue mandando.** El service lo incluye
 en el cuerpo (`cobrosService.ts:247`) y el esquema lo declara con valor por defecto
 (`backend/schemas.py:748`), pero el handler **no lo lee en ninguna línea**: el subsistema de
-deudas se retiró junto con la tabla, como registran `backend/models.py:527-530` y
+deudas se retiró junto con la tabla, como registran `backend/models.py:547-550` y
 `backend/routers/cobros.py:253-255`. Lo mismo vale para `deudas_saldadas`, que siempre sale
 como lista vacía (`backend/routers/cobros.py:480`), y para `deuda_total: 0.0`
 (`backend/routers/cobros.py:223`). Se buscó con `grep -rn "saldar_deudas"` sobre `backend/`,
 `Proyecto - PWA/src/frontend/src` y `Flet/Proyecto/app`: aparece exactamente dos veces, la
 declaración del esquema y el envío de la PWA. La app de escritorio ya no lo manda
-(`Flet/Proyecto/app/state.py:970-979`). Es residuo de compatibilidad, y el propio handler lo
+(`Flet/Proyecto/app/state.py:1002-1011`). Es residuo de compatibilidad, y el propio handler lo
 dice: los campos se mantienen en la respuesta por las apps, pero vacíos
 (`backend/routers/cobros.py:212-216`). No cambia ningún comportamiento.
 

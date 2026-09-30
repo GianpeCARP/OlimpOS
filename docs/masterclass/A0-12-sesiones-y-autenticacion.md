@@ -88,7 +88,7 @@ aprenderlos: no como una lista de opciones, sino como una cronología de acciden
 
 > **↓ Capa 1 — la respuesta que la crea, byte por byte.**
 
-Cuando `backend/routers/auth_router.py:108-237` · `login()` valida la contraseña y decide
+Cuando `backend/routers/auth_router.py:108-240` · `login()` valida la contraseña y decide
 que el cliente es un navegador, llama a `setear_cookies_sesion()`
 (`backend/cookies.py:82-101`). Lo único que eso hace es agregar dos líneas de texto a las
 cabeceras de la respuesta. Esas dos líneas, con la configuración de desarrollo de este
@@ -685,7 +685,7 @@ distinguir entre firma inválida, token alterado y token vencido, "porque no con
 al cliente cuál de los tres fue" — lo mismo que hace el login con los motivos de rechazo.
 
 **En este repo, cerrando el descenso.** El token nace en `backend/auth.py:148-191`, se emite
-en `backend/routers/auth_router.py:212-218`, y se valida en cada pedido dentro de
+en `backend/routers/auth_router.py:215-221`, y se valida en cada pedido dentro de
 `backend/security.py:112-114`. La clave con la que se firma es `SECRET_KEY`
 (`backend/auth.py:28`), leída del `.env`; si falta, el módulo se niega a importarse
 (`auth.py:29-33`) — otro caso de fallar cerrado: no hay arranque silencioso con una clave
@@ -805,14 +805,14 @@ participación y el que lo rechazaría sería el `exp`.
 
 Un token autocontenido, por construcción, **es válido hasta que vence**. El servidor no
 guardó nada de él, así que no hay nada que invalidar. Cerrar la sesión no cambia eso: el
-endpoint `POST /logout` (`backend/routers/auth_router.py:240-259`) sólo manda los dos
-`Set-Cookie` de borrado, y su propio docstring lo dice sin vueltas en `auth_router.py:254-256`:
+endpoint `POST /logout` (`backend/routers/auth_router.py:243-262`) sólo manda los dos
+`Set-Cookie` de borrado, y su propio docstring lo dice sin vueltas en `auth_router.py:257-259`:
 "el JWT en sí sigue siendo válido hasta que expire — así funcionan los tokens sin estado".
 
 Ese endpoint, además, **tiene que existir**: la cookie de sesión es `httponly`, así que
 JavaScript no puede borrarla. Sin el viaje al servidor, el "cerrar sesión" de la PWA
 limpiaría la pantalla y dejaría la cookie viva en el navegador para el próximo que use esa
-máquina (`auth_router.py:245-248`, y lo mismo del lado del cliente en
+máquina (`auth_router.py:248-251`, y lo mismo del lado del cliente en
 `Proyecto - PWA/src/frontend/src/services/authService.ts:114-116`).
 
 Con eso planteado, este sistema tiene exactamente **tres** formas de cortar una sesión antes
@@ -894,7 +894,7 @@ El precio de esa elección tiene tres partidas, y las tres son reales:
    manifiesta como 401 después de un ingreso exitoso, sin mensaje. Ya pasó una vez; quedó
    documentado en `api.ts:49-55` y el arreglo fue volver el valor por omisión relativo.
 2. **Hace falta un endpoint para cerrar sesión**, porque la cookie `httponly` no la puede
-   borrar el cliente (`auth_router.py:240-259`).
+   borrar el cliente (`auth_router.py:243-262`).
 3. **No hay revocación real**, sólo las tres salidas de [Caducidad y revocación](#caducidad-y-revocación).
 
 **Los nombres de los patrones**, que son lo que permite reconocer la misma jugada en otro
@@ -907,14 +907,14 @@ al portador** con todo lo que implica.
 Quién elige entre los dos transportes, con qué cabecera y qué cuesta que sea el cliente
 quien la declara, es materia del capítulo de autenticación del sistema
 ([los dos mecanismos de sesión y `X-Client-Type`](A-07-autenticacion.md#los-dos-mecanismos-de-sesión-y-x-client-type));
-acá alcanza con saber que la decisión se toma en `backend/routers/auth_router.py:220-228` y
+acá alcanza con saber que la decisión se toma en `backend/routers/auth_router.py:223-231` y
 que la rama del navegador deja `token` en nulo en la respuesta a propósito
-(`auth_router.py:226-228`), porque si el token también viniera en el cuerpo, JavaScript
+(`auth_router.py:229-231`), porque si el token también viniera en el cuerpo, JavaScript
 podría guardarlo y toda la ventaja de la cookie `httponly` se perdería.
 
 > **⚠ Discrepancia entre el código y sus comentarios, anotada y no corregida.** Dos
 > comentarios del repo dicen que la PWA guarda el token en `sessionStorage`:
-> `backend/routers/auth_router.py:268-269` ("La PWA guarda el token en sessionStorage, pero
+> `backend/routers/auth_router.py:271-272` ("La PWA guarda el token en sessionStorage, pero
 > NO los datos de la sesión") y
 > `Proyecto - PWA/src/frontend/src/App.tsx:56-57` ("se le pregunta al backend por el token
 > que quedó en sessionStorage"). **No es lo que hace el código.** Una búsqueda de

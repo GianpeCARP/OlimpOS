@@ -431,7 +431,7 @@ no toca nada adentro.
 La misma regla, del otro lado: cuando la lista sólo se dibuja y nunca se reordena ni se
 filtra, el índice es una clave legítima. Los nueve `key={i}` del repo son todos de esqueletos
 de carga —por ejemplo `SociosView` no, pero sí `ActividadesAdminView.tsx:218`,
-`DashboardView.tsx:320`, `PersonalView.tsx:181`—: rectángulos grises idénticos, sin estado,
+`DashboardView.tsx:320`, `PersonalView.tsx:183`—: rectángulos grises idénticos, sin estado,
 que aparecen y desaparecen todos juntos.
 
 ---

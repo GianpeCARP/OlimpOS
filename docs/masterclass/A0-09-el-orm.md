@@ -108,13 +108,13 @@ distintas.
 ### Tres opciones de relación que el repo usa, y por qué
 
 - **`cascade="all, delete-orphan"`**, una sola vez en todo el archivo:
-  `Rutina.ejercicios` (`models.py:581-582`). Quitar un ejercicio de la lista de la rutina
+  `Rutina.ejercicios` (`models.py:601-602`). Quitar un ejercicio de la lista de la rutina
   borra su fila, y borrar la rutina borra todos sus ejercicios. Está sólo ahí porque es el
   único caso donde el hijo no tiene ninguna existencia sin el padre: una línea de
   "4 × 12 de sentadilla" no significa nada fuera de su rutina. Un teléfono, en cambio, se
   borra con reglas propias (el principal que asciende), así que nadie quiere que se borre
   solo.
-- **`viewonly=True`** en `Socio.entrenadores` (`models.py:344`): la relación se puede leer
+- **`viewonly=True`** en `Socio.entrenadores` (`models.py:364`): la relación se puede leer
   pero el ORM se niega a escribir a través de ella. Asignar un entrenador tiene reglas
   —fechas, estado, una sola asignación activa— que viven en su endpoint, y una relación de
   sólo lectura impide que alguien las saltee con un `append`.

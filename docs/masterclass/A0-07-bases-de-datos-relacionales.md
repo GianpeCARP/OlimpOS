@@ -48,7 +48,7 @@ Lo que se gana con eso se llama **independencia física**: el programa dice *qu�
 la base decide *cómo* ir a buscarlo. En este repo se ve en negativo, que es la forma más
 clara de verlo: no hay una sola línea del backend que diga dónde está guardada una fila.
 Lo más parecido a una decisión de almacenamiento que toma este sistema es declarar índices
-(`db/schema.sql:1073-1160`), y un índice no cambia ninguna consulta: cambia cuánto tarda.
+(`db/schema.sql:1088-1175`), y un índice no cambia ninguna consulta: cambia cuánto tarda.
 
 ---
 
@@ -66,7 +66,7 @@ nada que reclamar. Tampoco hay "la fila número 3": para referirse a una fila ha
 nombrar un valor que la distinga, y eso es la clave primaria.
 
 El esquema de OlimpOS declara 41 tablas. La más simple sirve para ver las tres piezas
-juntas (`db/schema.sql:281-285`):
+juntas (`db/schema.sql:296-300`):
 
 ```sql
 CREATE TABLE "Patologia" (
@@ -101,7 +101,7 @@ puede tener varios telefonos, asi que no pueden ser columnas."*
 
 **N:M — muchos de acá con muchos de allá.** No se puede con una columna de ningún lado:
 hace falta una tabla en el medio, cuyas filas son los pares. `Socio_Patologia`
-(`db/schema.sql:291-298`) es el caso canónico: un socio puede tener varias patologías y
+(`db/schema.sql:306-313`) es el caso canónico: un socio puede tener varias patologías y
 una patología la pueden tener varios socios. La tabla del medio tiene además dos columnas
 propias —`fecha_diagnostico` y `observaciones`—, que son atributos **del par**, no de
 ninguno de los dos extremos: la fecha en que a Juan le diagnosticaron asma no es un dato
@@ -122,7 +122,7 @@ de Juan ni un dato del asma.
 > `WHERE estado = 'ACTIVA'` **deja afuera** las filas con `estado` nulo sin avisar. El
 > esquema de OlimpOS convirtió esa propiedad en una regla explícita: las nueve columnas
 > `estado` del archivo son `NOT NULL`, y el comentario de la sección de índices dice por
-> qué (`db/schema.sql:1080-1083`) — una fila con estado nulo no cumple la condición de un
+> qué (`db/schema.sql:1095-1098`) — una fila con estado nulo no cumple la condición de un
 > índice parcial, así que se escaparía del control sin disparar ningún error.
 >
 > Los valores de ancho variable (`text`, `varchar`) se guardan con su largo adelante. Si
@@ -168,7 +168,7 @@ hace socio y alguien que se dio de baja y vuelve son la misma persona con dos fi
 distintas (`backend/routers/socios.py:325-329` · `alta_socio()`). Sin ese `UNIQUE` la base
 habría aceptado el duplicado y el historial de esa persona habría quedado partido en dos.
 
-La excepción es `Socio_Patologia` (`db/schema.sql:296`), donde la clave primaria es
+La excepción es `Socio_Patologia` (`db/schema.sql:311`), donde la clave primaria es
 compuesta y natural: `PRIMARY KEY (id_socio, id_patologia)`. Es la elección correcta para
 una tabla puente, porque el par ya es único por definición y agregarle un identificador
 inventado permitiría cargar dos veces la misma patología al mismo socio.
@@ -215,19 +215,19 @@ ingresos y no aparece en el historial de nadie. Cuadrar la caja se vuelve imposi
 nadie sabe por qué.
 
 Este esquema declara **67** claves foráneas. Todas viven juntas al final del archivo
-(`db/schema.sql:959-1071`), agrupadas a propósito para que el orden en que se crean las
+(`db/schema.sql:974-1086`), agrupadas a propósito para que el orden en que se crean las
 tablas no importe.
 
 > **Discrepancia documentada, no corregida.** La cabecera del archivo
-> (`db/schema.sql:6`) y el encabezado de la sección (`db/schema.sql:962`) dicen *"66
+> (`db/schema.sql:6`) y el encabezado de la sección (`db/schema.sql:977`) dicen *"66
 > claves foráneas (64 simples + 2 compuestas)"*. Contando declaraciones, hay **64 simples
-> y 3 compuestas**: `fk_promocion_sede_dueno` (`db/schema.sql:1011-1013`),
-> `fk_horario_profesor_habilitado` (`db/schema.sql:1032-1034`) y
-> `fk_turno_profesor_habilitado` (`db/schema.sql:1036-1038`). El comentario "FK COMPUESTA
+> y 3 compuestas**: `fk_promocion_sede_dueno` (`db/schema.sql:1026-1028`),
+> `fk_horario_profesor_habilitado` (`db/schema.sql:1047-1049`) y
+> `fk_turno_profesor_habilitado` (`db/schema.sql:1051-1053`). El comentario "FK COMPUESTA
 > 2 de 2" cuenta **mecanismos** —el de la promoción y el del profesor habilitado— y el
 > segundo está declarado dos veces, sobre `Horario_Actividad` y sobre `Turno`. En la misma
 > línea, el comentario de los índices habla de *"las ocho columnas de estado"*
-> (`db/schema.sql:1083`) y en el archivo hay **nueve** columnas `estado NOT NULL`
+> (`db/schema.sql:1098`) y en el archivo hay **nueve** columnas `estado NOT NULL`
 > (`db/schema.sql:382, 411, 477, 615, 646, 666, 783, 821, 909`). Son dos conteos
 > desactualizados en comentarios; el DDL es correcto en los dos casos, y manda el código.
 
@@ -235,7 +235,7 @@ tablas no importe.
 
 No se puede referenciar cualquier columna: la columna apuntada tiene que ser única, porque
 si no "la fila referenciada" sería ambigua. Esa exigencia produce en este esquema una
-declaración que parece redundante y no lo es (`db/schema.sql:600`):
+declaración que parece redundante y no lo es (`db/schema.sql:615`):
 
 ```sql
     -- Clave candidata necesaria para la FK compuesta de habilitacion.
@@ -251,7 +251,7 @@ sintaxis exigiendo lo que la lógica ya garantizaba.
 
 Las dos claves foráneas compuestas de este esquema usan el mismo comportamiento del
 estándar, llamado `MATCH SIMPLE`: **si alguna columna de la clave compuesta es nula, la
-restricción no se verifica**. El comentario de `db/schema.sql:1004-1010` lo aprovecha como
+restricción no se verifica**. El comentario de `db/schema.sql:1019-1025` lo aprovecha como
 un condicional sin escribir un condicional: una promoción con sede valida que el dueño sea
 el de esa sede, y una promoción global (`id_sede` nulo) desactiva sola la verificación.
 La misma jugada, en `fk_horario_profesor_habilitado`, permite que un horario de sala libre
@@ -299,7 +299,7 @@ todavía no ocurrió.
 > `COMMIT`. Todas las claves foráneas de este esquema son `DEFERRABLE`, pero declaradas
 > sin `INITIALLY DEFERRED`, así que por omisión verifican al final de cada sentencia y
 > pueden diferirse a pedido con `SET CONSTRAINTS`. Los cinco disparadores de restricción de
-> la sección 10 sí son `DEFERRABLE INITIALLY DEFERRED` (`db/schema.sql:1218-1221`,
+> la sección 10 sí son `DEFERRABLE INITIALLY DEFERRED` (`db/schema.sql:1233-1236`,
 > `1289-1292`): esos corren **al confirmar**, y eso hace que el `COMMIT` sea un lugar donde
 > una operación todavía puede fallar.
 
@@ -320,7 +320,7 @@ irreversible, y porque el sistema ya resuelve "dar de baja" marcando
 **Qué se pagó.** El borrado real que sí existe —el de una cuenta de acceso— tiene que
 limpiar a mano lo que apunta a ella: `backend/routers/usuarios.py:564-566`
 (`borrar_cuenta()`) pone en nulo `Asistencia.id_registrado_por` antes de borrar el
-`Usuario`, porque la columna admite nulos (`db/schema.sql:697`) pero la base no lo hace
+`Usuario`, porque la columna admite nulos (`db/schema.sql:712`) pero la base no lo hace
 sola. Cada borrado nuevo que aparezca va a tener que escribir su propia limpieza, en
 orden, a mano. El mismo precio se paga al limpiar datos de prueba, y eso reaparece al
 final de este capítulo.
@@ -337,7 +337,7 @@ cuatro.
 
 **`NOT NULL`.** La columna tiene que tener valor. Ya vimos que en las columnas de estado
 no es cosmético: un estado nulo se escapa de los índices parciales
-(`db/schema.sql:1080-1083`).
+(`db/schema.sql:1095-1098`).
 
 **`UNIQUE`.** No hay dos filas con ese valor. `Persona.dni`, `Persona.email`,
 `Usuario.username`, `Socio.numero_socio`, `Socio.codigo_rfid`, `Pago.numero_comprobante`.
@@ -348,7 +348,7 @@ lector físico no exista.
 
 **`CHECK`.** Una expresión que tiene que dar verdadero para la fila que se escribe. Hay 12
 con nombre en el archivo. La más interesante no valida un rango sino una combinación
-(`db/schema.sql:596-597`):
+(`db/schema.sql:611-612`):
 
 ```sql
     -- Ambas NULL es valido: sala de acceso libre sin nadie a cargo.
@@ -364,7 +364,7 @@ El límite duro de un `CHECK` es que **sólo puede mirar la fila que se está es
 No puede contar filas de otra tabla. Por eso las reglas que sí necesitan mirar alrededor
 —que ningún empleado quede sin subtipo, que las reservas no pasen el cupo del turno— están
 escritas como disparadores de restricción diferidos, y el archivo lo explica en la línea
-donde arranca la sección (`db/schema.sql:1162-1172`).
+donde arranca la sección (`db/schema.sql:1177-1187`).
 
 **Tipo enumerado.** `CREATE TYPE ... AS ENUM` crea un tipo nuevo cuyo dominio es una lista
 cerrada de cadenas. Este esquema declara 13 (`db/schema.sql:62-74`) y los usa siempre con
@@ -377,7 +377,7 @@ pantalla; a un enumerado hay que alterarlo con un `ALTER TYPE`, que es una migra
 rigidez es la que se busca: `metodo_pago` tiene cinco valores porque el negocio tiene cinco
 formas de cobrar, y agregar una sexta es una decisión que amerita una migración, no un
 formulario. Las columnas que **deberían** ser enumerado y todavía son texto libre están
-enumeradas como pendientes en el cierre del archivo (`db/schema.sql:1437-1439`).
+enumeradas como pendientes en el cierre del archivo (`db/schema.sql:1452-1454`).
 
 > **↓ Capa 4 — cómo hace cumplir la base cada una.** Salteable si ya lo sabés.
 >
@@ -435,9 +435,9 @@ instancias del patrón, todas comentadas:
 | Regla | Pre-chequeo amable | Restricción real |
 |---|---|---|
 | Un email por persona | `backend/routers/socios.py:368-377` | `Persona.email UNIQUE` (`db/schema.sql:86`) |
-| Dos membresías del mismo socio no arrancan el mismo día | `backend/routers/cobros.py:362-379` | `Membresia_id_socio_fecha_inicio_idx` (`db/schema.sql:1093`) |
-| No retomar al socio el mismo día que se lo soltó | `backend/routers/socios.py:1037-1054` | `asignacion_entrenador_socio_entrenador_fecha_uidx` (`db/schema.sql:1147-1148`) |
-| No generar dos veces el mismo turno | `backend/turnos.py:288-294` | `Turno_id_sede_id_actividad_fecha_hora_idx` (`db/schema.sql:1114`) |
+| Dos membresías del mismo socio no arrancan el mismo día | `backend/routers/cobros.py:362-379` | `Membresia_id_socio_fecha_inicio_idx` (`db/schema.sql:1108`) |
+| No retomar al socio el mismo día que se lo soltó | `backend/routers/socios.py:1037-1054` | `asignacion_entrenador_socio_entrenador_fecha_uidx` (`db/schema.sql:1162-1163`) |
+| No generar dos veces el mismo turno | `backend/turnos.py:288-294` | `Turno_id_sede_id_actividad_fecha_hora_idx` (`db/schema.sql:1129`) |
 
 **Cómo se llama.** Validar dos veces, decidir una. Y el orden importa: el que decide es el
 de abajo.
@@ -465,8 +465,8 @@ adentro de cada fila.
   Trimestral desaparece del sistema, con su precio y su duración.
 
 Las tres desaparecen sacando el plan a su propia tabla, que es exactamente lo que hace
-`Tipo_Membresia` (`db/schema.sql:361-368`). El comentario de esa tabla lo nombra con el
-vocabulario formal (`db/schema.sql:370-372`): *"3FN: saca la dependencia transitiva Tipo ->
+`Tipo_Membresia` (`db/schema.sql:376-383`). El comentario de esa tabla lo nombra con el
+vocabulario formal (`db/schema.sql:385-387`): *"3FN: saca la dependencia transitiva Tipo ->
 Precio fuera de Membresia."*
 
 Las tres formas normales que este esquema usa y anota se leen así:
@@ -482,7 +482,7 @@ puede ordenar por calle.
 
 **2FN — con clave compuesta, todo atributo depende de la clave entera.** Sólo aplica donde
 la clave tiene más de una columna, y acá eso es `Socio_Patologia`. Su comentario lo
-declara (`db/schema.sql:302-303`): `fecha_diagnostico` y `observaciones` dependen del par
+declara (`db/schema.sql:317-318`): `fecha_diagnostico` y `observaciones` dependen del par
 socio + patología, no de una de las dos partes. El nombre de la patología, que depende sólo
 de la patología, está afuera, en `Patologia`.
 
@@ -495,7 +495,7 @@ dependencia transitiva. Se saca a `Tipo_Membresia` y listo.
 Acá está la parte que confunde, y el esquema la resolvió bien. `Membresia` guarda
 `precio_pactado` **y** `Tipo_Membresia` guarda `precio_actual`. Es el mismo número el día
 de la venta. No es redundancia, y el comentario lo argumenta en dos líneas
-(`db/schema.sql:387-388`): *"precio_pactado (historico) != Tipo_Membresia.precio_actual
+(`db/schema.sql:402-403`): *"precio_pactado (historico) != Tipo_Membresia.precio_actual
 (vigente). NO viola 3FN: son dos hechos distintos, lo que se cobro entonces y lo que se
 cobra hoy."*
 
@@ -505,7 +505,7 @@ juntas.** Cuando el dueño aumenta el plan, `precio_actual` cambia y `precio_pac
 tiene que cambiar; si cambiara, el sistema estaría reescribiendo el pasado. El detalle de
 negocio que hay detrás es de [A-02](A-02-prepago-puro.md#precio_pactado-contra-precio_actual).
 La misma lógica explica `Pago.monto_descuento`, guardado y no recalculado
-(`db/schema.sql:489-491`): la promoción puede vencer o cambiar, y hay que poder reconstruir
+(`db/schema.sql:504-506`): la promoción puede vencer o cambiar, y hay que poder reconstruir
 qué se cobró ese día.
 
 ### La redundancia que sí existe, y quién la vigila
@@ -517,13 +517,13 @@ poco común.
 sería derivable de `Sede.id_dueno`. Está porque las promociones globales no tienen sede y
 entonces no habría de dónde derivarlo. Y la contradicción entre los dos caminos la impide
 la clave foránea compuesta: el comentario cierra con *"es redundancia CONTROLADA POR
-RESTRICCIÓN, no libre"* (`db/schema.sql:457-461`).
+RESTRICCIÓN, no libre"* (`db/schema.sql:472-476`).
 
 **No controlada, y declarada como tal.** `Pago.id_socio` es derivable vía `id_membresia` o
 `id_inscripcion`, y `Pago.id_sede` sale de `Socio.id_sede`. El comentario lo marca como
-abierto: *"Nada garantiza hoy que coincidan"* (`db/schema.sql:489-493`). `Asistencia.id_sede`
+abierto: *"Nada garantiza hoy que coincidan"* (`db/schema.sql:504-508`). `Asistencia.id_sede`
 es peor: es triplemente derivable, de `Socio.id_sede` y, cuando hay reserva, de
-`Turno.id_sede` (`db/schema.sql:703-705`).
+`Turno.id_sede` (`db/schema.sql:718-720`).
 
 La anomalía concreta de esto último, para que no quede como una observación abstracta: si
 un socio cambia de sede y sus pagos viejos conservan la sede anterior, el informe de
@@ -597,13 +597,13 @@ familias ya están explicadas más arriba; lo que agrega la transacción es **cu
 verifica.
 
 Ahí está la utilidad del `DEFERRABLE` de las 67 claves foráneas y del `DEFERRABLE
-INITIALLY DEFERRED` de los cinco disparadores de restricción (`db/schema.sql:1167-1172`).
+INITIALLY DEFERRED` de los cinco disparadores de restricción (`db/schema.sql:1182-1187`).
 Un alta de empleado escribe primero la fila de `Empleado` —que en ese instante no tiene
 subtipo y viola la regla— y después la de `Entrenador`. Si la regla se verificara en el
 momento, la operación válida sería imposible. Verificándose al confirmar, el estado
 intermedio inválido nunca se ve desde afuera y la regla se cumple igual.
 
-Lo mismo hace `trg_reserva_cupo` (`db/schema.sql:1289-1292`): cancelar una reserva y
+Lo mismo hace `trg_reserva_cupo` (`db/schema.sql:1304-1307`): cancelar una reserva y
 promover a alguien de la lista de espera pasa por un instante en que hay una persona de
 más, y ese instante no tiene por qué ser ilegal si el estado final es correcto.
 
@@ -633,7 +633,7 @@ nació porque *"la regla existía SOLO en el código de los routers"* y dos asig
 activas insertadas por SQL entraban las dos (`backend/pruebas/test_una_sola_activa.py:1-18`).
 La respuesta fue un
 [índice único parcial](A0-08-sql-indices-y-planes.md#índice-único-parcial) —
-`asignacion_rutina_una_activa_uidx` (`db/schema.sql:1135-1136`)—, y el chequeo 4 de esa
+`asignacion_rutina_una_activa_uidx` (`db/schema.sql:1150-1151`)—, y el chequeo 4 de esa
 suite (líneas 126-135) comprueba justamente que la base frene lo que la app no ve.
 
 ### D — Durabilidad, y el piso de este capítulo

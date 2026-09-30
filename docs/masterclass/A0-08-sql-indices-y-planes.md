@@ -60,7 +60,7 @@ ya declara. Hay dos variantes que importan acá:
 - `LEFT JOIN`: si no hay pareja, la fila se conserva y las columnas del otro lado vienen en
   `NULL`.
 
-La diferencia no es cosmética, y el repo tiene el caso escrito. En `db/schema.sql:1262-1266`,
+La diferencia no es cosmética, y el repo tiene el caso escrito. En `db/schema.sql:1277-1281`,
 adentro de la función `trg_reserva_respeta_cupo()`:
 
 ```sql
@@ -85,7 +85,7 @@ colapsan un valor por cada grupo distinto de las columnas agrupadas.
 
 El repo usa las dos formas y en los dos casos la decisión está argumentada en el código.
 
-Sin agrupar, `db/schema.sql:1274-1276`:
+Sin agrupar, `db/schema.sql:1289-1291`:
 
 ```sql
 SELECT count(*) INTO v_ocupados
@@ -192,7 +192,7 @@ diecinueve filas que hayan caído ahí adentro.
 > **↓ Capa 3 — cuántas filas de este repo entran en una página.** Salteable si ya lo sabés.
 >
 > Hagamos la cuenta con `Asistencia`, una de las tablas que más crecen del esquema (una fila por
-> cada vez que alguien ficha). Su definición está en `db/schema.sql:689-697`:
+> cada vez que alguien ficha). Su definición está en `db/schema.sql:704-712`:
 >
 > | Columna | Tipo | Bytes |
 > |---|---|---|
@@ -256,7 +256,7 @@ en `db/schema.sql` no hay ningún `USING gin`, `USING gist` ni `USING hash`.
 > **↓ Capa 2 — cómo se recorre, con las comparaciones contadas.** Este es el piso del
 > concepto. Salteable si ya lo sabés.
 >
-> Tomemos `Asistencia_id_socio_fecha_hora_ingreso_idx`, definido en `db/schema.sql:1125`
+> Tomemos `Asistencia_id_socio_fecha_hora_ingreso_idx`, definido en `db/schema.sql:1140`
 > sobre `(id_socio, fecha_hora_ingreso)`.
 >
 > **Cuántas claves entran en una página de índice.** La entrada tiene 8 bytes de
@@ -322,7 +322,7 @@ en `db/schema.sql` no hay ningún `USING gin`, `USING gist` ni `USING hash`.
 >
 > `Asistencia` tiene cuatro índices B-tree: el que Postgres crea solo por la
 > [clave primaria](A0-07-bases-de-datos-relacionales.md#clave-primaria-e-identidad-generada),
-> más los tres declarados en `db/schema.sql:1124-1126`. Entonces un fichaje —una fila nueva—
+> más los tres declarados en `db/schema.sql:1139-1141`. Entonces un fichaje —una fila nueva—
 > cuesta:
 >
 > 1. Escribir la fila en una página de montón con lugar libre.
@@ -350,7 +350,7 @@ en `db/schema.sql` no hay ningún `USING gin`, `USING gist` ni `USING hash`.
 > índices**. Registrar la salida es, en escrituras de índice, gratis. Registrar la entrada
 > no lo es.
 >
-> **El corolario está escrito en el propio esquema.** `db/schema.sql:1138-1141`, arriba de
+> **El corolario está escrito en el propio esquema.** `db/schema.sql:1153-1156`, arriba de
 > `registro_ejercicio_socio_ej_fecha_uidx`:
 >
 > > *"El indice (id_socio, id_ejercicio) fue eliminado: era prefijo exacto de este. Un
@@ -394,8 +394,8 @@ CREATE UNIQUE INDEX asignacion_rutina_una_activa_uidx ON "Asignacion_Rutina" (id
     WHERE (estado = 'ACTIVA'::estado_asignacion);
 ```
 
-Eso es `db/schema.sql:1135-1136`, literal. Y el comentario de la tabla, en
-`db/schema.sql:786-790`, dice para qué:
+Eso es `db/schema.sql:1150-1151`, literal. Y el comentario de la tabla, en
+`db/schema.sql:801-805`, dice para qué:
 
 > *"INDICE PARCIAL asignacion_rutina_una_activa_uidx: un socio no puede tener dos rutinas
 > VIGENTES a la vez. El historial no cuenta, para eso el indice es parcial. Sin el WHERE
@@ -415,13 +415,13 @@ Eso es `db/schema.sql:1135-1136`, literal. Y el comentario de la tabla, en
 >    socio con cinco asignaciones históricas y una vigente aporta una sola entrada.
 > 3. **La escritura de las filas que no cumplen es más barata**, porque no hay clave que
 >    insertar. Es el punto 5 de la cuenta del apartado anterior: `asistencia_reserva_idx`
->    (`db/schema.sql:1126`) es parcial con `WHERE (id_reserva IS NOT NULL)`, así que un
+>    (`db/schema.sql:1141`) es parcial con `WHERE (id_reserva IS NOT NULL)`, así que un
 >    fichaje espontáneo —el socio que entra a entrenar sin haber reservado— no paga ese
 >    índice. Ahí el `WHERE` no está para garantizar nada: está para no indexar una columna
 >    que la mayoría de las filas tiene en nulo.
 >
 > **Y la trampa, que el esquema documenta arriba de todos los índices**, en
-> `db/schema.sql:1080-1083`:
+> `db/schema.sql:1095-1098`:
 >
 > > *"los índices parciales dependen de que la columna de estado sea NOT NULL. Una fila con
 > > estado nulo no cumple la condición del WHERE, así que queda FUERA del índice y convive
@@ -432,8 +432,8 @@ Eso es `db/schema.sql:1135-1136`, literal. Y el comentario de la tabla, en
 > el `WHERE` de un índice parcial sólo admite filas donde la condición da verdadero
 > verdadero. Una fila con `estado` nulo se escapa por el mismo agujero por el que se escapan
 > las `FINALIZADA`, con la diferencia de que esta sí es una asignación vigente para todo el
-> resto del sistema. Por eso `db/schema.sql:1132-1136` no alcanza solo: necesita el
-> `NOT NULL` de `db/schema.sql:783`, y el comentario de `db/schema.sql:1080-1083` lo deja
+> resto del sistema. Por eso `db/schema.sql:1147-1151` no alcanza solo: necesita el
+> `NOT NULL` de `db/schema.sql:798`, y el comentario de `db/schema.sql:1095-1098` lo deja
 > escrito: por esta razón *"las ocho columnas de estado del esquema son obligatorias"*.
 
 ### Los siete parciales de este esquema, y sus dos familias
@@ -457,7 +457,7 @@ mecanismo, dos usos que no se parecen en nada.
 Acá aparece lo que este mecanismo cobró, y es lo que lo convierte en una decisión de diseño
 y no en un truco.
 
-Casi todas las validaciones de este esquema son disparadores diferidos —`db/schema.sql:1167-1171`
+Casi todas las validaciones de este esquema son disparadores diferidos —`db/schema.sql:1182-1186`
 lo explica: validan al confirmar la transacción y no al escribir cada fila, para que una
 operación de varios pasos pueda pasar por estados intermedios inválidos—. **Un índice único
 parcial no admite eso.** Sólo una restricción `UNIQUE` declarada como tal puede ser
@@ -468,7 +468,7 @@ Reasignarle a un socio la rutina B cuando tenía la A son dos escrituras: finali
 crear la B. Si entran en ese orden no pasa nada; si entran al revés, hay un instante con dos
 `ACTIVA` y la base rechaza la operación. Y el orden no lo elige el programador: lo elige el
 ORM (→ [A0-09](A0-09-el-orm.md)), que agrupa los `INSERT` antes que los `UPDATE`. Entonces
-el endpoint tiene que forzarlo a mano. Es `backend/routers/rutinas.py:404-425` ·
+el endpoint tiene que forzarlo a mano. Es `backend/routers/rutinas.py:408-429` ·
 `asignar_rutina()`: el bucle de las líneas 404-411 pone la anterior en `FINALIZADA`, y la
 línea 425 es un `db.flush()` con diez líneas de comentario arriba explicando que **no es
 opcional**:
@@ -497,7 +497,7 @@ El mismo par de escrituras aparece en dietas, con el mismo índice parcial
 
 Entre los dos está el paso 2 (líneas 100-115), que reasigna por el endpoint y verifica que
 queda una sola `ACTIVA` y que la anterior sigue en el historial: es el que detecta si
-alguien saca el `flush()` de `backend/routers/rutinas.py:425`.
+alguien saca el `flush()` de `backend/routers/rutinas.py:429`.
 
 *(El archivo es un guion que se corre contra el backend levantado y la base vacía. Para
 escribir este capítulo se leyó, no se ejecutó.)*
@@ -570,9 +570,9 @@ la columna tal cual:
 ```
 
 **Y ahora el matiz que hace que esto no sea un defecto.** Los dos índices de `Pago` son
-`(id_sede, fecha_pago)` y `(id_socio, fecha_pago)` (`db/schema.sql:1105-1106`): en los dos,
+`(id_sede, fecha_pago)` y `(id_socio, fecha_pago)` (`db/schema.sql:1120-1121`): en los dos,
 `fecha_pago` es la **segunda** columna. Por la regla del prefijo que documenta
-`db/schema.sql:1139`, una consulta que filtra únicamente por fecha no puede usar ninguno de
+`db/schema.sql:1154`, una consulta que filtra únicamente por fecha no puede usar ninguno de
 los dos ni aunque estuviera escrita sin la función. Los índices de `Pago` están puestos para
 las otras dos preguntas que el sistema hace de verdad —los pagos de una sede por fecha y los
 pagos de un socio por fecha—, y el total mensual del panel se resuelve recorriendo `Pago`.
@@ -609,11 +609,11 @@ costo del resultado.
 al revés: `_clases_usadas()` (`backend/routers/actividades.py:130-134`) filtra
 `Reserva.id_inscripcion` y `Reserva.estado`, y los índices de `Reserva` son
 `(id_turno, estado)` y `(id_turno, id_socio)` más el de la clave primaria
-(`db/schema.sql:1121-1122`): **ninguno empieza por `id_inscripcion`**. Postgres tampoco
+(`db/schema.sql:1136-1137`): **ninguno empieza por `id_inscripcion`**. Postgres tampoco
 indexa sola una columna que es
 [clave foránea](A0-07-bases-de-datos-relacionales.md#clave-foránea-y-acción-referencial) —
 indexa el lado referenciado, que ya es clave primaria, nunca el que referencia—, así que
-`Reserva_id_inscripcion_fkey` (`db/schema.sql:1045`) no aporta ninguno. Contar las clases
+`Reserva_id_inscripcion_fkey` (`db/schema.sql:1060`) no aporta ninguno. Contar las clases
 usadas de un abono recorre `Reserva` entera.
 
 Es la contracara exacta de haber eliminado la columna `clases_restantes`: derivar el
@@ -630,9 +630,9 @@ Tres casos donde la condición del código calza exactamente con un índice decl
 
 | Consulta | Índice que la sirve |
 |---|---|
-| `db/schema.sql:1274-1276`, el `count(*)` del disparador de cupo, filtra `(id_turno, estado)` | `Reserva_id_turno_estado_idx`, `db/schema.sql:1121`, sobre `(id_turno, estado)` |
-| `backend/routers/dashboard.py:329-331` filtra `estado = 'ACTIVA'` y `fecha_vencimiento` entre hoy y el límite de aviso | `Membresia_estado_fecha_vencimiento_idx`, `db/schema.sql:1092`, sobre `(estado, fecha_vencimiento)` |
-| `backend/routers/portal.py:1139-1141` busca la medición de hoy por `(id_socio, fecha)` | `Registro_Salud_id_socio_fecha_idx`, `db/schema.sql:1089`, único sobre `(id_socio, fecha)` |
+| `db/schema.sql:1289-1291`, el `count(*)` del disparador de cupo, filtra `(id_turno, estado)` | `Reserva_id_turno_estado_idx`, `db/schema.sql:1136`, sobre `(id_turno, estado)` |
+| `backend/routers/dashboard.py:329-331` filtra `estado = 'ACTIVA'` y `fecha_vencimiento` entre hoy y el límite de aviso | `Membresia_estado_fecha_vencimiento_idx`, `db/schema.sql:1107`, sobre `(estado, fecha_vencimiento)` |
+| `backend/routers/portal.py:1139-1141` busca la medición de hoy por `(id_socio, fecha)` | `Registro_Salud_id_socio_fecha_idx`, `db/schema.sql:1104`, único sobre `(id_socio, fecha)` |
 
 El segundo es el molde del índice compuesto bien elegido: **igualdad en la primera columna,
 rango en la segunda.** Las membresías `ACTIVA` quedan contiguas en el árbol y adentro de ese
@@ -643,7 +643,7 @@ adentro de él.
 
 Hay un cuarto caso que muestra lo que un índice hace además de filtrar.
 `backend/routers/portal.py:1078-1083` pide las mediciones de un socio con
-`.order_by(RegistroSalud.fecha)`. Como el índice de `db/schema.sql:1089` está ordenado por
+`.order_by(RegistroSalud.fecha)`. Como el índice de `db/schema.sql:1104` está ordenado por
 `(id_socio, fecha)`, entrar por él devuelve las filas **ya ordenadas**: el plan puede no
 tener nodo de ordenamiento. Un B-tree no sólo encuentra: entrega en orden, y eso alcanza
 para `ORDER BY`, para `MIN`/`MAX` y para el `ORDER BY … DESC LIMIT 1` que el propio esquema
@@ -677,17 +677,17 @@ sin ventana.
 - *Modelarla con una restricción `UNIQUE` común.* No se puede sin borrar el historial, que
   es el dato que la tabla existe para guardar.
 - *Ponerle un índice a cada columna que aparece en un `WHERE`.* Es la tentación obvia y el
-  esquema la resistió: `db/schema.sql:1138-1141` documenta el índice que se **sacó** por ser
+  esquema la resistió: `db/schema.sql:1153-1156` documenta el índice que se **sacó** por ser
   prefijo de otro. Cada índice de más es una escritura de más en cada alta, para siempre.
 - *Guardar `clases_restantes` como columna.* Existió y se eliminó: *"clases_restantes fue
-  ELIMINADA: el consumo se calcula al vuelo contando Reserva"* (`db/schema.sql:653`). Un
+  ELIMINADA: el consumo se calcula al vuelo contando Reserva"* (`db/schema.sql:668`). Un
   contador guardado es rápido de leer y se
   desincroniza en la primera cancelación que alguien olvide descontar.
 
 **Qué se pagó.** Tres cosas, todas visibles en el código:
 
 1. **El `flush()` obligatorio.** El índice parcial no puede diferirse, así que el endpoint
-   tiene que ordenar sus escrituras a mano (`backend/routers/rutinas.py:413-425`). Diez
+   tiene que ordenar sus escrituras a mano (`backend/routers/rutinas.py:417-429`). Diez
    líneas de comentario existen para que nadie borre una línea que parece inofensiva.
 2. **Un recorrido por consulta en `_clases_usadas()`**, que es lo que cuesta derivar en vez
    de guardar cuando no hay índice que ayude.

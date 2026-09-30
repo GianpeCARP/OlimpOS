@@ -423,7 +423,7 @@ llega a aplicarse antes que el cuerpo.
 El uso está medido: sobre los 165 decoradores de ruta de `backend/routers/`, hay **164**
 apariciones de `Depends(get_db)` y **155** de `Depends(requiere_...)`. La diferencia no es
 descuido: son las rutas sin sesión —el login, el webhook de Mercado Pago— y las que piden
-`obtener_sesion` pelado, como `/me` (`backend/routers/auth_router.py:262-263`).
+`obtener_sesion` pelado, como `/me` (`backend/routers/auth_router.py:265-266`).
 
 ---
 

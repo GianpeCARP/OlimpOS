@@ -394,7 +394,7 @@ personal"*.
 
 ### El 404 en vez del 403
 
-Éste es el piso. `_rutina_del_staff()` (`backend/routers/rutinas.py:214-228`) es la única puerta
+Éste es el piso. `_rutina_del_staff()` (`backend/routers/rutinas.py:218-232`) es la única puerta
 por la que el personal accede a una rutina, y rechaza la propia de un socio **con exactamente el
 mismo 404 que si no existiera**:
 
@@ -411,7 +411,7 @@ la rutina propia de un socio."* Con un 403, alguien del personal podría recorre
 uno y distinguir "no existe" de "existe pero es privada", y contar cuántos socios se arman su
 propia rutina. Con el mismo 404 para los dos casos, no hay nada que distinguir.
 
-Las dietas tienen la función gemela, `_dieta_del_staff()` (`backend/routers/nutricion.py:193`),
+Las dietas tienen la función gemela, `_dieta_del_staff()` (`backend/routers/nutricion.py:196`),
 con la misma condición sobre `id_nutricionista`.
 
 El principio que sale de las dos secciones es corto: **403 cuando el rechazo sólo habla de quien

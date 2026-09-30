@@ -8,7 +8,7 @@ explicación: si no alcanza, el enlace lleva a la sección donde el concepto arr
 que vino a resolver y baja hasta su piso. Ése es el único lugar donde está explicado, y este glosario
 no le agrega nada.
 
-Son **144 conceptos**, cada uno con un solo capítulo dueño. Hay además dos cosas que no son
+Son **145 conceptos**, cada uno con un solo capítulo dueño. Hay además dos cosas que no son
 conceptos:
 
 - **Remisiones**, en cursiva y con una flecha: el nombre con que alguien suele buscar algo —*ACID*,
@@ -37,6 +37,7 @@ ruteo del [índice](00-indice.md).
 
 | Término | Qué es | Capítulo |
 |---|---|---|
+| *`activo` de un subtipo* | → [El rol que se apaga](A-10-bajas-logicas.md#el-rol-que-se-apaga) | A-10 |
 | *ACID* | → [Transacción, ACID, commit y rollback](A0-07-bases-de-datos-relacionales.md#transacción-acid-commit-y-rollback) | A0-07 |
 | [Aislamiento de lo propio](A-08-autorizacion.md#aislamiento-de-lo-propio) | Lo del socio se pide sin id, y lo que se armó solo es invisible para el personal: responde 404 y no 403, porque un 403 confirmaría que existe. | A-08 |
 | [Aleatoriedad criptográfica y base64url](A0-11-criptografia-aplicada.md#aleatoriedad-criptográfica-y-base64url) | Un valor impredecible, sacado del generador del sistema operativo (`secrets`, no `random`), y su escritura en caracteres aptos para una URL o una cabecera. | A0-11 |
@@ -267,6 +268,7 @@ ruteo del [índice](00-indice.md).
 | [Regla resuelta en el backend](A-09-estados-derivados.md#regla-resuelta-en-el-backend) | Las pantallas reciben la decisión ya tomada y su motivo en vez de recalcular la regla, así que ninguna ofrece un botón que la API va a rechazar. | A-09 |
 | [Restricción y tipo enumerado](A0-07-bases-de-datos-relacionales.md#restricción-y-tipo-enumerado) | `NOT NULL`, `UNIQUE`, `CHECK` y los `ENUM` de Postgres: reglas que la base hace cumplir en cada escritura, aunque el código se equivoque. | A0-07 |
 | *RFID* | → [muerto en pantalla no es muerto en el código](A-01-que-es-olimpos.md#muerto-en-pantalla-no-es-muerto-en-el-código) | A-01 |
+| [El rol que se apaga](A-10-bajas-logicas.md#el-rol-que-se-apaga) | La fila de un rol de empleado no se borra cuando la persona deja de cumplirlo: queda apagada sosteniendo su historial, y un flag dice qué es alguien hoy. De ahí que los roles se acumulen. | A-10 |
 | [Rol de sesión y los seis roles](A-06-los-seis-roles.md#rol-de-sesión-y-los-seis-roles) | `dueno`, `recepcionista`, `entrenador`, `nutricionista`, `profesor` y `socio`: las etiquetas que viajan en el token y contra las que se evalúan los permisos. | A-06 |
 | *Rollback* | → [Transacción, ACID, commit y rollback](A0-07-bases-de-datos-relacionales.md#transacción-acid-commit-y-rollback) | A0-07 |
 
@@ -389,6 +391,7 @@ gimnasio.
 | **Presupuesto de recursos** | Cada tope elegido y escrito —hilos, conexiones, segundos de espera—, no dejado en el valor de fábrica. | [A0-10](A0-10-python-del-lado-del-servidor.md#por-qué-está-hecho-así) |
 | **Principio de Kerckhoffs** | Un sistema tiene que seguir siendo seguro aunque el atacante conozca todo menos la clave. | [A0-11](A0-11-criptografia-aplicada.md#clave-secreta) |
 | **Renderizado declarativo con representación intermedia barata** | Describir la pantalla entera para cada estado y comparar una copia liviana en vez de tocar la estructura cara. | [A0-06](A0-06-react.md#por-qué-está-hecho-así) |
+| **Soft delete de un rol, no de una persona** | Marcar en vez de borrar lo que además de ser un permiso vigente es la percha de un historial: la fila del rol queda y un flag dice si cuenta hoy. | [A-10](A-10-bajas-logicas.md#el-rol-que-se-apaga) |
 | **Seguro por omisión** | La protección ya está puesta sin que nadie tenga que acordarse de ponerla: el CSRF es un middleware y no una dependencia. | [A0-12](A0-12-sesiones-y-autenticacion.md#los-dos-mecanismos-de-este-sistema-y-por-qué-son-dos) |
 | **Stale-while-revalidate e invalidación por generación** | Servir lo guardado aunque esté vencido mientras se refresca por detrás, y descartar el refresco que llega tarde. | [A-11](A-11-rendimiento.md#servir-y-refrescar) |
 | **Validar dos veces, decidir una** | La interfaz ayuda a no equivocarse y la capa de abajo decide; el orden importa. | [A0-07](A0-07-bases-de-datos-relacionales.md#restricción-y-tipo-enumerado) |

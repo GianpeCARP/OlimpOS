@@ -273,9 +273,9 @@ Hay tres lugares de este repo donde eso deja de ser teoría.
 mismo pedido llega dos veces —un doble click en el mostrador, un reintento del
 navegador— se cobra dos veces. Como el método no puede prometer nada, la protección hay
 que construirla: el número de comprobante es `UNIQUE` en la base
-(`db/schema.sql:479`) y además se chequea antes para dar un mensaje legible, devolviendo
+(`db/schema.sql:494`) y además se chequea antes para dar un mensaje legible, devolviendo
 409 en `cobros.py:337-350`; y `Membresia` tiene un índice único sobre
-`(id_socio, fecha_inicio)` (`db/schema.sql:1093`) que impide dos períodos que arranquen
+`(id_socio, fecha_inicio)` (`db/schema.sql:1108`) que impide dos períodos que arranquen
 el mismo día. El patrón se llama **clave de idempotencia**: el cliente aporta un
 identificador del intento y el servidor lo usa para reconocer el repetido.
 
@@ -453,8 +453,8 @@ Un socio puede armarse su propia rutina, con `POST /portal/mi-rutina/propia`
 (`backend/routers/portal.py:415`). Esa rutina queda con `id_entrenador` en NULL. Si un
 entrenador pide `GET /rutinas/{id}` con ese id, la respuesta es **404 Not Found** —la
 misma, palabra por palabra, que si el id no existiera—. La línea es
-`backend/routers/rutinas.py:226-227`, dentro de `_rutina_del_staff()`
-(`rutinas.py:214-228`):
+`backend/routers/rutinas.py:230-231`, dentro de `_rutina_del_staff()`
+(`rutinas.py:218-232`):
 
 ```python
 rutina = db.get(Rutina, id_rutina)
@@ -464,7 +464,7 @@ if rutina is None or rutina.id_entrenador is None:
 
 Fijate en el `or`: **las dos condiciones dan el mismo error y el mismo texto**. Esa
 función es el único camino por el que el personal llega a una rutina, y la usan los cinco
-endpoints que la necesitan —`rutinas.py:318`, `:389`, `:516`, `:557` y `:575`—, así que no
+endpoints que la necesitan —`rutinas.py:322`, `:393`, `:520`, `:561` y `:579`—, así que no
 hay ninguna puerta lateral por la que una rutina propia se filtre.
 
 Lo que interesa acá es el uso del código. En HTTP, 403 y 404 dicen cosas distintas: el
@@ -613,7 +613,7 @@ Tres usos de cabeceras en este repo, cada uno de una familia distinta:
 
 Son también el canal por el que viaja el único dato que decide qué forma tiene la sesión:
 `X-Client-Type: escritorio` en `Flet/Proyecto/app/api_client.py:90`, leído en
-`auth_router.py:114` y comparado en `auth_router.py:220`. Que un valor que el cliente
+`auth_router.py:114` y comparado en `auth_router.py:223`. Que un valor que el cliente
 escribe a su antojo elija el mecanismo de autenticación es, visto desde la seguridad, una
 cosa distinta de lo que parece desde la comodidad — ese doble ángulo es de
 [A-07](A-07-autenticacion.md#los-dos-mecanismos-de-sesión-y-x-client-type) y de la ficha
@@ -674,9 +674,9 @@ de la jornada. Es una lectura por clave primaria contra una base que está a 44 
 La falta de memoria se ve igual de clara del lado del cliente. La PWA **no guarda nada**
 de la identidad: al recargar la página con F5, el navegador tira el árbol entero y la app
 arranca sin saber quién es. Lo resuelve preguntando: `GET /me`
-(`backend/routers/auth_router.py:262-289`, `sesion_actual()`) devuelve la misma forma que
+(`backend/routers/auth_router.py:265-292`, `sesion_actual()`) devuelve la misma forma que
 el login, y `App.tsx:65-67` lo dispara al montar. El motivo es el del comentario de
-`auth_router.py:271-273`: si los roles vivieran en el navegador, alcanzaría con editarlos
+`auth_router.py:274-276`: si los roles vivieran en el navegador, alcanzaría con editarlos
 desde las herramientas del navegador para darse permisos ajenos.
 
 > Ese mismo docstring dice que la PWA guarda el token en `sessionStorage`, y no es así: la

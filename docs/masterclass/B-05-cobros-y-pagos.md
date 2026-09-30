@@ -66,7 +66,7 @@ La respuesta del estado de cuenta todavía trae `deudas` y `deuda_total`, siempr
 acepta un `saldar_deudas` que nadie lee (`backend/schemas.py:748`). Quedaron *"por compatibilidad con
 las apps"* cuando se eliminó la tabla, y las dos apps los siguen recorriendo: la PWA arma una lista de
 deudas con días de atraso que nunca tiene elementos (`Proyecto - PWA/src/frontend/src/services/cobrosService.ts:350-363`)
-y Flet lo mismo (`Flet/Proyecto/app/state.py:742-757`). Por qué no hay deuda está en
+y Flet lo mismo (`Flet/Proyecto/app/state.py:774-789`). Por qué no hay deuda está en
 [la tabla que no existe](A-02-prepago-puro.md#la-tabla-que-no-existe); el `saldar_deudas` sin leer, en
 [las discrepancias del recorrido](A-04-recorrido-de-un-pedido.md#discrepancias-encontradas).
 
@@ -91,7 +91,7 @@ en el mismo cobro.
 | Endpoint | `backend/routers/cobros.py` | 236-486 | `cobrar()` |
 | Regla de negocio | `backend/renovacion.py` | 1-105 | `estado_renovacion()` |
 | Vista Flet | `Flet/Proyecto/app/views/cobros.py` | 760-848 | `_cobrar_membresia()`, `_cobrar_plan()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 954-979 | `cobrar_membresia()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 986-1011 | `cobrar_membresia()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 626-627 | `cobrar()` |
 
 **Cómo funciona.** Está recorrido entero en [A-04](A-04-recorrido-de-un-pedido.md), escala por escala:
@@ -155,7 +155,7 @@ La línea DFD nombra todos los rechazos de A-04 y los dos primeros de esta tabla
 |---|---|---|---|
 | Service PWA | `Proyecto - PWA/src/frontend/src/services/cobrosService.ts` | 280-292 | `anularPago()` |
 | Endpoint | `backend/routers/cobros.py` | 489-519 | `anular_pago()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1015-1016 | `anular_pago()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1047-1048 | `anular_pago()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 630-631 | `anular_pago()` |
 
 **Cómo funciona.** El pago existe, o 404 (`cobros.py:501-503`); no estaba ya anulado, o 400 (`:505-509`).
@@ -212,7 +212,7 @@ la membresía vigente, los últimos pagos y desde cuándo se puede renovar.
 | Membresía vigente | `backend/routers/cobros.py` | 106-128 | `_membresia_vigente()` |
 | Regla de negocio | `backend/renovacion.py` | 1-105 | `estado_renovacion()` |
 | Vista Flet | `Flet/Proyecto/app/views/cobros.py` | 188-207, 417-447 | `_panel_cuenta()`, `_bloque_historial()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 723-783 | `get_cuenta_socio()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 755-815 | `get_cuenta_socio()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 622-623 | `obtener_estado_cuenta()` |
 
 **Cómo funciona.** El socio existe, o 404 (`cobros.py:195-197`). La membresía vigente, corrigiendo las
@@ -254,11 +254,11 @@ tiene la sección.
 | Esquema | `backend/schemas.py` | 650-657 | `TipoMembresiaOut` |
 | Endpoint | `backend/routers/cobros.py` | 135-148 | `listar_tipos()` |
 | Vista Flet | `Flet/Proyecto/app/views/cobros.py` | 247-327 | `_bloque_membresia()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 711-721 | `get_tipos_membresia()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 743-753 | `get_tipos_membresia()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 618-619 | `obtener_tipos_membresia()` |
 
 **Cómo funciona.** Todos los planes, activos o no, del más barato al más caro (`cobros.py:140`). La PWA
-se queda con los activos (`sociosService.ts:333-334`); Flet los muestra todos (`state.py:711-721`), y
+se queda con los activos (`sociosService.ts:333-334`); Flet los muestra todos (`state.py:743-753`), y
 cobrar uno dado de baja lo rechaza el backend (proceso 46).
 
 **Qué escribe y qué lee.** Lee `Tipo_Membresia` entera. Coincide con la línea DFD.

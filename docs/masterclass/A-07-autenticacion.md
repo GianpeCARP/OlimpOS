@@ -94,7 +94,7 @@ no los 72 que decía un comentario, está en
 ### 2 · Se muestra una sola vez, porque no hay otra forma
 
 La contraseña sale del backend **una única vez**: en la respuesta del alta
-(`password_temporal=password_temporal` en `backend/routers/personal.py:296`, y lo mismo en
+(`password_temporal=password_temporal` en `backend/routers/personal.py:359`, y lo mismo en
 el alta de socio). No hay ninguna columna que la guarde en texto: ni `db/schema.sql` ni
 `backend/models.py` tienen un campo así, sólo `password_hash`.
 

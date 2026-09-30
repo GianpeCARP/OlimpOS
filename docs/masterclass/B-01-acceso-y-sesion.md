@@ -92,7 +92,7 @@ suya. Hasta que lo hace no puede iniciar sesión.
 | Service PWA | `Proyecto - PWA/src/frontend/src/services/authService.ts` | 144-158 | `cambiarPassword()` |
 | Esquemas | `backend/schemas.py` | 103-142 | `_PASSWORDS_COMUNES`, `CambiarPasswordRequest` |
 | Validación (422) | `backend/main.py` | 236-249 | `errores_de_validacion()` |
-| Endpoint | `backend/routers/auth_router.py` | 292-338 | `cambiar_password()` |
+| Endpoint | `backend/routers/auth_router.py` | 295-341 | `cambiar_password()` |
 | Freno de intentos | `backend/routers/auth_router.py` | 63-105 | `_HASH_DE_RELLENO`, `_ip()`, `_frenar_si_excede()`, `_registrar_intento_fallido()`, `_cuenta_no_disponible()` |
 | Freno de intentos | `backend/limite_intentos.py` | 46-77 | `ip_excedida()`, `registrar_fallo_ip()`, `trabar_cuenta()`, `cuenta_trabada()` |
 | Hash | `backend/auth.py` | 55-74 | `hashear_password()`, `verificar_password()` |
@@ -122,18 +122,18 @@ suya. Hasta que lo hace no puede iniciar sesión.
    ([esquema de entrada y el 422](A0-10-python-del-lado-del-servidor.md#esquema-de-entrada-y-salida-y-el-422)),
    y `errores_de_validacion()` le saca a la respuesta el valor recibido (`main.py:239-245`): el
    servidor no le devuelve a nadie la contraseña que rechazó.
-5. **El endpoint** (`auth_router.py:307-334`) aplica las mismas defensas que el login, con las
+5. **El endpoint** (`auth_router.py:310-337`) aplica las mismas defensas que el login, con las
    mismas funciones ([el mismo contador](A-07-autenticacion.md#el-mismo-contador-en-el-cambio-de-clave)):
-   - toma la IP del socket y corta con 429 si ya gastó su cupo (`:308-309`);
-   - busca la cuenta (`:310`); si no existe, está inactiva, bloqueada o trabada, gasta el tiempo de
-     un bcrypt contra el hash de relleno y responde el 401 genérico (`:316-319`);
+   - toma la IP del socket y corta con 429 si ya gastó su cupo (`:311-312`);
+   - busca la cuenta (`:313`); si no existe, está inactiva, bloqueada o trabada, gasta el tiempo de
+     un bcrypt contra el hash de relleno y responde el 401 genérico (`:319-322`);
    - si la contraseña actual no coincide, suma un fallo al mismo contador del login y responde el
-     mismo 401 (`:321-323`);
-   - si la nueva es igual a la actual, 400 (`:325-329`). Esa comparación no puede hacerse en texto:
+     mismo 401 (`:324-326`);
+   - si la nueva es igual a la actual, 400 (`:328-332`). Esa comparación no puede hacerse en texto:
      la actual no está guardada en ningún lado, así que se verifica la nueva contra el hash, como si
      fuera un intento de login;
    - guarda el hash nuevo, baja la marca de temporal y pone el contador en cero, en una sola
-     confirmación (`:331-334`).
+     confirmación (`:334-337`).
 6. **La respuesta es un mensaje, sin sesión**
    ([por qué tampoco da sesión](A-07-autenticacion.md#4--el-cambio-de-clave-y-por-qué-tampoco-da-sesión)).
    La PWA avisa y vuelve al login (`CambiarPasswordView.tsx:70-71`); Flet vuelve a armar la
@@ -143,12 +143,12 @@ suya. Hasta que lo hace no puede iniciar sesión.
 
 | Tabla | Atributo | Escribe o lee | Línea |
 |---|---|---|---|
-| `Usuario` | `username` | lee | `auth_router.py:310` |
+| `Usuario` | `username` | lee | `auth_router.py:313` |
 | `Usuario` | `activo`, `bloqueado` | lee | `auth_router.py:104` (`_cuenta_no_disponible()`) |
-| `Usuario` | `password_hash` | lee | `auth_router.py:321` y `:325` |
-| `Usuario` | `password_hash` | escribe | `auth_router.py:331` |
-| `Usuario` | `debe_cambiar_password` | escribe | `auth_router.py:332` |
-| `Usuario` | `intentos_fallidos` | lee y escribe | `auth_router.py:96-99` (en un fallo) y `:333` (en el éxito) |
+| `Usuario` | `password_hash` | lee | `auth_router.py:324` y `:328` |
+| `Usuario` | `password_hash` | escribe | `auth_router.py:334` |
+| `Usuario` | `debe_cambiar_password` | escribe | `auth_router.py:335` |
+| `Usuario` | `intentos_fallidos` | lee y escribe | `auth_router.py:96-99` (en un fallo) y `:336` (en el éxito) |
 
 Coincide con la línea DFD. Un detalle que la línea deja ver: `debe_cambiar_password` se escribe pero
 **no se lee**. El endpoint no exige que la cuenta esté marcada, así que cualquiera que sepa su
@@ -175,10 +175,10 @@ pedir el secreto.
 
 | Caso | Código | Mensaje | Dónde |
 |---|---|---|---|
-| Más de 20 fallos desde esa IP en 10 minutos | 429 | *"Demasiados intentos fallidos. Esperá unos minutos y volvé a intentar."* | `auth_router.py:75-80`, llamado en `:309` |
-| Cuenta inexistente, inactiva, bloqueada o trabada | 401 | *"Usuario o contraseña incorrectos"* | `auth_router.py:316-319` (`_rechazar()`, `:56-60`) |
-| Contraseña actual equivocada | 401 | el mismo | `auth_router.py:321-323` |
-| La nueva es igual a la actual | 400 | *"La contraseña nueva tiene que ser distinta de la actual."* | `auth_router.py:325-329` |
+| Más de 20 fallos desde esa IP en 10 minutos | 429 | *"Demasiados intentos fallidos. Esperá unos minutos y volvé a intentar."* | `auth_router.py:75-80`, llamado en `:312` |
+| Cuenta inexistente, inactiva, bloqueada o trabada | 401 | *"Usuario o contraseña incorrectos"* | `auth_router.py:319-322` (`_rechazar()`, `:56-60`) |
+| Contraseña actual equivocada | 401 | el mismo | `auth_router.py:324-326` |
+| La nueva es igual a la actual | 400 | *"La contraseña nueva tiene que ser distinta de la actual."* | `auth_router.py:328-332` |
 | Menos de 8 caracteres | 422 | *"String should have at least 8 characters"* | `schemas.py:120` |
 | Sin letras o sin números | 422 | *"La contraseña tiene que tener letras y números."* | `schemas.py:133-135` |
 | Una de las más usadas | 422 | *"Esa contraseña es de las más usadas. Elegí otra."* | `schemas.py:136-138` |
@@ -209,10 +209,10 @@ en Flet— o avisar que falta definir la contraseña.
 | Store PWA | `Proyecto - PWA/src/frontend/src/store/authStore.ts` | 107-135 | `login` |
 | Service PWA | `Proyecto - PWA/src/frontend/src/services/authService.ts` | 57-104 | `LoginResultado`, `login()` |
 | Esquemas | `backend/schemas.py` | 33-38 y 149-202 | `LoginRequest`; `PersonaOut`, `UsuarioOut`, `LoginResponse` |
-| Endpoint | `backend/routers/auth_router.py` | 108-237 | `login()` |
+| Endpoint | `backend/routers/auth_router.py` | 108-240 | `login()` |
 | Freno de intentos | `backend/routers/auth_router.py` | 63-105 | `_HASH_DE_RELLENO`, `_ip()`, `_frenar_si_excede()`, `_registrar_intento_fallido()`, `_cuenta_no_disponible()` |
 | Freno de intentos | `backend/limite_intentos.py` | 46-77 | `ip_excedida()`, `registrar_fallo_ip()`, `trabar_cuenta()`, `cuenta_trabada()` |
-| Roles | `backend/models.py` | 1002-1041 | `roles_de_persona()` |
+| Roles | `backend/models.py` | 1035-1082 | `roles_de_persona()` |
 | Token | `backend/auth.py` | 148-191 | `crear_token_acceso()` |
 | Cookies | `backend/cookies.py` y `backend/csrf.py` | 82-101 y 58-60 | `setear_cookies_sesion()`, `generar_token_csrf()` |
 | Vista Flet | `Flet/Proyecto/app/views/login.py` | 29-145 y 267-318 | `show_login()`, `_load_main_app()` |
@@ -246,7 +246,7 @@ pendiente (`state.py:106-111`); con sesión guarda el token (`:133`), arma el us
 (`:138-150`), lanza la precarga del caché (`:157`) y la vista construye la aplicación
 (`login.py:267-318`).
 
-En el backend, `login()` (`auth_router.py:108-237`) hace, en orden:
+En el backend, `login()` (`auth_router.py:108-240`) hace, en orden:
 
 1. **Campos vacíos → 400** (`:139-153`), antes de tocar la base.
 2. **IP del socket → 429** si ya gastó su cupo (`:155-156`;
@@ -263,9 +263,9 @@ En el backend, `login()` (`auth_router.py:108-237`) hace, en orden:
 8. **Roles** (`:186-194`), derivados de las tablas subtipo
    ([derivación de roles](A-06-los-seis-roles.md#derivación-de-roles)). Sin ninguno, 403.
 9. **Los ids que viajan firmados**: el del socio con una consulta (`:196-197`) y el del profesor
-   navegando desde la persona (`:202-205`) ([identidad firmada](A-07-autenticacion.md#identidad-firmada)).
-10. **Contador en cero y último acceso**, confirmados (`:207-210`).
-11. **El token** (`:212-218`): un [JWT](A0-12-sesiones-y-autenticacion.md#jwt) firmado con
+   navegando desde la persona (`:202-208`) ([identidad firmada](A-07-autenticacion.md#identidad-firmada)).
+10. **Contador en cero y último acceso**, confirmados (`:210-213`).
+11. **El token** (`:215-221`): un [JWT](A0-12-sesiones-y-autenticacion.md#jwt) firmado con
     [HMAC](A0-11-criptografia-aplicada.md#hmac-y-firma-simétrica), que lleva el usuario, los roles
     y los dos ids (`auth.py:176-191`).
 12. **Por dónde viaja** (`:216-224`): con `X-Client-Type: escritorio`, en el cuerpo; sin esa
@@ -283,11 +283,11 @@ En el backend, `login()` (`auth_router.py:108-237`) hace, en orden:
 | `Usuario` | `activo`, `bloqueado` | lee | `auth_router.py:104` |
 | `Usuario` | `password_hash` | lee | `auth_router.py:165` |
 | `Usuario` | `debe_cambiar_password` | lee | `auth_router.py:181` |
-| `Usuario` | `id_persona`, `id_usuario` | lee | `auth_router.py:171` y `:213` |
-| `Usuario` | `intentos_fallidos` | lee y escribe | `auth_router.py:96-99` (sube en un fallo), `:182` y `:207` (vuelve a cero) |
-| `Usuario` | `ultimo_acceso` | escribe | `auth_router.py:208` |
-| `Persona` | `id_persona`, `nombre`, `apellido`, `dni`, `email`, `fecha_nacimiento`, `activo` | lee | `auth_router.py:171` y `:234` (`PersonaOut`, `schemas.py:149-158`) |
-| `Dueno`, `Socio`, `Empleado`, `Entrenador`, `Nutricionista`, `Recepcionista`, `Profesor` | la existencia de la fila | lee | `models.py:1002-1041` (`roles_de_persona()`), más `auth_router.py:196` (`Socio`) y `:202-205` (`Profesor`) |
+| `Usuario` | `id_persona`, `id_usuario` | lee | `auth_router.py:171` y `:216` |
+| `Usuario` | `intentos_fallidos` | lee y escribe | `auth_router.py:96-99` (sube en un fallo), `:182` y `:210` (vuelve a cero) |
+| `Usuario` | `ultimo_acceso` | escribe | `auth_router.py:211` |
+| `Persona` | `id_persona`, `nombre`, `apellido`, `dni`, `email`, `fecha_nacimiento`, `activo` | lee | `auth_router.py:171` y `:237` (`PersonaOut`, `schemas.py:149-158`) |
+| `Dueno`, `Socio`, `Empleado`, `Entrenador`, `Nutricionista`, `Recepcionista`, `Profesor` | la existencia de la fila | lee | `models.py:1035-1082` (`roles_de_persona()`), más `auth_router.py:196` (`Socio`) y `:202-208` (`Profesor`) |
 
 Las tablas y los atributos coinciden con la línea DFD. La salida, no del todo: la línea declara
 *"Sesion iniciada, cambio de contrasena obligatorio, acceso denegado, cuenta trabada o cuenta sin
@@ -307,7 +307,7 @@ tratar "falta la contraseña" como si fuera un error, ni como si fuera una sesi�
 **Cómo se llama:** una *unión discriminada*: un tipo con varias formas y un campo que dice cuál es.
 
 **Quién entra a Flet, y el Profesor que entra sin secciones.** Para el backend, el Profesor es un rol
-como cualquier otro: `roles_de_persona()` lo agrega (`models.py:1038-1039`), el login le da sesión y
+como cualquier otro: `roles_de_persona()` lo agrega (`models.py:1080-1080`), el login le da sesión y
 el token lo lleva. La app de escritorio filtra después, del lado del cliente: `state.login()` sólo
 guarda el token si `tiene_acceso_a_la_app()` da verdadero (`state.py:125-131`). Entra quien tenga
 algún rol de `ROLES_CON_ACCESO` —los que tienen al menos una sección distinta de NINGUNO en la
@@ -366,7 +366,7 @@ nombre tal cual, y una cuenta con una mayúscula entraba por la PWA y no por Fle
 | Vista PWA | `Proyecto - PWA/src/frontend/src/components/ui/Sidebar.tsx` | 16-19 | `handleLogout` |
 | Store PWA | `Proyecto - PWA/src/frontend/src/store/authStore.ts` | 166-202 | `sesionPerdida`, `logout` |
 | Service PWA | `Proyecto - PWA/src/frontend/src/services/authService.ts` | 114-116 | `logout()` |
-| Endpoint | `backend/routers/auth_router.py` | 240-259 | `logout()` |
+| Endpoint | `backend/routers/auth_router.py` | 243-262 | `logout()` |
 | Cookies | `backend/cookies.py` | 104-116 | `borrar_cookies_sesion()` |
 | Vista Flet | `Flet/Proyecto/app/components/ui.py` | 78-82 | `handle_logout()` |
 | Estado Flet | `Flet/Proyecto/app/state.py` | 183-192 | `logout()` |
@@ -379,10 +379,10 @@ En la PWA, el botón llama a `logout()` sin esperarlo y navega al login en el mi
 identidad (`:194-201`). El pedido lleva el token CSRF en la cabecera, como todo pedido que no es
 `GET` (`api.ts:203-206`), y lo necesita: como hay cookie de sesión, el middleware exige que cabecera
 y cookie coincidan (`csrf.py:74-93`). Por eso nadie puede cerrarte la sesión desde otro sitio
-(`auth_router.py:251-252`).
+(`auth_router.py:254-255`).
 
 El endpoint no pide sesión válida —si el token ya venció, igual hay que poder limpiar las cookies—,
-llama a `borrar_cookies_sesion()` y contesta un mensaje (`auth_router.py:258-259`). Cómo se borra
+llama a `borrar_cookies_sesion()` y contesta un mensaje (`auth_router.py:261-262`). Cómo se borra
 una cookie, y por qué la ruta tiene que coincidir con la del alta, está en
 [cookie y sus atributos](A0-12-sesiones-y-autenticacion.md#cookie-y-sus-atributos).
 
@@ -433,7 +433,7 @@ al backend quién es.
 | Cliente PWA | `Proyecto - PWA/src/frontend/src/services/api.ts` | 101-116 y 166 | `tokenCsrf()`, `haySesion()`, `SIN_SESION_PROPIA` |
 | Service PWA | `Proyecto - PWA/src/frontend/src/services/authService.ts` | 126-135 | `sesionActual()` |
 | Sesión | `backend/security.py` | 80-142 | `obtener_sesion()` |
-| Endpoint | `backend/routers/auth_router.py` | 262-289 | `sesion_actual()` |
+| Endpoint | `backend/routers/auth_router.py` | 265-292 | `sesion_actual()` |
 | Esquemas | `backend/schemas.py` | 149-202 | `PersonaOut`, `UsuarioOut`, `LoginResponse` |
 | Vista Flet | — (no existe en Flet) | | |
 
@@ -453,8 +453,8 @@ proceso y la sesión termina cuando se cierra la ventana.
    (`:108`), verifica firma y vencimiento (`:112`), relee la cuenta de la base (`:121-123`) y rechaza
    la que tiene que cambiar la clave (`:129-134`). Por qué se relee la cuenta en cada pedido está en
    [identidad firmada](A-07-autenticacion.md#por-qué-se-resuelve-una-vez-y-se-relee-siempre).
-4. **`sesion_actual()`** arma la misma forma que el login, sin token (`auth_router.py:280-289`): la
-   cuenta y la persona salen de la base, **los roles y el id de socio salen del token** (`:287-288`).
+4. **`sesion_actual()`** arma la misma forma que el login, sin token (`auth_router.py:283-292`): la
+   cuenta y la persona salen de la base, **los roles y el id de socio salen del token** (`:290-291`).
 5. **La vuelta.** Con sesión, el store guarda la identidad (`authStore.ts:87-95`). Sin sesión,
    marca "no autenticado" sin mostrar ningún error (`:96-104`), porque nadie hizo nada mal. `/me`
    está en la lista de rutas donde un 401 no es una sesión caída (`api.ts:162-166`), así que ese
@@ -465,8 +465,8 @@ proceso y la sesión termina cuando se cierra la ventana.
 | Tabla | Atributo | Escribe o lee | Línea |
 |---|---|---|---|
 | `Usuario` | `activo`, `bloqueado`, `debe_cambiar_password` | lee | `security.py:122` y `:129` |
-| `Usuario` | `id_usuario`, `id_persona`, `username`, `ultimo_acceso`, `activo` | lee | `auth_router.py:285` (`UsuarioOut`) |
-| `Persona` | `id_persona`, `nombre`, `apellido`, `dni`, `email`, `fecha_nacimiento`, `activo` | lee | `auth_router.py:280` y `:286` (`PersonaOut`) |
+| `Usuario` | `id_usuario`, `id_persona`, `username`, `ultimo_acceso`, `activo` | lee | `auth_router.py:288` (`UsuarioOut`) |
+| `Persona` | `id_persona`, `nombre`, `apellido`, `dni`, `email`, `fecha_nacimiento`, `activo` | lee | `auth_router.py:283` y `:289` (`PersonaOut`) |
 
 Coincide con la línea DFD, y lo que la línea no dice también es exacto: **no lee ninguna tabla de
 rol**, porque los roles salen del token. Son dos consultas contra la base —la cuenta por clave

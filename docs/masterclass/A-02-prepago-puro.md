@@ -30,7 +30,7 @@ Hay dos modelos, y todo lo demás del capítulo se desprende de cuál se elige.
 
 El gimnasio eligió prepago, y lo eligió sin grises. `CLAUDE.md` lo dice en dos frases —*"Prepago
 puro. No hay tabla `Deuda`"*— y el esquema escribe la política completa en el encabezado de su
-sección de dinero (`db/schema.sql:349-356`): sin débito automático ni suscripción; si el gimnasio
+sección de dinero (`db/schema.sql:364-371`): sin débito automático ni suscripción; si el gimnasio
 cierra por un perjuicio propio, la membresía se congela con origen `GIMNASIO` y no se devuelve
 plata; si el socio se va a mitad de período, no hay compensación; y el reembolso existe sólo para
 casos residuales como un cobro duplicado, y es siempre total.
@@ -88,7 +88,7 @@ palabras: *"'Debe' = no tiene membresía vigente"*.
 
 Y una **membresía vigente** es una fila de `Membresia` en estado `ACTIVA` cuyo período cubre
 el día de hoy: que empezó y todavía no terminó. El período lo marcan dos columnas,
-`fecha_inicio` y `fecha_vencimiento` (`db/schema.sql:375-383`).
+`fecha_inicio` y `fecha_vencimiento` (`db/schema.sql:390-398`).
 
 Lo que se sigue de esa definición cambia la pregunta que se le puede hacer al sistema. **"¿Cuánto
 debe?" no tiene respuesta**, porque no hay un saldo: hay un período pagado o no hay ninguno. La
@@ -132,7 +132,7 @@ En la base hay más de un número que se llama "precio", y cada uno registra un 
 | `precio_pactado` | `Membresia` | lo que costó **ese período** cuando se vendió | nunca |
 | `monto` y `monto_descuento` | `Pago` | lo que **efectivamente se cobró**, y cuánto se descontó | nunca |
 
-`db/schema.sql:361-368` para el plan y `375-383` para la membresía. En la semilla del estado de
+`db/schema.sql:376-383` para el plan y `375-383` para la membresía. En la semilla del estado de
 entrega (`db/seed.sql:111-112`), el plan Mensual cuesta $35.000 por 30 días y el Trimestral
 $95.000 por 90; al crear una membresía, la semilla copia el precio actual del plan en el
 pactado (`seed.sql:337-338`), que es exactamente lo que pasa en cada venta real.
@@ -215,14 +215,14 @@ cuota" no tiene dos candidatos para mostrar.
 
 El esquema se diseñó para soportar adelantos, y todavía lo muestra. `Pago` tiene una columna
 `es_adelanto` con una restricción que sólo tiene sentido si puede ser verdadera
-(`db/schema.sql:484`):
+(`db/schema.sql:499`):
 
 ```sql
 CONSTRAINT chk_pago_adelanto_periodo CHECK (NOT es_adelanto OR periodo_desde IS NOT NULL)
 ```
 
 "Si es un adelanto, tiene que decir desde cuándo cubre." La regla de negocio apagó esa
-capacidad, y el comentario de la columna (`schema.sql:496-499`) lo registra: *"Siempre false
+capacidad, y el comentario de la columna (`schema.sql:511-514`) lo registra: *"Siempre false
 desde 2026-09-16 (…) Se conserva por los pagos históricos y por chk_pago_adelanto_periodo"*. La
 columna no se borró porque puede haber pagos anteriores a esa fecha marcados como adelanto, y un
 registro contable no se reescribe.
@@ -264,7 +264,7 @@ simple el modelo de datos.
 Ningún período se renueva solo. Cada uno se cobra por un acto explícito: el recepcionista en el
 mostrador, o el socio desde la app. `CLAUDE.md` lo dice sin rodeos —*"No hay renovación
 automática"*— y el esquema lo pone en la primera línea de su política de dinero: *"Sin debito
-automatico ni suscripcion"* (`db/schema.sql:350`).
+automatico ni suscripcion"* (`db/schema.sql:365`).
 
 Del lado del pago online, la diferencia está en qué se le pide a Mercado Pago. La plataforma
 ofrece dos cosas distintas: una **preferencia**, que es un cobro único —la persona paga una vez y
@@ -295,7 +295,7 @@ no hay "el plan del socio": hay un plan por período, y puede cambiar en cada un
 ### Sólo porcentajes
 
 La única forma de descuento del sistema es una **promoción porcentual**: un porcentaje sobre el
-precio, con fechas de vigencia. `Promocion` (`db/schema.sql:437-450`) guarda el porcentaje en
+precio, con fechas de vigencia. `Promocion` (`db/schema.sql:452-465`) guarda el porcentaje en
 `porcentaje_descuento numeric(5,2)` y lo acota con una restricción: mayor que cero y hasta cien.
 No existe un descuento de monto fijo.
 
@@ -306,7 +306,7 @@ siendo un 20 % después de un aumento; un "$7.000 menos" pesaría cada vez menos
 ### Guardada en el pago
 
 La promoción no se aplica leyéndola cada vez: queda **registrada en el `Pago`**, con `id_promocion`
-y `monto_descuento` (`schema.sql:464-484`). Es la misma lógica que `precio_pactado`: el descuento
+y `monto_descuento` (`schema.sql:479-499`). Es la misma lógica que `precio_pactado`: el descuento
 que se hizo ese día es un hecho histórico. Si el dueño cambia el porcentaje de la promoción, o la
 da de baja, los pagos que ya la usaron no cambian.
 
@@ -417,7 +417,7 @@ $30.000 desde la consola del navegador—.
 ### Vender actividad aparte de la cuota
 
 La cuota da acceso al gimnasio. Las actividades con turno —yoga, boxeo— se venden aparte, con
-**planes de actividad** (`Plan_Actividad`, `db/schema.sql:541`), y la forma de cada plan la decide
+**planes de actividad** (`Plan_Actividad`, `db/schema.sql:556`), y la forma de cada plan la decide
 una sola columna, `tipo_limite`, con tres valores (`schema.sql:73`):
 
 | `tipo_limite` | Qué vende | Qué significa `cantidad` |

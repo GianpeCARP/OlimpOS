@@ -96,7 +96,7 @@ siendo correcta.
 
 ### La única autoridad
 
-La función que responde qué es alguien es `roles_de_persona()` (`backend/models.py:1002-1040`), y su docstring
+La función que responde qué es alguien es `roles_de_persona()` (`backend/models.py:1035-1082`), y su docstring
 empieza por ahí: *"Esta función es la ÚNICA autoridad sobre 'qué es' alguien."* Lo que hace es mirar, una por
 una, en qué tablas de rol aparece la persona:
 
@@ -107,22 +107,31 @@ if persona.socio is not None:
     roles.append(Rol.SOCIO)
 empleado = persona.empleado
 if empleado is not None:
-    if empleado.entrenador is not None:
+    if rol_activo(empleado.entrenador):
         roles.append(Rol.ENTRENADOR)
-    if empleado.nutricionista is not None:
+    if rol_activo(empleado.nutricionista):
         roles.append(Rol.NUTRICIONISTA)
-    if empleado.recepcionista is not None:
+    if rol_activo(empleado.recepcionista):
         roles.append(Rol.RECEPCIONISTA)
-    if empleado.profesor is not None:
+    if rol_activo(empleado.profesor):
         roles.append(Rol.PROFESOR)
 ```
 
-Dos decisiones están en esa forma. Primero, **devuelve una lista y no un valor**, porque los roles se acumulan:
+Tres decisiones están en esa forma. Primero, **devuelve una lista y no un valor**, porque los roles se acumulan:
 el docstring da el ejemplo del dueño que entrena en su propio gimnasio (`dueno` + `socio`), o el entrenador que
 además es socio. Cuando una persona tiene varios roles, la matriz le da el permiso más alto de todos, y un rol
 extra nunca le quita nada. Segundo, **una lista vacía** quiere decir que la persona existe pero no tiene ningún
 rol que habilite sesión, y el login la rechaza con un 403 en vez de dejarla entrar a un sistema donde no puede
 abrir ninguna pantalla.
+
+Tercero, y es la asimetría que salta a la vista: las dos primeras preguntas son `is not None` y las cuatro del
+empleado son **`rol_activo()`** (`models.py:1022-1032`), que pide que la fila exista **y** tenga `activo` en
+verdadero. En los cuatro subtipos del empleado la fila dejó de alcanzar, porque la de un rol que la persona ya
+no cumple **no se borra**: sostiene su historial. Por qué, qué se descartó y qué se paga, en
+[el rol que se apaga](A-10-bajas-logicas.md#el-rol-que-se-apaga). Acá alcanza con la consecuencia: un empleado
+puede tener las cuatro filas y ninguna prendida, y en ese caso no es nada. `Dueno` y `Socio` no pasaron por eso
+—la baja del socio ya vive en `Socio.activo` y en filas de `Baja`
+([A-10](A-10-bajas-logicas.md#baja-lógica-soft-delete))—, y por eso siguen preguntando por la fila.
 
 ### Las consultas contadas
 
@@ -157,7 +166,7 @@ medido es de 3 a 7 consultas según la persona: hoy hay cuatro subtipos de emple
 ### Una vez, en el login
 
 Esa cuenta es la razón de la decisión más importante sobre los roles: **se calculan una sola vez, al iniciar
-sesión, y viajan firmados dentro del token**. El docstring de la función lo dice (líneas 1018-1020): se llama
+sesión, y viajan firmados dentro del token**. El docstring de la función lo dice (líneas 1051-1053): se llama
 *"UNA vez, en el login, y el resultado se firma dentro del JWT. Recalcularlo en cada request costaría (…) por
 pedido para un dato que no cambia durante la sesión."*
 
@@ -198,3 +207,5 @@ resultado para no recalcularlo; firmado, porque el cliente lo lleva y no lo pued
   sus filas, y con varios roles gana el permiso más alto.
 - **Existe por culpa de…** la [identidad firmada](A-07-autenticacion.md#identidad-firmada): los roles viajan en
   el token, y por eso un cambio de rol exige volver a iniciar sesión.
+- **Existe por culpa de…** [el rol que se apaga](A-10-bajas-logicas.md#el-rol-que-se-apaga): los cuatro roles de
+  empleado preguntan por un flag y no por la fila, porque la fila de un rol viejo queda sosteniendo su historial.

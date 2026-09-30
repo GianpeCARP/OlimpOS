@@ -1,6 +1,6 @@
 # OlimpOS — Estado actual
 
-**Foto al 2026-09-26.** Sólo el presente: dónde estamos, qué falta y qué no se
+**Foto al 2026-09-30.** Sólo el presente: dónde estamos, qué falta y qué no se
 probó. Lo permanente (idea, reglas del negocio, trampas) está en `CLAUDE.md`, y el
 historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tanda.**
 
@@ -38,6 +38,39 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
 ## Lo que falta, en orden
 
 ### 1. Hecho pero sin probar en pantalla
+- **La habilitación de un profesor se apaga en vez de borrarse** (base, backend). Cierra el
+  500 de "un profesor que dictó una clase no se puede dar de baja" y el mismo choque en
+  `desasignar_profesor()`. `Profesor_Actividad` suma `activo` (**ya está en `db/schema.sql` y
+  aplicado en Neon**; la única fila que había quedó prendida). Sacarlo de una actividad apaga
+  la fila y **volver a habilitarlo reactiva esa misma fila**, con su historia; sacarlo dos
+  veces da 404. La lista de habilitados de una actividad filtra por los tres flags
+  (`ProfesorActividad.activo`, `Profesor.activo`, `Empleado.activo`) y habilitar a alguien
+  dado de baja da 409. **La baja del empleado dejó de tocar las habilitaciones**: era
+  innecesario —los cuatro lugares que ofrecen profesores ya filtran por `Empleado.activo`— y
+  era lo que causaba el 500; de paso, al reactivarlo sus actividades vuelven con él, que antes
+  había que reasignar a mano. Probado contra la base real con el escenario completo (profesor,
+  actividad, horario y un turno ya dictado), marcado y borrado después: 18 chequeos, conteos
+  iguales antes y después. La PWA y Flet **no necesitaron cambios**: el diálogo de asignación ya
+  era un interruptor y sigue igual, sólo que ahora funciona siempre. **Falta verlo en pantalla.**
+- **Los roles de un empleado se acumulan, y se apagan en vez de borrarse** (base, backend,
+  PWA y Flet). Cambiar de rol borraba la fila del rol viejo, que es el destino de claves
+  foráneas sin ON DELETE, así que respondía **409 a cualquiera con historial** (un socio a
+  cargo, una rutina, un horario). Ahora la fila queda con `activo=false` sosteniendo su
+  historial y `roles_de_persona` mira ese flag. Como los subtipos siempre fueron SOLAPADOS,
+  de paso un empleado puede tener **varios roles a la vez**: el alta y la edición reciben
+  una lista (al menos uno), las dos apps los eligen con **casillas**, y la tarjeta de
+  Personal y la fila de Usuarios muestran **todos** (antes Usuarios mostraba sólo el primero
+  y a un profesor lo daba como "Sin rol": a Flet le faltaba `profesor` en `ROLE_CONFIG`).
+  Sacarle Entrenador **finaliza sus asignaciones activas**, igual que la baja; volver al rol
+  reactiva su fila con título y matrícula intactos y NO reabre las asignaciones. Los
+  selectores de entrenador, nutricionista y profesor y las validaciones de horario filtran
+  por el flag. `_validar_cambio_de_rol()` se borró entero.
+  **La columna `activo` ya está en `db/schema.sql` y aplicada en Neon** (las 4 filas que
+  había quedaron prendidas). Probado llamando las funciones reales contra la base real con
+  datos marcados y borrados después (22 chequeos, conteos iguales antes y después), y el
+  árbol de controles de Flet auditado con estado simulado (15 chequeos, incluidas las
+  trampas 2 y 8). Compila en las tres capas. **Falta verlo en pantalla, con el backend
+  reiniciado** (uvicorn corre sin `--reload`).
 - **Baja voluntaria desde el mostrador** (backend): la baja inmediata ahora respeta el tipo,
   así que la voluntaria deja viva la cuenta de acceso y la de mora o administrativa la apaga,
   igual que la baja programada y la del portal. Antes `dar_de_baja()` la apagaba siempre.
@@ -214,10 +247,38 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   comunes de la sección y explica V-10, **B-03** (Personal, 29 a 37), que además explica
   qué ve la pantalla con un 500 (proceso 36; lo cita A-04), y **B-04** (Usuarios y cuentas,
   38 a 45), que explica por qué el validador del mail corre antes que `EmailStr` (lo cita B-02), y
-  **B-05** (Cobros y pagos, 46 a 51), que se apoya en A-02 y A-04 para no repetir el cobro.
-  **Lo que sigue es B-06 (Asistencia, 52 a 56)**, y así hasta B-15; después C. Todo capítulo
+  **B-05** (Cobros y pagos, 46 a 51), que se apoya en A-02 y A-04 para no repetir el cobro, y
+  **B-06** (Asistencia, 52 a 56), el más corto y el de la decisión de negocio más fuerte —el
+  gimnasio no cierra la puerta—, que explica el 201 con `permitido=False` y por qué el "asistió"
+  de una reserva no se guarda.
+  **Lo que sigue es B-07 (Recepción, 57 a 59)**, y así hasta B-15; después C. Todo capítulo
   de B cierra con su "Con qué se conecta" y agrega sus conexiones nuevas al mapa: **una
   conexión va en los dos lugares, nunca en uno solo**.
+  **La masterclass está al día con los dos cambios del 2026-09-29/30** (roles múltiples y la
+  habilitación que se apaga). El porqué de los dos vive junto, en **A-10**: la sección
+  *"El rol que se apaga"* y, adentro, *"La segunda fila de esa clase, y cómo se cerró"*. Ésa es la
+  **fuente única** del concepto y la que cierra con la lección de diseño (cuando un `DELETE` choca
+  con una clave foránea, la pregunta es cuántas cosas dice esa fila, no cómo forzar el borrado).
+  **B-03** reescribió las piezas comunes y los procesos 29, 30, 35, 36 y 37 —el 35 cambió de
+  título, así que su ancla es `#35-editar-un-empleado-y-sus-roles`, y la nota del 500 del profesor
+  se borró porque el 500 ya no existe—; **A-05**, **A-06**, **A-07** y **B-04** corrigieron lo que
+  decían de más; **A-98** tiene el concepto, su remisión y el patrón (145 conceptos) y **A-99** las
+  conexiones nuevas repartidas por tipo (164), con la de la baja del profesor pasada de
+  contradicción a causa. Verificado contra la foto de `HEAD`: ningún problema nuevo de anclas,
+  rangos ni símbolos.
+  **Cómo remapear las citas por línea, que fue lo que más costó.** Hay tres herramientas en el
+  scratchpad de esta sesión: una para las citas de prosa, otra para **la columna de líneas de las
+  tablas** —que la de prosa no ve, porque ahí el número no va entre comillas invertidas: eran 338
+  filas que nunca se habían remapeado— y un verificador que contrasta anclas, rangos y símbolos
+  contra una foto de `HEAD` hecha con `git worktree`. La de tablas no mueve una fila si el símbolo
+  deja de caer adentro del rango nuevo, y eso es lo que la hace confiable.
+  **El orden importa y equivocarse cuesta caro: código → remapear → recién entonces escribir las
+  citas nuevas.** Ninguna de las dos es idempotente (comparan contra una referencia), así que una
+  cita recién escrita a mano ya es "nueva" y el remapeo la mueve de más. Pasó, y hubo que corregir
+  unas quince a mano contra el archivo. Si la referencia ya no es `HEAD` —porque hubo una tanda
+  antes en la misma sesión—, se reconstruye el "antes" **revirtiendo los bloques textuales exactos**
+  que se insertaron, afirmando cada reversión con `count()==1`; una heurística que adivine dónde
+  empieza y termina el bloque erra por una línea y arruina todo el remapeo.
   **Se escriben de a uno y directamente, sin workflows en paralelo:** el dueño lo decidió
   por costo, después de que una corrida de 30 agentes gastara 2,2M tokens y entregara sólo
   el contrato. Los workflows de `.claude/workflows/` quedaron de ese intento: no
@@ -290,20 +351,14 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
     un teléfono o un contacto no controla el número repetido (hoy inalcanzable: las pantallas
     sólo usan el `PUT` para marcar el principal); vaciar el teléfono en la edición de la
     ficha borra el principal sin ascender a otro.
-  - **Un profesor que tuvo un turno no se puede dar de baja** (500, corrido): la baja borra su
-    `Profesor_Actividad`, y las claves compuestas `fk_horario_profesor_habilitado` y
-    `fk_turno_profesor_habilitado` lo impiden mientras un horario o un turno —y los pasados
-    no se borran nunca— use ese par. Nada queda a medias, pero la baja no ocurre.
-    `desasignar_profesor()` de Actividades tiene el mismo choque. Decidir qué hace la baja con
-    la habilitación (B-03, proceso 36).
   - **Menores de B-03:** el `motivo` de la baja de un empleado viaja en el pedido pero no
-    lo pide ninguna pantalla ni se guarda; la grilla de personal no carga Profesor, cuenta ni franja (una
-    consulta más por empleado); en Flet el subtítulo cuenta a los de baja como activos, el chip
+    lo pide ninguna pantalla ni se guarda; la grilla de personal no carga la cuenta (una
+    consulta más por empleado; Profesor y la franja ya se cargan); en Flet el subtítulo cuenta a los de baja como activos, el chip
     dice "Turno —" a quien no es recepcionista, el DNI se puede tipear en la edición y se
     descarta, y un teléfono no se puede quitar; el alta que reusa a un ex socio conserva su
-    cuenta aunque esté apagada; reactivar borra la fecha de egreso y no devuelve las
-    habilitaciones; el docstring de `personal.py` llama "estado válido" a un empleado sin rol,
-    que la base rechaza.
+    cuenta aunque esté apagada; reactivar borra la fecha de egreso; el docstring de
+    `personal.py` llama "estado válido" a un empleado sin rol, que la base rechaza (ahora sí
+    alcanzable con las cuatro filas apagadas, aunque ninguna pantalla lo permite).
   - **La cuenta de un socio dado de baja por mora o administrativa se puede volver a prender
     desde Usuarios** (o crearle una nueva) sin reactivarlo como socio. No se tocó porque
     depende del tipo de baja: la voluntaria le deja la cuenta viva a propósito. Decidir si
@@ -329,20 +384,23 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
     vacías; la PWA tiene funciones de Cobros que nadie usa y comentarios viejos (deudas en
     `anularPago`, `id_membresia NOT NULL` en el combo, el selector del alta en
     `listarTiposMembresia`); Flet no filtra los planes dados de baja.
+  - **Los procesos 54 y 56 no los llama ninguna pantalla** (B-06): `GET /asistencia/socio/{id}`
+    —el historial de ingresos de un socio, que responde "¿viene seguido?"— y
+    `POST /asistencia/{id}/salida` —el egreso—. El primero es una pérdida: el lugar natural sería la
+    ficha del socio, al lado del botón de contacto de emergencia. El segundo es coherente con su
+    propio docstring (*"la mayoría de los gimnasios no controla la salida"*), así que lo que hay que
+    decidir es si espera al molinete —como el camino RFID, que sí está anotado como pendiente— o si
+    sobra.
+  - **El feed de ingresos del día no carga nada por anticipado** (B-06): `_a_asistencia_out()` lee
+    `a.socio` y `socio.persona` por cada fila y la consulta no trae ninguna relación: dos consultas
+    perezosas por ingreso, el mismo N+1 que ya se cerró en Socios y en Usuarios con `selectinload`.
+    Leído, no medido.
   - **Menores de B-04:** el cartel "exclusiva para administradores" lo ve el Recepcionista,
-    que usa la sección; el rol que se muestra es el primero de la lista, así que un socio
-    contratado sale "Socio"; el comentario de la PWA que dice "no hay backend de email"
+    que usa la sección; el comentario de la PWA que dice "no hay backend de email"
     (`UsuariosView.tsx`); contar los dueños al borrar una cuenta de dueño deriva roles sin
     carga anticipada.
 
 ### 3. Menores
-- **Cambiar el rol de un empleado con historial** (anotado a pedido del dueño, para
-  resolver a futuro): un entrenador que alguna vez tuvo un socio a cargo —aunque ya haya
-  terminado— o horarios o turnos a su nombre, y un profesor con horarios o clases, **no
-  pueden cambiar de rol**. Hoy el sistema lo frena con un 409 que lo explica (antes era un
-  500). La causa: cambiar de rol BORRA la fila del rol viejo, y ese historial apunta a ella
-  y no se borra nunca. El camino sería conservar la fila vieja, lo que obliga a decidir cómo
-  se deriva el rol de un empleado con dos filas de subtipo (B-03, proceso 35).
 - **Contador de repeticiones** (el único que el dueño dejó afuera de la tanda):
   rediseñar el overlay (las líneas verdes del esqueleto son sólo para afinar) y
   seguir ajustando umbrales probando en el celular.

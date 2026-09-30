@@ -108,7 +108,7 @@ historia que preservar, es un dato falso que hace perder una llamada (`:875-877`
 Y una observación que vale para las dos: la regla 5 sólo se aplica al **agregar**. Editar un número no
 controla que choque con otro de la ficha. No se alcanza desde ninguna pantalla, porque las dos apps
 usan el `PUT` únicamente para marcar el principal y reenvían el número que ya estaba
-(`TelefonosModal.tsx:99-108`, `EmergenciaModal.tsx:114-120`, `state.py:1163-1174`).
+(`TelefonosModal.tsx:99-108`, `EmergenciaModal.tsx:114-120`, `state.py:1195-1206`).
 
 ---
 
@@ -185,7 +185,7 @@ contraseña temporal para entregarle en el momento.
 | Credenciales | `backend/auth.py` | 90-143 | `generar_password_temporal()`, `generar_username()` |
 | Envío por mail | `backend/notificaciones.py` | 89-164 | `enviar_credenciales()` |
 | Vista Flet | `Flet/Proyecto/app/views/socios.py` | 336-648 | `_open_form()`, `_save_socio()`, `_mostrar_credenciales()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1101-1124 | `alta_socio()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1133-1156 | `alta_socio()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 428-429 | `alta_socio()` |
 
 **Cómo funciona.** Del lado de las pantallas, las dos apps mandan la sede clavada en 1 y piden
@@ -295,11 +295,11 @@ La línea DFD nombra los tres primeros. Los 422 son rechazos del esquema, antes 
 |---|---|---|---|
 | Vista PWA | `Proyecto - PWA/src/frontend/src/views/socios/EntrenadoresModal.tsx` | 42-250 | `EntrenadoresModal` (la llamada, 116) |
 | Service PWA | `Proyecto - PWA/src/frontend/src/services/sociosService.ts` | 661-669 | `finalizarAsignacionEntrenador()` |
-| Esquemas | `backend/schemas.py` | 2202-2214 | `AsignacionEntrenadorOut` |
+| Esquemas | `backend/schemas.py` | 2250-2262 | `AsignacionEntrenadorOut` |
 | Endpoint | `backend/routers/socios.py` | 1068-1105 | `finalizar_asignacion()` |
-| Quién es el entrenador | `backend/routers/rutinas.py` | 68-80 | `_entrenador_de_sesion()` |
+| Quién es el entrenador | `backend/routers/rutinas.py` | 68-79 | `_entrenador_de_sesion()` |
 | Vista Flet | `Flet/Proyecto/app/views/socios.py` | 942-1071 | `_entrenadores()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1618-1622 | `finalizar_entrenador()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1650-1654 | `finalizar_entrenador()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 870-871 | `finalizar_asignacion_entrenador()` |
 
 **Cómo funciona.** Busca la asignación (`socios.py:1087-1090`); si quien pide es un Entrenador, sólo
@@ -308,7 +308,7 @@ puede terminar las suyas (`:1091-1096`); si ya estaba finalizada, 400 (`:1097-10
 socio (`:1083-1085`): pedir los dos permitiría mandar una combinación que no coincide.
 
 **Qué escribe y qué lee.** Escribe `Asignacion_Entrenador.estado` y `fecha_fin` (`:1101-1102`); lee la
-asignación, el entrenador de la sesión (`rutinas.py:68-80`) y la persona del entrenador para la
+asignación, el entrenador de la sesión (`rutinas.py:68-79`) y la persona del entrenador para la
 respuesta (`_a_asignacion_out()`, `:923-936`). Coincide con la línea DFD.
 
 **Por qué está hecho así.** No se borra porque el historial es el motivo de que la tabla exista
@@ -464,7 +464,7 @@ el que quede, porque toma "el principal, o el primero que haya".
 | Endpoint | `backend/routers/socios.py` | 668-690 | `anular_baja()` |
 | Regla de negocio | `backend/bajas.py` | 51-55 | `baja_pendiente()` |
 | Vista Flet | `Flet/Proyecto/app/views/socios.py` | 925-930 | `_anular_baja()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1135-1138 | `anular_baja_socio()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1167-1170 | `anular_baja_socio()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 446-447 | `anular_baja_socio()` |
 
 **Cómo funciona.** Busca la baja pendiente del socio (`socios.py:683`) y la **borra** (`:687`). Si no
@@ -506,7 +506,7 @@ gimnasio lo decide.
 | Regla de negocio | `backend/bajas.py` | 51-125 | `baja_pendiente()`, `_cerrar_pausa()`, `fecha_de_baja()`, `aplicar_baja()` |
 | Lista de espera | `backend/turnos.py` | 148-205 | `promover_de_lista_de_espera()` |
 | Vista Flet | `Flet/Proyecto/app/views/socios.py` | 828-923 | `_confirmar_baja()`, `_ejecutar_baja()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1126-1130 | `dar_de_baja_socio()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1158-1162 | `dar_de_baja_socio()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 436-439 | `dar_de_baja_socio()` |
 
 **Cómo funciona.** El endpoint (`socios.py:620-665`) rechaza al socio que ya estaba de baja (`:623-625`)
@@ -579,7 +579,7 @@ encontraría como si estuviera en curso.
 | Esquemas | `backend/schemas.py` | 361-380 | `ContactoEmergenciaOut` |
 | Endpoint | `backend/routers/socios.py` | 1253-1267 | `contactos_emergencia_del_socio()` |
 | Vista Flet | `Flet/Proyecto/app/views/socios.py` | 650-761 | `_emergencia()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1182-1198 | `get_contactos_emergencia()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1214-1230 | `get_contactos_emergencia()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 477-478 | `contactos_emergencia_de_socio()` |
 
 **Cómo funciona.** Comprueba el socio y devuelve sus contactos ordenados (`socios.py:1265-1267`, con
@@ -611,7 +611,7 @@ Recepcionista lo ve, porque *"en una emergencia el dato sirve justamente en el m
 | Endpoint | `backend/routers/socios.py` | 1270-1283 | `agregar_contacto_emergencia()` |
 | Regla | `backend/routers/socios.py` | 1184-1215 | `_agregar_emergencia()` |
 | Vista Flet | `Flet/Proyecto/app/views/socios.py` | 763-780 | `_agregar_emergencia()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1200-1211 | `agregar_contacto_emergencia()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1232-1243 | `agregar_contacto_emergencia()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 481-482 | `agregar_contacto_emergencia()` |
 
 **Cómo funciona.** `_agregar_emergencia()` rechaza un número repetido, marca el principal si
@@ -650,7 +650,7 @@ cargar a la madre pisaba a la pareja (`:1141-1152`).
 | Service PWA | `Proyecto - PWA/src/frontend/src/services/sociosService.ts` | 299-309 | `editarContactoEmergencia()` |
 | Endpoint | `backend/routers/socios.py` | 1286-1300 | `editar_contacto_emergencia()` |
 | Regla | `backend/routers/socios.py` | 1218-1231 | `_editar_emergencia()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1213-1225 | `marcar_emergencia_principal()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1245-1257 | `marcar_emergencia_principal()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 485-486 | `editar_contacto_emergencia()` |
 
 **Cómo funciona.** Comprueba que el contacto sea de esta ficha (`socios.py:1296`), aplica la regla del
@@ -687,7 +687,7 @@ el principal, reenviando lo demás tal como estaba.
 | Endpoint | `backend/routers/socios.py` | 1303-1314 | `borrar_contacto_emergencia()` |
 | Regla | `backend/routers/socios.py` | 1234-1250 | `_borrar_emergencia()` |
 | Vista Flet | `Flet/Proyecto/app/views/socios.py` | 782-808 | `_confirmar_borrar_emergencia()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1227-1232 | `borrar_contacto_emergencia()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1259-1264 | `borrar_contacto_emergencia()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 489-490 | `borrar_contacto_emergencia()` |
 
 **Cómo funciona.** Borra la fila, manda el borrado a la base con un `flush` y, si era el principal,
@@ -715,10 +715,10 @@ pero sin principal ([reglas 4 y 6](#las-listas-con-un-principal-teléfonos-y-con
 |---|---|---|---|
 | Vista PWA | `Proyecto - PWA/src/frontend/src/views/socios/EntrenadoresModal.tsx` | 42-250 | `EntrenadoresModal` (la carga, 61-62) |
 | Service PWA | `Proyecto - PWA/src/frontend/src/services/sociosService.ts` | 627-632 | `listarEntrenadoresDeSocio()` |
-| Esquemas | `backend/schemas.py` | 2202-2214 | `AsignacionEntrenadorOut` |
+| Esquemas | `backend/schemas.py` | 2250-2262 | `AsignacionEntrenadorOut` |
 | Endpoint | `backend/routers/socios.py` | 939-969 | `entrenadores_del_socio()` |
 | Vista Flet | `Flet/Proyecto/app/views/socios.py` | 942-1071 | `_entrenadores()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1591-1612 | `get_entrenadores_de_socio()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1623-1644 | `get_entrenadores_de_socio()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 861-863 | `obtener_entrenadores_de_socio()` |
 
 **Cómo funciona.** Comprueba el socio (`socios.py:956-958`), trae sus asignaciones —sólo las activas si
@@ -748,11 +748,11 @@ responder quién lo entrenaba en marzo (`:949-952` y `:900-906`).
 |---|---|---|---|
 | Vista PWA | `Proyecto - PWA/src/frontend/src/views/socios/EntrenadoresModal.tsx` | 42-250 | `EntrenadoresModal` (la asignación, 102) |
 | Service PWA | `Proyecto - PWA/src/frontend/src/services/sociosService.ts` | 642-651 | `asignarEntrenador()` |
-| Esquemas | `backend/schemas.py` | 2191-2214 | `AsignarEntrenadorRequest`, `AsignacionEntrenadorOut` |
+| Esquemas | `backend/schemas.py` | 2239-2262 | `AsignarEntrenadorRequest`, `AsignacionEntrenadorOut` |
 | Endpoint | `backend/routers/socios.py` | 972-1065 | `asignar_entrenador()` |
-| Quién es el entrenador | `backend/routers/rutinas.py` | 68-80 | `_entrenador_de_sesion()` |
+| Quién es el entrenador | `backend/routers/rutinas.py` | 68-79 | `_entrenador_de_sesion()` |
 | Vista Flet | `Flet/Proyecto/app/views/socios.py` | 942-1071 | `_entrenadores()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1614-1616 | `asignar_entrenador()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1646-1648 | `asignar_entrenador()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 866-867 | `asignar_entrenador()` |
 
 **Cómo funciona.** El endpoint (`socios.py:993-1065`), en orden:
@@ -808,10 +808,10 @@ decide el mostrador, no todo lo que se puede hacer.
 |---|---|---|---|
 | Vista PWA | `Proyecto - PWA/src/frontend/src/views/socios/PatologiasModal.tsx` | 63-451 | `PatologiasModal` (la carga, 87) |
 | Service PWA | `Proyecto - PWA/src/frontend/src/services/patologiasService.ts` | 104-107 | `listarPatologiasDeSocio()` |
-| Esquemas | `backend/schemas.py` | 2252-2257 | `PatologiaDeSocioOut` |
+| Esquemas | `backend/schemas.py` | 2300-2305 | `PatologiaDeSocioOut` |
 | Endpoint | `backend/routers/patologias.py` | 119-133 | `patologias_del_socio()` |
 | Vista Flet | `Flet/Proyecto/app/views/socios.py` | 1254-1407 | `_patologias()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1655-1675 | `get_patologias_de_socio()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1687-1707 | `get_patologias_de_socio()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 895-896 | `obtener_patologias_de_socio()` |
 
 **Cómo funciona.** Comprueba el socio y devuelve sus condiciones, cada una con el nombre y la descripción
@@ -844,15 +844,15 @@ tener en cuenta.
 |---|---|---|---|
 | Vista PWA | `Proyecto - PWA/src/frontend/src/views/socios/PatologiasModal.tsx` | 63-451 | `PatologiasModal` (el alta, 135) |
 | Service PWA | `Proyecto - PWA/src/frontend/src/services/patologiasService.ts` | 123-132 | `asignarPatologia()` |
-| Esquemas | `backend/schemas.py` | 2230-2251 | `AsignarPatologiaRequest` |
+| Esquemas | `backend/schemas.py` | 2278-2299 | `AsignarPatologiaRequest` |
 | Endpoint | `backend/routers/patologias.py` | 136-180 | `asignar_patologia()` |
 | Vista Flet | `Flet/Proyecto/app/views/socios.py` | 1254-1407 | `_patologias()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1677-1687 | `asignar_patologia()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1709-1719 | `asignar_patologia()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 899-900 | `asignar_patologia()` |
 
 **Cómo funciona.** Comprueba el socio (`patologias.py:151-153`) y que la patología esté en el catálogo
 (`:155-158`); si el socio ya la tenía, 409 (`:163-169`); si no, agrega la fila y confirma
-(`:171-180`). La fecha de diagnóstico futura la rechaza el esquema antes (`schemas.py:2241-2250`).
+(`:171-180`). La fecha de diagnóstico futura la rechaza el esquema antes (`schemas.py:2289-2298`).
 
 **Qué escribe y qué lee.** Escribe `Socio_Patologia` (`id_socio`, `id_patologia`, `fecha_diagnostico`,
 `observaciones`); lee `Socio`, `Patologia` y la fila existente. Coincide.
@@ -869,7 +869,7 @@ genérico de servidor (`patologias.py:160-162`). Es
 | El socio no existe | 404 | *"El socio no existe."* | `patologias.py:151-153` |
 | La patología no está en el catálogo | 404 | *"Esa patología no está en el catálogo."* | `patologias.py:156-158` |
 | El socio ya la tenía | 409 | *"Ese socio ya tiene «{nombre}» registrada. Editala si querés cambiar las observaciones."* | `patologias.py:164-169` |
-| Fecha de diagnóstico futura | 422 | *"La fecha de diagnóstico no puede ser posterior a hoy."* | `schemas.py:2246-2249` |
+| Fecha de diagnóstico futura | 422 | *"La fecha de diagnóstico no puede ser posterior a hoy."* | `schemas.py:2294-2297` |
 
 ---
 
@@ -886,10 +886,10 @@ cambia.
 |---|---|---|---|
 | Vista PWA | `Proyecto - PWA/src/frontend/src/views/socios/PatologiasModal.tsx` | 63-451 | `PatologiasModal` (la edición, 153) |
 | Service PWA | `Proyecto - PWA/src/frontend/src/services/patologiasService.ts` | 141-150 | `editarPatologiaDeSocio()` |
-| Esquemas | `backend/schemas.py` | 2230-2251 | `AsignarPatologiaRequest` |
+| Esquemas | `backend/schemas.py` | 2278-2299 | `AsignarPatologiaRequest` |
 | Endpoint | `backend/routers/patologias.py` | 183-208 | `editar_patologia_del_socio()` |
 | Vista Flet | `Flet/Proyecto/app/views/socios.py` | 1409-1474 | `_editar_patologia()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1689-1705 | `editar_patologia_de_socio()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1721-1737 | `editar_patologia_de_socio()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 903-907 | `editar_patologia_de_socio()` |
 
 **Cómo funciona.** Busca la fila por la clave compuesta (`patologias.py:199-202`) y reescribe la fecha y
@@ -908,7 +908,7 @@ cuerpo aunque el endpoint use el de la ruta y descarte el otro. El cliente de Fl
 | Caso | Código | Mensaje | Dónde |
 |---|---|---|---|
 | El socio no tiene esa patología | 404 | *"Ese socio no tiene esa patología registrada."* | `patologias.py:200-202` |
-| Fecha de diagnóstico futura | 422 | *"La fecha de diagnóstico no puede ser posterior a hoy."* | `schemas.py:2246-2249` |
+| Fecha de diagnóstico futura | 422 | *"La fecha de diagnóstico no puede ser posterior a hoy."* | `schemas.py:2294-2297` |
 
 ---
 
@@ -926,7 +926,7 @@ cuerpo aunque el endpoint use el de la ruta y descarte el otro. El cliente de Fl
 | Service PWA | `Proyecto - PWA/src/frontend/src/services/patologiasService.ts` | 162-164 | `quitarPatologia()` |
 | Endpoint | `backend/routers/patologias.py` | 211-238 | `quitar_patologia()` |
 | Vista Flet | `Flet/Proyecto/app/views/socios.py` | 1254-1407 | `_patologias()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1707-1719 | `quitar_patologia()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1739-1751 | `quitar_patologia()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 910-911 | `quitar_patologia()` |
 
 **Cómo funciona.** Busca la fila y la borra (`patologias.py:233-238`).
@@ -957,7 +957,7 @@ viejas de alguien es justamente el dato que no conviene acumular sin motivo (`pa
 | Service PWA | `Proyecto - PWA/src/frontend/src/services/sociosService.ts` | 550-553 | `reactivarSocio()` |
 | Endpoint | `backend/routers/socios.py` | 693-721 | `reactivar()` |
 | Vista Flet | `Flet/Proyecto/app/views/socios.py` | 932-937 | `_reactivar()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1132-1133 | `reactivar_socio()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1164-1165 | `reactivar_socio()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 442-443 | `reactivar_socio()` |
 
 **Cómo funciona.** Si el socio ya estaba activo, 400 (`socios.py:711-713`). Si no, lo reactiva y le
@@ -1001,7 +1001,7 @@ qué estaba apagada.
 | Esquemas | `backend/schemas.py` | 323-336 | `TelefonoOut` |
 | Endpoint | `backend/routers/socios.py` | 795-803 | `telefonos_del_socio()` |
 | Vista Flet | `Flet/Proyecto/app/views/socios.py` | 1101-1187 | `_telefonos()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1140-1154 | `get_telefonos_de_socio()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1172-1186 | `get_telefonos_de_socio()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 455-456 | `telefonos_de_socio()` |
 
 **Cómo funciona.** Comprueba el socio y devuelve sus teléfonos ordenados (`socios.py:801-803`).
@@ -1031,7 +1031,7 @@ tiene varios números, y la ficha no la aprovechaba hasta que tuvo sus propios e
 | Esquemas | `backend/schemas.py` | 337-360 | `TelefonoRequest` |
 | Endpoint | `backend/routers/socios.py` | 806-834 | `agregar_telefono()` |
 | Vista Flet | `Flet/Proyecto/app/views/socios.py` | 1189-1199 | `_agregar_telefono()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1156-1161 | `agregar_telefono()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1188-1193 | `agregar_telefono()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 459-460 | `agregar_telefono()` |
 
 **Cómo funciona.** Rechaza un número que ya esté (`socios.py:819-821`), decide si es el principal
@@ -1068,7 +1068,7 @@ que es como se pisan datos sin querer (`socios.py:736-739`).
 | Vista PWA | `Proyecto - PWA/src/frontend/src/views/socios/TelefonosModal.tsx` | 47-251 | `TelefonosModal` (`marcarPrincipal`, 99) |
 | Service PWA | `Proyecto - PWA/src/frontend/src/services/sociosService.ts` | 209-219 | `editarTelefono()` |
 | Endpoint | `backend/routers/socios.py` | 837-861 | `editar_telefono()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1163-1174 | `marcar_telefono_principal()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1195-1206 | `marcar_telefono_principal()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 463-464 | `editar_telefono()` |
 
 **Cómo funciona.** Comprueba que el teléfono sea de esta ficha (`socios.py:846`), aplica la regla del
@@ -1104,7 +1104,7 @@ control de repetidos que sólo tiene el alta.
 | Service PWA | `Proyecto - PWA/src/frontend/src/services/sociosService.ts` | 221-223 | `borrarTelefono()` |
 | Endpoint | `backend/routers/socios.py` | 864-893 | `borrar_telefono()` |
 | Vista Flet | `Flet/Proyecto/app/views/socios.py` | 1201-1226 | `_confirmar_borrar_telefono()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1176-1180 | `borrar_telefono()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1208-1212 | `borrar_telefono()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 467-468 | `borrar_telefono()` |
 
 **Cómo funciona.** Borra la fila y, si era el principal, asciende al más viejo de los que quedan

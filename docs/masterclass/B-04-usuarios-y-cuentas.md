@@ -102,9 +102,11 @@ lo hacían: la fila del Dueño mostraba un "Desactivar" que siempre recibía 403
   `:119-125`), para ofrecer las credenciales por WhatsApp a quien no dejó mail.
 
 Las dos apps reducen eso a un estado con prioridad —**Inactiva** antes que **Bloqueada** antes que
-**Activa**— (`Proyecto - PWA/src/frontend/src/services/usuariosService.ts:63-69`,
-`Flet/Proyecto/app/state.py:1337-1338`) y a un solo rol, el primero de la lista
-(`usuariosService.ts:59-61`, `state.py:1336`).
+**Activa**— (`Proyecto - PWA/src/frontend/src/services/usuariosService.ts:79-85`,
+`Flet/Proyecto/app/state.py:1369-1370`). Los roles, en cambio, ya no se reducen: la fila dibuja **un chip
+por cada uno** (`usuariosService.ts:75-77` los arma, `UsuarioRow.tsx:92-102` y
+`Flet/Proyecto/app/views/usuarios.py:175-195` los pintan). Hasta el 2026-09-29 mostraban sólo el primero,
+y lo siguiente cuenta a quién se le notaba.
 
 **Una cuenta bloqueada sigue activa, y se puede apagar.** El estado "Bloqueada" tapa al "Activa", así
 que las dos apps deciden el botón de estado con la bandera `activo` y no con el estado que muestran, y
@@ -113,11 +115,23 @@ y `:564`, con la bandera que agrega `state.py:1341`). Importa con una cuenta ata
 fallidos la traban y quien administra quiere apagarla. Hasta el 2026-09-26 el botón de estado ofrecía,
 en esa fila, Desbloquear o Activar y nunca Desactivar: para apagarla había que destrabarla primero.
 
-Dos detalles menores de la tabla. El primer rol de la lista no es *"el de mayor jerarquía"*, como dice
-el comentario (`usuariosService.ts:53-58`): un socio contratado como entrenador sale como "Socio",
-porque `roles_de_persona()` pone el de socio antes que los de empleado (`backend/models.py:1026-1039`).
-Y Flet marca con *"Clave sin cambiar"* la cuenta que todavía tiene la temporal
-(`views/usuarios.py:285-292`), y la PWA no.
+**Mostrar un rol solo escondía la mitad de la cuenta.** Los roles se acumulan
+([derivación de roles](A-06-los-seis-roles.md#derivación-de-roles)) y esta tabla tomaba `roles[0]`,
+que el comentario llamaba *"el de mayor jerarquía"* sin serlo: `roles_de_persona()` pone el de socio antes
+que los de empleado, así que **un socio contratado como entrenador salía como "Socio"** y su fila no
+delataba que además administra rutinas. Desde el 2026-09-29 los roles de empleado también se acumulan entre
+sí ([el rol que se apaga](A-10-bajas-logicas.md#el-rol-que-se-apaga)), con lo que el mismo defecto habría
+escondido a un entrenador que además es profesor. `rolPrincipal()` quedó, pero sólo para lo que de verdad
+necesita uno: la regla de que nadie opera sobre la cuenta de un Dueño salvo otro Dueño
+(`usuariosService.ts:60-73`).
+
+Flet arrastraba lo mismo y algo peor: a `ROLE_CONFIG` le faltaba `profesor`, así que la fila de un profesor
+decía **"Sin rol"** —y la tarjeta de permisos de abajo, que se arma recorriendo ese mismo diccionario, no lo
+listaba— aunque tiene rol de sesión desde el 2026-09-16 y `PermisosPanel.tsx` sí lo muestra
+(`views/usuarios.py:19-31`).
+
+Un detalle menor más: Flet marca con *"Clave sin cambiar"* la cuenta que todavía tiene la temporal
+(`views/usuarios.py:317-324`), y la PWA no.
 
 ---
 
@@ -134,13 +148,13 @@ Y Flet marca con *"Clave sin cambiar"* la cuenta que todavía tiene la temporal
 | Capa | Archivo | Líneas | Símbolo |
 |---|---|---|---|
 | Vista PWA | `Proyecto - PWA/src/frontend/src/views/usuarios/UsuariosView.tsx` | 38-344 | `UsuariosView` (la carga, 66-80) |
-| Fila PWA | `Proyecto - PWA/src/frontend/src/views/usuarios/UsuarioRow.tsx` | 54-170 | `UsuarioRow` |
-| Service PWA | `Proyecto - PWA/src/frontend/src/services/usuariosService.ts` | 59-93 | `rolPrincipal()`, `estadoDe()`, `aUsuarioListado()`, `listarUsuarios()` |
-| Esquema | `backend/schemas.py` | 1796-1820 | `UsuarioAdminOut` |
+| Fila PWA | `Proyecto - PWA/src/frontend/src/views/usuarios/UsuarioRow.tsx` | 54-177 | `UsuarioRow` |
+| Service PWA | `Proyecto - PWA/src/frontend/src/services/usuariosService.ts` | 71-110 | `rolPrincipal()`, `estadoDe()`, `aUsuarioListado()`, `listarUsuarios()` |
+| Esquema | `backend/schemas.py` | 1844-1868 | `UsuarioAdminOut` |
 | Endpoint | `backend/routers/usuarios.py` | 204-219 | `listar_usuarios()` |
 | Armado | `backend/routers/usuarios.py` | 82-154 | `CARGA_DE_ROLES`, `_a_usuario_out()` |
-| Vista Flet | `Flet/Proyecto/app/views/usuarios.py` | 82-333 | `build()`, `_user_row()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1323-1346 | `get_usuarios()` |
+| Vista Flet | `Flet/Proyecto/app/views/usuarios.py` | 87-360 | `build()`, `_user_row()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1355-1378 | `get_usuarios()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 733-734 | `obtener_usuarios()` |
 
 **Cómo funciona.** Una consulta por las cuentas, con la persona y sus roles en lote
@@ -181,13 +195,13 @@ sin acceso, o alguien a quien se le borró la suya (`usuarios.py:277-279`).
 | Capa | Archivo | Líneas | Símbolo |
 |---|---|---|---|
 | Vista PWA | `Proyecto - PWA/src/frontend/src/views/usuarios/UsuarioFormModal.tsx` | 35-230 | `UsuarioFormModal` (el envío, `handleSubmit`, 90-119) |
-| Service PWA | `Proyecto - PWA/src/frontend/src/services/usuariosService.ts` | 181-187 | `crearUsuario()` |
+| Service PWA | `Proyecto - PWA/src/frontend/src/services/usuariosService.ts` | 198-204 | `crearUsuario()` |
 | Esquemas | `backend/schemas.py` | 1856-1859, 1862-1873 | `UsuarioCrearRequest`, `CredencialesResponse` |
 | Endpoint | `backend/routers/usuarios.py` | 268-349 | `crear_cuenta()` |
 | Credenciales | `backend/auth.py` | 90-143 | `generar_password_temporal()`, `generar_username()` |
 | Envío por mail | `backend/notificaciones.py` | 89-164 | `enviar_credenciales()` |
-| Vista Flet | `Flet/Proyecto/app/views/usuarios.py` | 335-437 | `_open_form()`, `_crear_cuenta()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1358-1373 | `crear_cuenta()` |
+| Vista Flet | `Flet/Proyecto/app/views/usuarios.py` | 362-464 | `_open_form()`, `_crear_cuenta()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1390-1405 | `crear_cuenta()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 741-742 | `crear_cuenta()` |
 
 **Cómo funciona.** El pedido lleva sólo el id de la persona: *"los datos personales ya existen en
@@ -267,11 +281,11 @@ La línea DFD nombra los cinco.
 | Capa | Archivo | Líneas | Símbolo |
 |---|---|---|---|
 | Vista PWA | `Proyecto - PWA/src/frontend/src/views/usuarios/UsuarioFormModal.tsx` | 55-88 | `listarPersonasSinUsuario` |
-| Service PWA | `Proyecto - PWA/src/frontend/src/services/usuariosService.ts` | 117-139 | `listarPersonasSinUsuario()` |
-| Esquema | `backend/schemas.py` | 1823-1835 | `PersonaSinCuentaOut` |
+| Service PWA | `Proyecto - PWA/src/frontend/src/services/usuariosService.ts` | 134-156 | `listarPersonasSinUsuario()` |
+| Esquema | `backend/schemas.py` | 1871-1883 | `PersonaSinCuentaOut` |
 | Endpoint | `backend/routers/usuarios.py` | 222-261 | `listar_personas_sin_cuenta()` |
-| Vista Flet | `Flet/Proyecto/app/views/usuarios.py` | 335-417 | `_open_form()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1348-1356 | `get_personas_sin_cuenta()` |
+| Vista Flet | `Flet/Proyecto/app/views/usuarios.py` | 362-444 | `_open_form()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1380-1388 | `get_personas_sin_cuenta()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 737-738 | `obtener_personas_sin_cuenta()` |
 
 **Cómo funciona.** Las personas sin `Usuario`, con sus roles en lote (`usuarios.py:241-244`), menos las
@@ -307,11 +321,11 @@ Y deja afuera al empleado dado de baja por lo mismo que el selector de entrenado
 | Capa | Archivo | Líneas | Símbolo |
 |---|---|---|---|
 | Vista PWA | `Proyecto - PWA/src/frontend/src/views/usuarios/UsuarioFormModal.tsx` | 35-230 | `UsuarioFormModal` (la edición, 94-97 y 196-200) |
-| Service PWA | `Proyecto - PWA/src/frontend/src/services/usuariosService.ts` | 196-205 | `actualizarUsuario()` |
-| Esquema | `backend/schemas.py` | 1838-1847 | `UsuarioEditarRequest` |
+| Service PWA | `Proyecto - PWA/src/frontend/src/services/usuariosService.ts` | 213-222 | `actualizarUsuario()` |
+| Esquema | `backend/schemas.py` | 1886-1895 | `UsuarioEditarRequest` |
 | Endpoint | `backend/routers/usuarios.py` | 576-649 | `editar_usuario()` |
-| Vista Flet | `Flet/Proyecto/app/views/usuarios.py` | 439-482 | `_editar()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 587-589 | `editar_usuario()` |
+| Vista Flet | `Flet/Proyecto/app/views/usuarios.py` | 466-509 | `_editar()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 619-621 | `editar_usuario()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 602-603 | `editar_usuario()` |
 
 **Cómo funciona.** El endpoint, en orden:
@@ -392,10 +406,10 @@ La línea DFD nombra los siete primeros.
 | Capa | Archivo | Líneas | Símbolo |
 |---|---|---|---|
 | Vista PWA | `Proyecto - PWA/src/frontend/src/views/usuarios/UsuariosView.tsx` | 146-164 | `pedirBorrado` |
-| Service PWA | `Proyecto - PWA/src/frontend/src/services/usuariosService.ts` | 214-217 | `borrarCuenta()` |
+| Service PWA | `Proyecto - PWA/src/frontend/src/services/usuariosService.ts` | 231-234 | `borrarCuenta()` |
 | Endpoint | `backend/routers/usuarios.py` | 520-573 | `borrar_cuenta()` |
-| Vista Flet | `Flet/Proyecto/app/views/usuarios.py` | 532-546 | `_confirmar_borrado()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1390-1391 | `borrar_cuenta()` |
+| Vista Flet | `Flet/Proyecto/app/views/usuarios.py` | 559-573 | `_confirmar_borrado()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1422-1423 | `borrar_cuenta()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 753-754 | `borrar_cuenta()` |
 
 **Cómo funciona.** El concepto —la única fila principal que el sistema borra de verdad, la clave
@@ -442,11 +456,11 @@ La línea DFD nombra los cuatro.
 | Capa | Archivo | Líneas | Símbolo |
 |---|---|---|---|
 | Vista PWA | `Proyecto - PWA/src/frontend/src/views/usuarios/UsuariosView.tsx` | 166-176 | `desbloquear` |
-| Service PWA | `Proyecto - PWA/src/frontend/src/services/usuariosService.ts` | 226-229 | `desbloquearUsuario()` |
+| Service PWA | `Proyecto - PWA/src/frontend/src/services/usuariosService.ts` | 243-246 | `desbloquearUsuario()` |
 | Endpoint | `backend/routers/usuarios.py` | 409-441 | `desbloquear()` |
 | Traba en memoria | `backend/limite_intentos.py` | 68-83 | `cuenta_trabada()`, `destrabar()` |
-| Vista Flet | `Flet/Proyecto/app/views/usuarios.py` | 548-553 | `_desbloquear()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1387-1388 | `desbloquear_usuario()` |
+| Vista Flet | `Flet/Proyecto/app/views/usuarios.py` | 575-580 | `_desbloquear()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1419-1420 | `desbloquear_usuario()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 749-750 | `desbloquear_usuario()` |
 
 **Cómo funciona.** La jerarquía (`usuarios.py:423`); si la cuenta no tiene ni la columna `bloqueado`,
@@ -491,10 +505,10 @@ La línea DFD nombra los tres. **Corrido**, el tercero.
 |---|---|---|---|
 | Vista PWA | `Proyecto - PWA/src/frontend/src/views/usuarios/UsuariosView.tsx` | 178-205, 329-341 | `pedirReseteo`, `PanelCredenciales` |
 | Entrega de la clave | `Proyecto - PWA/src/frontend/src/components/PanelCredenciales.tsx` | 48-151 | `PanelCredenciales` |
-| Service PWA | `Proyecto - PWA/src/frontend/src/services/usuariosService.ts` | 252-264 | `resetearPassword()` |
+| Service PWA | `Proyecto - PWA/src/frontend/src/services/usuariosService.ts` | 269-281 | `resetearPassword()` |
 | Endpoint | `backend/routers/usuarios.py` | 356-406 | `resetear_password()` |
 | Vista Flet | `Flet/Proyecto/app/views/usuarios.py` | 484-530, 571-639 | `_reset_password()`, `_confirmar_reset()`, `_mostrar_credenciales()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1375-1385 | `resetear_password_usuario()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1407-1417 | `resetear_password_usuario()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 745-746 | `resetear_password()` |
 
 **Cómo funciona.** Sólo la jerarquía, a propósito: *"Sin _validar_no_es_propia: resetearse la propia
@@ -543,10 +557,10 @@ La línea DFD nombra los dos. **Corrido**, el segundo: la recepcionista que rese
 | Capa | Archivo | Líneas | Símbolo |
 |---|---|---|---|
 | Vista PWA | `Proyecto - PWA/src/frontend/src/views/usuarios/UsuariosView.tsx` | 109-142 | `pedirBaja`, `activar` |
-| Service PWA | `Proyecto - PWA/src/frontend/src/services/usuariosService.ts` | 274-296 | `alternarEstadoUsuario()`, `darDeBajaUsuario`, `activarUsuario` |
+| Service PWA | `Proyecto - PWA/src/frontend/src/services/usuariosService.ts` | 291-313 | `alternarEstadoUsuario()`, `darDeBajaUsuario`, `activarUsuario` |
 | Endpoint | `backend/routers/usuarios.py` | 444-517 | `alternar_estado()` |
-| Vista Flet | `Flet/Proyecto/app/views/usuarios.py` | 555-569 | `_cambiar_estado()` |
-| Estado Flet | `Flet/Proyecto/app/state.py` | 1393-1397 | `cambiar_estado_usuario()` |
+| Vista Flet | `Flet/Proyecto/app/views/usuarios.py` | 582-596 | `_cambiar_estado()` |
+| Estado Flet | `Flet/Proyecto/app/state.py` | 1425-1429 | `cambiar_estado_usuario()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 757-761 | `cambiar_estado_usuario()` |
 
 **Cómo funciona.** El endpoint, en orden:

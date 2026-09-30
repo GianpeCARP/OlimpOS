@@ -11,7 +11,7 @@ pueda encontrar cualquier línea de código que implemente cualquier cosa.
 |---|---|---|---|
 | **A0 · Cimientos** | Cada tecnología del stack, desde el problema que resolvió hasta el piso donde bajar un escalón más ya no explica nada de este sistema. | Temas, de abajo hacia arriba | escrita |
 | **A · El sistema** | Cómo esas piezas forman OlimpOS, y por qué así. | Temas, en orden constructivo | escrita, con [glosario](A-98-glosario.md) y [mapa de conexiones](A-99-mapa-de-conexiones.md) |
-| **B · Los 173 procesos** | Cada proceso de `PROCESOS-LOGICOS-REQUERIDOS.md`, con archivo y rango de líneas en las tres capas. | Las 15 secciones de ese archivo | en curso: [B-01](B-01-acceso-y-sesion.md) a [B-05](B-05-cobros-y-pagos.md) escritos |
+| **B · Los 173 procesos** | Cada proceso de `PROCESOS-LOGICOS-REQUERIDOS.md`, con archivo y rango de líneas en las tres capas. | Las 15 secciones de ese archivo | en curso: [B-01](B-01-acceso-y-sesion.md) a [B-06](B-06-asistencia.md) escritos |
 | **C · Lo que no es un proceso** | El código que no cuelga de ningún endpoint. | Subsistemas | sin escribir |
 
 ---
