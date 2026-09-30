@@ -268,10 +268,10 @@ En el backend, `login()` (`auth_router.py:108-240`) hace, en orden:
 11. **El token** (`:215-221`): un [JWT](A0-12-sesiones-y-autenticacion.md#jwt) firmado con
     [HMAC](A0-11-criptografia-aplicada.md#hmac-y-firma-simétrica), que lleva el usuario, los roles
     y los dos ids (`auth.py:176-191`).
-12. **Por dónde viaja** (`:216-224`): con `X-Client-Type: escritorio`, en el cuerpo; sin esa
+12. **Por dónde viaja** (`auth_router.py:223-231`): con `X-Client-Type: escritorio`, en el cuerpo; sin esa
     cabecera, en dos cookies —la de sesión, `httponly`, y la del token CSRF— y el campo `token` del
     cuerpo sale en `null` ([los dos mecanismos](A-07-autenticacion.md#los-dos-mecanismos-de-sesión-y-x-client-type)).
-13. **La respuesta** (`:226-233`), con la cuenta sin el hash —`UsuarioOut` no lo declara, y ésa es la
+13. **La respuesta** (`:233-240`), con la cuenta sin el hash —`UsuarioOut` no lo declara, y ésa es la
     única razón por la que no puede filtrarse (`schemas.py:161-165`)—, la persona, los roles y el id
     de socio.
 

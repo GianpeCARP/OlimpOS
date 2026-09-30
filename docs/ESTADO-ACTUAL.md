@@ -250,8 +250,13 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   **B-05** (Cobros y pagos, 46 a 51), que se apoya en A-02 y A-04 para no repetir el cobro, y
   **B-06** (Asistencia, 52 a 56), el más corto y el de la decisión de negocio más fuerte —el
   gimnasio no cierra la puerta—, que explica el 201 con `permitido=False` y por qué el "asistió"
-  de una reserva no se guarda.
-  **Lo que sigue es B-07 (Recepción, 57 a 59)**, y así hasta B-15; después C. Todo capítulo
+  de una reserva no se guarda; **B-07** (Recepción, 57 a 59), donde el corte de la API no sigue a
+  las entidades sino a una pantalla, y lo que eso compra no es velocidad sino **una sola foto del
+  instante**; y **B-08** (Actividades, 60 a 87), el más grande hasta ahora: las cinco entidades, las
+  tres reglas del módulo, el saldo que se cuenta en vez de guardarse, y el pasaje del lock de
+  `reservar()` —por qué una restricción de integridad NO es un control de concurrencia y por eso
+  están el lock y el disparador—.
+  **Lo que sigue es B-09 (Rutinas, 88 a 97)**, y así hasta B-15; después C. Todo capítulo
   de B cierra con su "Con qué se conecta" y agrega sus conexiones nuevas al mapa: **una
   conexión va en los dos lugares, nunca en uno solo**.
   **La masterclass está al día con los dos cambios del 2026-09-29/30** (roles múltiples y la
@@ -269,9 +274,19 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   **Cómo remapear las citas por línea, que fue lo que más costó.** Hay tres herramientas en el
   scratchpad de esta sesión: una para las citas de prosa, otra para **la columna de líneas de las
   tablas** —que la de prosa no ve, porque ahí el número no va entre comillas invertidas: eran 338
-  filas que nunca se habían remapeado— y un verificador que contrasta anclas, rangos y símbolos
-  contra una foto de `HEAD` hecha con `git worktree`. La de tablas no mueve una fila si el símbolo
-  deja de caer adentro del rango nuevo, y eso es lo que la hace confiable.
+  filas que nunca se habían remapeado— y un verificador de anclas, rangos y símbolos. La de tablas
+  no mueve una fila si el símbolo deja de caer adentro del rango nuevo, y eso es lo que la hace
+  confiable.
+  **El verificador da TODO BIEN sobre la masterclass entera**, y llegar ahí obligó a arreglarlo dos
+  veces: GitHub **conserva los guiones bajos** de un identificador (`#precio_pactado-contra-…`) y
+  **deja doble guion** donde borró un símbolo (`## Escala 16 · La regla` → `#escala-16--la-regla`),
+  así que un slug que los colapse inventa 40 anclas rotas que no existen. Y un `localhost:5173` no
+  es una cita de línea. Con eso corregido quedaron 9 problemas **reales**, todos del mismo tipo: una
+  cita de continuación (`` `:123` ``) hereda el último archivo NOMBRADO, y si la última fila de la
+  tabla "dónde vive el código" nombra otro archivo, la cita apunta al equivocado. Se arreglaron los
+  9 —en A0-06, B-01 y B-02— nombrando el archivo en la primera cita de cada bloque; dos de B-01
+  apuntaban además al bloque equivocado. **Regla para el próximo capítulo: la primera cita de prosa
+  después de cada tabla nombra su archivo.**
   **El orden importa y equivocarse cuesta caro: código → remapear → recién entonces escribir las
   citas nuevas.** Ninguna de las dos es idempotente (comparan contra una referencia), así que una
   cita recién escrita a mano ya es "nueva" y el remapeo la mueve de más. Pasó, y hubo que corregir
@@ -384,6 +399,36 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
     vacías; la PWA tiene funciones de Cobros que nadie usa y comentarios viejos (deudas en
     `anularPago`, `id_membresia NOT NULL` en el combo, el selector del alta en
     `listarTiposMembresia`); Flet no filtra los planes dados de baja.
+  - **La alerta del panel de recepción hace dos consultas por anotado** (B-07): `_alerta_de_socio()`
+    y `estado_renovacion()` se llaman dentro del bucle de inscriptos, que es exactamente lo que el
+    docstring de la alerta dice estar evitando —lo que se ahorró es la latencia de red de cada una,
+    no la consulta—. Con veinte anotados son cuarenta consultas, y el panel se refresca cada diez
+    segundos. El remedio ya está en el mismo archivo: `reservas_con_asistencia()` trae el conjunto
+    en una consulta y la función pura lo recibe por parámetro.
+  - **`deuda_total` de la búsqueda por DNI viaja siempre en cero** (B-07), y la ficha de Flet lo
+    muestra. Es el mismo resto de la tabla `Deuda` que B-05 encontró en las dos apps.
+  - **`crear_turno()` no valida que el profesor esté habilitado** (B-08, proceso 75), a diferencia de
+    `crear_horario()`, que sí. La clave compuesta `fk_turno_profesor_habilitado` lo ataja igual, así
+    que el resultado es un 500 sin mensaje en vez de un 409 explicado. Mismo patrón que el 500 de la
+    baja del profesor, ya resuelto. Leído, no corrido.
+  - **`puede_comprar()` promete reusar las condiciones de `comprar_plan()` y las tiene escritas dos
+    veces** (B-08, proceso 73): la consulta de membresía, la comparación con hoy y `_sumar_un_mes()`
+    aparecen en los dos. Lo que garantiza la promesa es que alguien se acuerde de tocar los dos. El
+    molde de cómo hacerlo bien está al lado: `estado_renovacion()` en `renovacion.py`. Y hay un
+    `motivo` inalcanzable —*"Tiene una deuda pendiente"*— detrás de un `if` que en ese punto ya sabe
+    que la cuota está al día.
+  - **Dar de baja una actividad no resuelve los abonos vigentes de esa actividad** (B-08, proceso
+    87): cancela sus turnos futuros y las reservas, pero la inscripción sigue ACTIVA hasta su fecha.
+    Es coherente con no reembolsar en silencio, y a la vez deja al mostrador sin ningún aviso de que
+    ese abono hay que resolverlo. No está anotado en el código.
+  - **El rechazo de la clase suelta cuando el turno está completo es la única decisión del módulo de
+    Actividades sin su porqué escrito** (B-08, proceso 78): `reservar()` manda a lista de espera y la
+    clase suelta responde 409. La asimetría tiene sentido —se está cobrando— pero no está argumentada.
+  - **`listar_reservas()` nombra un usuario que no puede usarlo** (B-08, proceso 80): el docstring
+    dice *"es la lista que usa el profesor"* y pide la sección Actividades, que el Profesor tiene en
+    NINGUNO. Y devuelve sólo las RESERVADA, así que desde ahí no se ve quién está en lista de espera.
+  - **El `ilike` del nombre de una actividad acepta comodines** (B-08, proceso 61): `Yoga_suave`
+    choca con `YogaXsuave`. Es el mismo defecto que B-05 corrió en el nombre de un plan de membresía.
   - **Los procesos 54 y 56 no los llama ninguna pantalla** (B-06): `GET /asistencia/socio/{id}`
     —el historial de ingresos de un socio, que responde "¿viene seguido?"— y
     `POST /asistencia/{id}/salida` —el egreso—. El primero es una pérdida: el lugar natural sería la

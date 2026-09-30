@@ -610,8 +610,8 @@ concepto: **la URL cambiada sin pedir una página nueva**.
 La tabla de este sistema está entera en `Proyecto - PWA/src/frontend/src/App.tsx:86-170`, con
 `react-router` (`package.json:18`). Tres cosas para leerla:
 
-- **Las rutas anidan y heredan.** `:100` abre un `<Route element={<ProtectedRoute />}>` sin
-  `path`: no representa una URL, envuelve a todas las de adentro. Lo mismo `:101` con
+- **Las rutas anidan y heredan.** `App.tsx:100` abre un `<Route element={<ProtectedRoute />}>`
+  sin `path`: no representa una URL, envuelve a todas las de adentro. Lo mismo `:101` con
   `<AppLayout />`. La pieza que lo hace posible es `<Outlet />`
   (`ProtectedRoute.tsx:36`): el agujero donde el enrutador inserta la ruta hija que
   coincidió. Gracias a eso un chequeo que si no habría que repetir en dieciocho vistas es un

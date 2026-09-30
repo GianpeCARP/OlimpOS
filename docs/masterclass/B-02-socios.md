@@ -309,10 +309,10 @@ socio (`:1083-1085`): pedir los dos permitiría mandar una combinación que no c
 
 **Qué escribe y qué lee.** Escribe `Asignacion_Entrenador.estado` y `fecha_fin` (`:1101-1102`); lee la
 asignación, el entrenador de la sesión (`rutinas.py:68-79`) y la persona del entrenador para la
-respuesta (`_a_asignacion_out()`, `:923-936`). Coincide con la línea DFD.
+respuesta (`_a_asignacion_out()`, `socios.py:923-936`). Coincide con la línea DFD.
 
 **Por qué está hecho así.** No se borra porque el historial es el motivo de que la tabla exista
-(`:1076-1081`); es la [baja lógica](A-10-bajas-logicas.md#baja-lógica-soft-delete) aplicada a una
+(`socios.py:1076-1081`); es la [baja lógica](A-10-bajas-logicas.md#baja-lógica-soft-delete) aplicada a una
 relación.
 
 **Qué pasa cuando sale mal.**
@@ -434,7 +434,7 @@ Dos detalles del paso 4 y el paso 5, que se apartan de las reglas generales. El 
 se trata como un **bloque**: si vienen el nombre o el teléfono, el parentesco se escribe siempre, aunque
 no haya venido (`:575`). No pierde datos en la práctica, porque las dos apps mandan los tres campos
 juntos, precargados con el principal (`SocioFormModal.tsx:72-84`). Y vaciar el teléfono **borra el
-principal sin ascender a otro** (`:591-592`), a diferencia del borrado de teléfonos, que sí asciende
+principal sin ascender a otro** (`socios.py:591-592`), a diferencia del borrado de teléfonos, que sí asciende
 ([regla 4](#las-listas-con-un-principal-teléfonos-y-contactos-de-emergencia)); la grilla igual muestra
 el que quede, porque toma "el principal, o el primero que haya".
 
@@ -516,7 +516,7 @@ y al que ya tiene una baja programada, salvo que se pida la inmediata (`:627-632
   hay —sumándole al vencimiento los días que se usaron— y devuelve el día siguiente al vencimiento, o hoy
   si no hay período pago (`bajas.py:81-94`). Si esa fecha es futura, la baja queda **pendiente** y el
   socio sigue activo; si es hoy, se aplica en el acto.
-- **Inmediata** (`:634-646`): corta hoy aunque tenga la cuota paga. Si ya había una programada, la
+- **Inmediata** (`socios.py:634-646`): corta hoy aunque tenga la cuota paga. Si ya había una programada, la
   adelanta reusando la misma fila (`:639-643`).
 
 Cuando la baja se aplica, `aplicar_baja()` deja al socio inactivo, cancela sus membresías activas o
@@ -723,7 +723,7 @@ pero sin principal ([reglas 4 y 6](#las-listas-con-un-principal-teléfonos-y-con
 
 **Cómo funciona.** Comprueba el socio (`socios.py:956-958`), trae sus asignaciones —sólo las activas si
 se pide `solo_activos`— de la más nueva a la más vieja (`:960-968`) y le pone a cada una el nombre y la
-especialidad del entrenador (`_a_asignacion_out()`, `:923-936`).
+especialidad del entrenador (`_a_asignacion_out()`, `socios.py:923-936`).
 
 **Qué escribe y qué lee.** No escribe; lee `Socio`, `Asignacion_Entrenador`, `Entrenador`, `Empleado` y
 `Persona`. Coincide.
