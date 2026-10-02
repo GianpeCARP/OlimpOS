@@ -467,19 +467,35 @@ terminar cada sentencia.
 Reasignarle a un socio la rutina B cuando tenía la A son dos escrituras: finalizar la A y
 crear la B. Si entran en ese orden no pasa nada; si entran al revés, hay un instante con dos
 `ACTIVA` y la base rechaza la operación. Y el orden no lo elige el programador: lo elige el
-ORM (→ [A0-09](A0-09-el-orm.md)), que agrupa los `INSERT` antes que los `UPDATE`. Entonces
-el endpoint tiene que forzarlo a mano. Es `backend/routers/rutinas.py:408-429` ·
-`asignar_rutina()`: el bucle de las líneas 404-411 pone la anterior en `FINALIZADA`, y la
-línea 425 es un `db.flush()` con diez líneas de comentario arriba explicando que **no es
-opcional**:
+ORM (→ [A0-09](A0-09-el-orm.md)).
+
+**Y acá hay que tener cuidado con lo que dice el código.** El endpoint que reasigna
+(`backend/routers/rutinas.py:431-452` · `asignar_rutina()`) pone la anterior en `FINALIZADA`
+en el bucle de las líneas 431-438 y después, en la línea 452, hace un `db.flush()` con diez
+líneas de comentario arriba explicando que **no es opcional**:
 
 > *"Un índice parcial no puede ser DEFERRABLE en Postgres, así que se evalúa al terminar
 > cada sentencia — y SQLAlchemy ordena su flush poniendo los INSERT ANTES que los UPDATE.
 > Sin esto, la fila nueva entraría mientras la anterior sigue ACTIVA y la base rechazaría
 > una reasignación que es perfectamente válida."*
 
+**La primera mitad es cierta y la segunda es al revés.** SQLAlchemy emite, por tabla, los
+`UPDATE` **antes** que los `INSERT`: `save_obj()` llama a `_emit_update_statements()` y
+después a `_emit_insert_statements()`. O sea que el orden peligroso no se da nunca, y ese
+`flush` no evita nada — cuesta un viaje a la base y listo. Está **corrido**, con la función
+real y el índice parcial de verdad, en
+[B-09](B-09-rutinas.md#95-asignar-una-rutina-a-un-socio-y-finalizar-la-que-tenía), que es
+donde vive el detalle.
+
+Lo que **sí** se paga por no poder diferir el índice es lo otro: que cualquier operación de
+varios pasos que pase por un estado intermedio con dos `ACTIVA` **va a fallar**, y no hay
+`SET CONSTRAINTS` que la salve. Que el camino que hay hoy no lo necesite es suerte del orden
+que eligió el ORM, no una propiedad del diseño; el día que alguien escriba las dos filas con
+SQL directo, o que SQLAlchemy cambie ese orden, el `flush` del medio pasa de inútil a
+imprescindible. Por eso la línea se dejó donde está.
+
 El mismo par de escrituras aparece en dietas, con el mismo índice parcial
-(`asignacion_dieta_una_activa_uidx`) y la misma necesidad.
+(`asignacion_dieta_una_activa_uidx`) y el mismo comentario copiado.
 
 ### Cómo se comprobó que hace las dos cosas
 
@@ -496,8 +512,9 @@ El mismo par de escrituras aparece en dietas, con el mismo índice parcial
   este chequeo fallaría.
 
 Entre los dos está el paso 2 (líneas 100-115), que reasigna por el endpoint y verifica que
-queda una sola `ACTIVA` y que la anterior sigue en el historial: es el que detecta si
-alguien saca el `flush()` de `backend/routers/rutinas.py:429`.
+queda una sola `ACTIVA` y que la anterior sigue en el historial. Ojo con lo que ese paso
+prueba: **hoy pasa igual con el `flush()` y sin él**, porque el ORM ya ordena bien (ver más
+arriba). Lo que detecta es que la reasignación funcione, no que esa línea haga falta.
 
 *(El archivo es un guion que se corre contra el backend levantado y la base vacía. Para
 escribir este capítulo se leyó, no se ejecutó.)*
@@ -686,9 +703,13 @@ sin ventana.
 
 **Qué se pagó.** Tres cosas, todas visibles en el código:
 
-1. **El `flush()` obligatorio.** El índice parcial no puede diferirse, así que el endpoint
-   tiene que ordenar sus escrituras a mano (`backend/routers/rutinas.py:417-429`). Diez
-   líneas de comentario existen para que nadie borre una línea que parece inofensiva.
+1. **Ningún estado intermedio con dos `ACTIVA`.** El índice no se puede diferir, así que una
+   operación de varios pasos no puede pasar por ahí ni por un instante. Hoy el endpoint que
+   reasigna (`backend/routers/rutinas.py:440-452`) lo cumple sin esfuerzo, porque el ORM emite
+   los `UPDATE` antes que los `INSERT` — al revés de lo que dicen sus diez líneas de
+   comentario, como se corrió en
+   [B-09](B-09-rutinas.md#95-asignar-una-rutina-a-un-socio-y-finalizar-la-que-tenía)—. Lo que
+   se paga es la restricción, no esa línea.
 2. **Un recorrido por consulta en `_clases_usadas()`**, que es lo que cuesta derivar en vez
    de guardar cuando no hay índice que ayude.
 3. **Cuatro o cinco escrituras por fichaje.** Es el precio de que el panel de recepción

@@ -1,6 +1,6 @@
 # OlimpOS — Estado actual
 
-**Foto al 2026-09-30.** Sólo el presente: dónde estamos, qué falta y qué no se
+**Foto al 2026-10-01.** Sólo el presente: dónde estamos, qué falta y qué no se
 probó. Lo permanente (idea, reglas del negocio, trampas) está en `CLAUDE.md`, y el
 historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tanda.**
 
@@ -18,11 +18,8 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   ENTREGA. **No vaciar ni recargar.** Cuentas hoy: `dueno`, `mario.dj`
   (recepcionista), `dami.silberstein` (profesor, todavía con la contraseña temporal)
   y `franco.distillio` (socio: se limpiaron sus pagos online de prueba; le queda el Trimestral cobrado en el mostrador, activo hasta el 15/12/2026). Las contraseñas están en el `.txt` de contraseñas.
-- **OJO: la cuenta `dueno` no entra.** Quedó con `debe_cambiar_password` en true (un
-  reseteo del 19/09 que no se completó) y la contraseña temporal no está anotada, así
-  que `Demo2026!` ya no sirve y el backend rechaza su token. No hay otro dueño que
-  pueda resetearla: la salida es reescribirle el hash con `auth.hashear_password`.
-  Para probar con permisos de mostrador, `mario.dj` sigue funcionando.
+- **La cuenta `dueno` entra** (el dueño la usó en Flet el 2026-10-02). Si su contraseña
+  cambió desde la última vez que se anotó, va al `.txt` de contraseñas.
 - **Consecuencias para verificar:** las suites no se pueden correr (necesitan la base
   vacía). `pruebas_vistas.py` sólo entra con las cuentas que existan.
 - **Backend:** 130 rutas en `/openapi.json`; si da menos, está respondiendo un
@@ -52,6 +49,23 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   actividad, horario y un turno ya dictado), marcado y borrado después: 18 chequeos, conteos
   iguales antes y después. La PWA y Flet **no necesitaron cambios**: el diálogo de asignación ya
   era un interruptor y sigue igual, sólo que ahora funciona siempre. **Falta verlo en pantalla.**
+- **Una rutina o un plan dados de baja ya no se pueden asignar** (backend, PWA y Flet). Era el
+  hallazgo más grueso de B-09: las dos pantallas y los dos docstrings prometían que la rutina
+  desactivada *"deja de ofrecerse para asignar"* y **nadie lo hacía cumplir** —`asignar_rutina()` no
+  miraba `rutina.activo`, la tarjeta de la PWA dibujaba "Asignar" con sólo tener el permiso, y el
+  diálogo de Flet lo ofrecía al lado de "Reactivar"—, así que la baja hacía una sola cosa: pintar el
+  chip "Inactiva". **Nutrición tenía el defecto calcado** y se arregló igual, porque es el mismo
+  código escrito dos veces. Ahora el endpoint contesta **409** con el mensaje que dice qué hacer
+  (*"reactivala antes de asignarla"*) y las **cuatro** pantallas esconden el botón: la tarjeta y el
+  detalle de Rutinas y los de Nutrición, con un `_asignable()` único por vista en Flet. **Editar sigue
+  permitido** con la rutina de baja —se la corrige y después se la reactiva—, que es lo único que se
+  quería conservar. **La regla quedó escrita en `CLAUDE.md`** (Entrenamiento y actividades), porque el
+  409 y el botón escondido parecen redundantes y no lo son: sacar el 409 reabre el agujero.
+  Probado llamando a las dos funciones reales contra SQLite en memoria (8 chequeos:
+  409, nada escrito, y los activos siguen andando) y auditando el árbol de controles de Flet con estado
+  simulado (16 chequeos, las cuatro pantallas). Compila en las tres capas (`import main`, `compileall`,
+  `tsc -p tsconfig.app.json`, `oxlint`). **Falta verlo en pantalla, con el backend reiniciado**
+  (uvicorn corre sin `--reload`).
 - **Los roles de un empleado se acumulan, y se apagan en vez de borrarse** (base, backend,
   PWA y Flet). Cambiar de rol borraba la fila del rol viejo, que es el destino de claves
   foráneas sin ON DELETE, así que respondía **409 a cualquiera con historial** (un socio a
@@ -228,7 +242,7 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   `AgendaTurnos`); el panel y la búsqueda no los llama nadie todavía. Falta la pantalla:
   ruta nueva, ítem de menú, los servicios de panel y búsqueda, y la matriz de permisos en
   sus tres copias (hoy `RECEPCION` sólo existe en la de Flet).
-- **Masterclass del código: Partes A0 y A cerradas, B en curso (B-01 a B-05), C sin escribir.** El dueño quiere
+- **Masterclass del código: Partes A0 y A cerradas, B en curso (B-01 a B-10), C sin escribir.** El dueño quiere
   una explicación completa del código a nivel de cátedra de maestría: conceptos generales
   primero y después, proceso por proceso, qué archivo y qué rango de líneas lo implementa en
   las tres capas. El prompt está en **`PROMPT-ZARPADO.md`** (raíz): cuatro partes —A0
@@ -255,10 +269,34 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   instante**; y **B-08** (Actividades, 60 a 87), el más grande hasta ahora: las cinco entidades, las
   tres reglas del módulo, el saldo que se cuenta en vez de guardarse, y el pasaje del lock de
   `reservar()` —por qué una restricción de integridad NO es un control de concurrencia y por eso
-  están el lock y el disparador—.
-  **Lo que sigue es B-09 (Rutinas, 88 a 97)**, y así hasta B-15; después C. Todo capítulo
+  están el lock y el disparador—; y **B-09** (Rutinas, 88 a 97), el de los tres niveles
+  —`Ejercicio`, `Rutina`, `Asignacion_Rutina`— y el que más hallazgos sacó CORRIENDO el código:
+  el `flush` que no hace falta, el costo medido de los tres listados y el 500 del (día, orden)
+  repetido. Es el primer capítulo verificado con **SQLite en memoria** llamando a las funciones
+  reales del router, que es la técnica que SÍ corre en esta máquina (acá no hay PostgreSQL local
+  ni `httpx`: el clúster descartable y el `TestClient` son de la otra PC). Sirve para lo que no
+  depende del motor —el orden de las sentencias que emite SQLAlchemy, el número de consultas, un
+  índice único parcial—; los costos en ms siguen siendo de Neon y se dicen como tales. Los
+  guiones quedaron en el scratchpad de la sesión: `b09_flush.py`, `b09_consultas.py`,
+  `b09_menores.py` y `b09_expire.py`.
+  Y **B-10** (Nutrición, 98 a 107), que es el espejo de Rutinas y por eso **no repite nada**: abre con
+  la tabla de correspondencias proceso a proceso y los nueve mecanismos que se heredan de B-09, y sólo
+  explica las **cuatro diferencias**. La grande es el proceso 104: `Registro_Comida` SÍ apunta a
+  `Comida`, así que el `PUT` tiene que desvincular lo que el socio registró antes de borrar las comidas
+  —y el docstring de esa misma función dice que *"nada apunta a Comida"*, porque se copió de
+  `editar_rutina`, donde es verdad—. Corrido con `PRAGMA foreign_keys=ON`, que es lo que hizo falta para
+  probar una clave foránea en SQLite (y obliga a darle un `Dueno` de verdad a la `Sede` de prueba).
+  **Lo que sigue es B-11 (Patologías, 108 a 109)**, que son dos procesos y debería ser el capítulo más
+  corto de la Parte B. Y así hasta B-15; después C. Todo capítulo
   de B cierra con su "Con qué se conecta" y agrega sus conexiones nuevas al mapa: **una
   conexión va en los dos lugares, nunca en uno solo**.
+  **A0-08 se corrigió con lo que salió corriendo B-09:** daba por bueno el comentario del `flush` de
+  `asignar_rutina` ("SQLAlchemy emite los INSERT antes que los UPDATE") y es al revés. Ahora explica que
+  lo que se paga por no poder diferir un índice parcial no es esa línea sino que **ningún camino puede
+  pasar por un estado intermedio con dos ACTIVA**, y que el camino de hoy no la necesita por el orden que
+  eligió el ORM, no por diseño. B-09 remite ahí en vez de explicarlo dos veces, y el paso 2 de
+  `test_una_sola_activa.py` quedó anotado por lo que de verdad prueba (que la reasignación funcione, no
+  que esa línea haga falta).
   **La masterclass está al día con los dos cambios del 2026-09-29/30** (roles múltiples y la
   habilitación que se apaga). El porqué de los dos vive junto, en **A-10**: la sección
   *"El rol que se apaga"* y, adentro, *"La segunda fila de esa clase, y cómo se cerró"*. Ésa es la
@@ -271,8 +309,8 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   conexiones nuevas repartidas por tipo (164), con la de la baja del profesor pasada de
   contradicción a causa. Verificado contra la foto de `HEAD`: ningún problema nuevo de anclas,
   rangos ni símbolos.
-  **Cómo remapear las citas por línea, que fue lo que más costó.** Hay tres herramientas en el
-  scratchpad de esta sesión: una para las citas de prosa, otra para **la columna de líneas de las
+  **Cómo remapear las citas por línea, que fue lo que más costó.** Hay tres herramientas (dónde
+  están en cada PC, más abajo): una para las citas de prosa, otra para **la columna de líneas de las
   tablas** —que la de prosa no ve, porque ahí el número no va entre comillas invertidas: eran 338
   filas que nunca se habían remapeado— y un verificador de anclas, rangos y símbolos. La de tablas
   no mueve una fila si el símbolo deja de caer adentro del rango nuevo, y eso es lo que la hace
@@ -286,7 +324,8 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   tabla "dónde vive el código" nombra otro archivo, la cita apunta al equivocado. Se arreglaron los
   9 —en A0-06, B-01 y B-02— nombrando el archivo en la primera cita de cada bloque; dos de B-01
   apuntaban además al bloque equivocado. **Regla para el próximo capítulo: la primera cita de prosa
-  después de cada tabla nombra su archivo.**
+  después de cada tabla nombra su archivo.** B-09 la violó cinco veces y las cinco las encontró el
+  verificador: **correrlo no es opcional, es lo que hace cumplir la regla.**
   **El orden importa y equivocarse cuesta caro: código → remapear → recién entonces escribir las
   citas nuevas.** Ninguna de las dos es idempotente (comparan contra una referencia), así que una
   cita recién escrita a mano ya es "nueva" y el remapeo la mueve de más. Pasó, y hubo que corregir
@@ -298,7 +337,19 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   por costo, después de que una corrida de 30 agentes gastara 2,2M tokens y entregara sólo
   el contrato. Los workflows de `.claude/workflows/` quedaron de ese intento: no
   relanzarlos.
-  **Herramientas, fuera del repo**, en el scratchpad de la sesión `0ed151dd-…`
+  **Herramientas en ESTA PC (E:), fuera del repo**, en el scratchpad de la sesión `d0e15dcc-…`:
+  `C:\Users\gianl\AppData\Local\Temp\claude\E--OlimpOS-OlimpOS\d0e15dcc-aaed-4191-8f35-fd7381df34de\scratchpad`.
+  Son Python y se corren con el venv del backend: **`verificar.py`** (anclas, rangos de línea y
+  símbolos de las tablas de B; tiene que dar TODO BIEN después de cada capítulo), **`remapear.py`**
+  (citas de prosa: en `TOCADOS` van los archivos de código que se editaron y en `CONTEXTO` todos los
+  que la masterclass cita, para que un `` `:N` `` suelto sepa a qué archivo pertenece; compara contra
+  `HEAD`, así que se corre ANTES de commitear el código) y **`remapear_tablas.py`** (la columna de
+  líneas, sobre todos los archivos). Los moldes de prueba también están ahí: `b09_flush.py`,
+  `b09_consultas.py`, `b10_nutricion.py` y `arreglo_baja.py` (SQLite en memoria con los modelos
+  reales), `auditar_asignar.py` (árbol de controles de Flet) y `a99_b10.py` (sumar conexiones a
+  A-99 con su índice). Una sesión nueva tiene OTRO scratchpad: estas herramientas siguen en ese
+  directorio y se copian de ahí. **Están en `%TEMP%`: si Windows limpia los temporales, se pierden.**
+  **Herramientas en la OTRA PC (D:)**, en el scratchpad de la sesión `0ed151dd-…`
   (`%TEMP%/claude/D--OlimpOs/0ed151dd-21e2-452f-8c62-06065f5b0e32/scratchpad`): el
   **contrato de vocabulario** (`CONTRATO-VOCABULARIO.md`: 144 conceptos con un único dueño,
   los nombres de los 52 archivos y los nombres canónicos) y, en `slug/`, los verificadores
@@ -311,8 +362,19 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
   calculados). Si el scratchpad no está, hay que regenerar el
   contrato antes de escribir. **Anclas:** GitHub las arma **conservando las tildes y la ñ**
   (`#transacción-…`), y un símbolo como `≠` deja doble guion.
-  **Lo que depende de cómo PostgreSQL aplica una restricción se corre, no se lee**, en un
-  Postgres local descartable: esta máquina tiene PostgreSQL 17 en `D:\PostgreSQL`; `initdb` en
+  **Trampa de Flet 0.84 al auditar un diálogo:** el label de un `ft.TextButton("Asignar")` NO vive en
+  `.text` (que queda en `None`) sino en `.content`, y ahí es un **str pelado**, no un `Control`. Un
+  recorrido del árbol que sólo junte `ft.Text` no ve ningún botón de un `AlertDialog` y da todos los
+  chequeos de presencia por fallados — parece un bug del código y es del recorrido. El auditor tiene
+  que juntar también los `str` de `.content` (y de `.tooltip`).
+  **Lo que depende de cómo PostgreSQL aplica una restricción se corre, no se lee.** En ESTA PC (E:)
+  no hay PostgreSQL ni `httpx`, así que se corre contra **SQLite en memoria** con los modelos y las
+  funciones reales del router (B-09 y B-10): sirve para el orden de las sentencias, el número de
+  consultas, un índice único parcial y —con `PRAGMA foreign_keys=ON`— una clave foránea; dos
+  artefactos del motor: `server_default=func.now()` no entra en una columna `Date` (se le saca el
+  default o se pasa la fecha) y con las FK prendidas la `Sede` necesita su `Dueno`. Lo que depende
+  de Postgres de verdad (un disparador, un lock) va a la otra PC, que tiene un Postgres local
+  descartable: PostgreSQL 17 en `D:\PostgreSQL`; `initdb` en
   el scratchpad, un puerto propio, `db/schema.sql`, y las funciones del router llamadas
   directamente con `DATABASE_URL` apuntando ahí **antes** de importar el backend. Nunca Neon, y
   el clúster se borra al terminar. B-03 lo usó para seis hallazgos. B-04 fue más lejos: **por
@@ -440,6 +502,79 @@ historial en git. **Al cerrar algo, se actualiza el punto, no se agrega una tand
     `a.socio` y `socio.persona` por cada fila y la consulta no trae ninguna relación: dos consultas
     perezosas por ingreso, el mismo N+1 que ya se cerró en Socios y en Usuarios con `selectinload`.
     Leído, no medido.
+  - **`Rutina.id_entrenador` NO es NOT NULL, y cinco comentarios dicen que sí** (B-09): es nullable
+    a propósito desde que existen las rutinas propias del socio, y la frase *"es NOT NULL"* quedó en
+    `rutinas.py`, `schemas.py`, `RutinaFormModal.tsx`, `Flet/.../views/rutinas.py` y
+    `Flet/.../state.py`. La regla que justifica —el Dueño tiene que elegir un entrenador— sigue
+    siendo correcta por otro motivo: una rutina del catálogo sin entrenador sería indistinguible de
+    una propia de un socio y, por lo tanto, invisible para quien la acaba de crear.
+  - **El `db.flush()` de `asignar_rutina()` no hace falta y su comentario dice lo contrario de lo que
+    pasa** (B-09, proceso 95; **corrido**). Doce líneas afirman que SQLAlchemy emite los `INSERT`
+    antes que los `UPDATE`: emite los `UPDATE` primero (`persistence.py`, `save_obj()`), y la misma
+    función con esa línea borrada reasigna igual de bien contra un índice único parcial. Es un viaje
+    a São Paulo —44 ms— en cada asignación, que no evita nada. El precedente que cita,
+    `promover_de_lista_de_espera()`, SÍ lo necesita, porque ahí lo que sigue al `flush` es una
+    **lectura**. Pariente del mismo tipo: el `db.expire(rutina, ["ejercicios"])` de `editar_rutina()`
+    tampoco hace falta, porque la sesión usa `expire_on_commit` por defecto (corrido con y sin).
+  - **Los seis listados de Rutinas y Nutrición son N+1, y está medido** (B-09, B-10): el catálogo
+    cuesta **2 + N + 3·P** consultas, con `N` plantillas y `P` profesionales distintos entre ellas —11
+    para 6 rutinas del mismo entrenador, **26** si cada una tiene el suyo—, así que **el costo depende
+    de los datos**: lo que ahorra hoy es el mapa de identidad de la sesión, no una carga anticipada. El
+    detalle cuesta una consulta por ejercicio (y en Nutrición una por comida, para traerle el plato), y
+    el historial de un socio pide por fila una `Rutina`/`Dieta` que su propio `JOIN` ya trajo —el `JOIN`
+    está para el `WHERE`, no llena la relación—. Es el mismo `selectinload` que falta en el feed de
+    ingresos de B-06.
+  - **El docstring de `editar_dieta()` dice que nada apunta a `Comida`, y algo apunta** (B-10, proceso
+    104; **corrido**). `Registro_Comida.id_comida` es una FK a `Comida`, así que antes de borrar las
+    comidas viejas el endpoint tiene que ponerla en `NULL` —y lo hace, en cuatro líneas bien
+    comentadas—, pero el docstring de arriba afirma lo contrario porque se copió de `editar_rutina`,
+    donde la frase sí es verdad. Corrido con `PRAGMA foreign_keys=ON`: tal cual está anda y el registro
+    conserva su texto y sus macros; sin esas líneas la FK lo frena con un 500; y **sin ningún registro
+    cargado pasa igual**, que es por qué un defecto así puede vivir mucho tiempo. Lo que no está anotado
+    en ningún lado es la consecuencia de producto: el registro desvinculado **pierde contra qué comida se
+    comparaba**, así que después de editar un plan no se puede reconstruir hacia atrás la comparación
+    plan contra realidad.
+  - **El `activo` de un plato del catálogo no se puede apagar desde ninguna app** (B-10, procesos 101 y
+    102): `listar_catalogo_comidas()` filtra por ese flag y el alta lo pone en `True`, y no existe
+    ningún endpoint que lo baje. Un plato cargado mal se queda en el catálogo para siempre, salvo
+    editando la base. Mismo caso que los planes de membresía de B-05.
+  - **`Asignacion_Dieta.observaciones` no lo manda ninguna app** (B-10, proceso 105): es la única
+    columna que `Asignacion_Dieta` tiene y `Asignacion_Rutina` no, el endpoint la guarda, y las dos
+    pantallas mandan sólo `id_socio`. Sólo se puede cargar por API.
+  - **El `PUT` de dieta puede borrar en silencio, igual que el de rutina** (B-10, proceso 104):
+    `objetivo`, `calorias_diarias` y `descripcion` tienen default `None` y se asignan sin preguntar — y
+    uno de ellos es el objetivo calórico contra el que "Mi progreso" compara. Hoy inalcanzable (las dos
+    apps mandan los cinco campos), igual que su gemelo.
+  - **El comodín del `ilike` va por la cuarta copia** (B-10, proceso 102; corrido): `Pollo_arroz` choca
+    con `PolloXarroz` en el catálogo de platos, como ya pasaba con el plan de membresía (B-05), la
+    actividad (B-08) y el ejercicio (B-09). Es el mismo arreglo de una línea en cuatro archivos.
+  - **Una comida con plato del catálogo Y descripción pierde la descripción sin aviso** (B-10, proceso
+    99): `_agregar_comidas()` guarda `None` en `descripcion` cuando hay plato, que es correcto —el texto
+    saldría del catálogo— pero el 422 del esquema sólo exige "al menos uno", no "exactamente uno".
+  - **El historial de rutinas de un socio no lo llama ninguna pantalla** (B-09, proceso 90): la
+    pregunta que contesta —*"¿qué viene entrenando?"*— es la de la ficha del socio. Tercer caso de la
+    misma forma, con el historial de ingresos (B-06) y `GET /socios/entrenadores/{id}/socios` (B-02).
+  - **Dos ejercicios en el mismo (día, orden) dan 500** (B-09, procesos 89 y 94; **corrido**):
+    `Rutina_Ejercicio` tiene un índice único sobre `(id_rutina, dia, orden)` y `_validar_ejercicios()`
+    sólo mira que cada ejercicio exista. Hoy sólo se alcanza por API, porque las dos apps derivan el
+    `orden`. Mismo patrón que el 500 de `crear_turno()` de B-08.
+  - **El `PUT` de rutina todavía puede borrar en silencio** (B-09, proceso 94): `objetivo` y
+    `dias_por_semana` tienen default `None` y el endpoint los asigna sin preguntar, o sea el problema
+    que se arregló en el `PUT` de socio y en el de empleado con `model_fields_set`. Hoy inalcanzable
+    —las dos apps mandan siempre los cuatro campos—; lo hereda cualquier cliente nuevo.
+  - **Menores de B-09:** el nombre de un ejercicio se compara con `ilike` y el `_` hace de comodín
+    (corrido: `Press_banca` choca con `PressXbanca`), que es la **tercera** copia del mismo defecto
+    después del plan de membresía (B-05) y la actividad (B-08); `AsignarRutinaRequest` acepta
+    `fecha_fin` sin compararla con `fecha_inicio` y ninguna pantalla la manda; el comentario de la PWA
+    dice *"Sólo el Entrenador gestiona rutinas"* y la acción la tienen también el Dueño y el
+    Recepcionista; y en el archivo de procesos los títulos **96 y 97 son su propia ruta** en vez de un
+    nombre (el nombre está adentro de la línea DFD, y es el que usa el capítulo).
+  - **Flet quedó atrás de la PWA en Rutinas** (B-09): no tiene el botón de **ver** el catálogo de
+    ejercicios —que en la PWA va antes que el de agregar, justamente para no cargar dos veces el mismo
+    ejercicio—, no tiene buscador ni chips por días por semana, y la baja y la reactivación viven
+    adentro del diálogo de detalle en vez de la tarjeta. Además `get_rutinas()` arma una clave
+    `duracion` que ninguna vista lee, y `_numero()` acepta `nan` en el peso donde la PWA lo rechaza
+    con `Number.isFinite` (corrido).
   - **Menores de B-04:** el cartel "exclusiva para administradores" lo ve el Recepcionista,
     que usa la sección; el comentario de la PWA que dice "no hay backend de email"
     (`UsuariosView.tsx`); contar los dueños al borrar una cuenta de dueño deriva roles sin

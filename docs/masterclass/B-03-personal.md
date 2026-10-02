@@ -359,7 +359,7 @@ entrenador a un socio.
 | Endpoint | `backend/routers/personal.py` | 501-520 | `listar_entrenadores()` |
 | Armado | `backend/routers/personal.py` | 472-498 | `_opciones()` |
 | Quién pide | `backend/routers/rutinas.py` | 68-79 | `_entrenador_de_sesion()` |
-| Vistas Flet | `Flet/Proyecto/app/views/rutinas.py` | 240 | `get_entrenadores` |
+| Vistas Flet | `Flet/Proyecto/app/views/rutinas.py` | 257 | `get_entrenadores` |
 | | `Flet/Proyecto/app/views/socios.py` | 965 | `get_entrenadores` |
 | Estado Flet | `Flet/Proyecto/app/state.py` | 1286-1296 | `get_entrenadores()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 501-502 | `obtener_entrenadores()` |
@@ -450,7 +450,7 @@ valores fijos —"Mañana", "Tarde", "Noche"— (`StaffCard.tsx:39-43`, `:99`), 
 | Endpoint | `backend/routers/personal.py` | 523-538 | `listar_nutricionistas()` |
 | Armado | `backend/routers/personal.py` | 472-498 | `_opciones()` |
 | Quién pide | `backend/routers/nutricion.py` | 71-76 | `_nutricionista_de_sesion()` |
-| Vista Flet | `Flet/Proyecto/app/views/nutricion.py` | 274-287 | `_open_form()` |
+| Vista Flet | `Flet/Proyecto/app/views/nutricion.py` | 285-298 | `_open_form()` |
 | Estado Flet | `Flet/Proyecto/app/state.py` | 1298-1300 | `get_nutricionistas()` |
 | Cliente Flet | `Flet/Proyecto/app/api_client.py` | 505-506 | `obtener_nutricionistas()` |
 
@@ -469,7 +469,7 @@ el 2026-09-26, la PWA —que preselecciona el primero de la lista cuando la diet
 (`PlanFormModal.tsx:95-99`)— le ofrecía a una nutricionista que no fuera la primera en orden alfabético
 una dieta a nombre de otra, y guardar sin tocar el selector terminaba en ese 403. Los comentarios de
 las dos apps ya lo daban por hecho (`PlanFormModal.tsx:27-28`,
-`Flet/Proyecto/app/views/nutricion.py:282-285`).
+`Flet/Proyecto/app/views/nutricion.py:293-296`).
 
 **Qué pasa cuando sale mal.** 403 para Profesor y Socio, que no tienen la sección Nutrición.
 

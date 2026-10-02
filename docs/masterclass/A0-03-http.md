@@ -464,7 +464,7 @@ if rutina is None or rutina.id_entrenador is None:
 
 Fijate en el `or`: **las dos condiciones dan el mismo error y el mismo texto**. Esa
 función es el único camino por el que el personal llega a una rutina, y la usan los cinco
-endpoints que la necesitan —`rutinas.py:322`, `:393`, `:520`, `:561` y `:579`—, así que no
+endpoints que la necesitan —`rutinas.py:322`, `:395`, `:543`, `:584` y `:602`—, así que no
 hay ninguna puerta lateral por la que una rutina propia se filtre.
 
 Lo que interesa acá es el uso del código. En HTTP, 403 y 404 dicen cosas distintas: el
