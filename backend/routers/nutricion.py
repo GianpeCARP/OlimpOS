@@ -350,9 +350,25 @@ def asignar_dieta(
 
     Una dieta propia (id_nutricionista NULL) NO se puede asignar por acá: 404,
     igual que una inexistente. Es del socio y de nadie más.
+
+    Y un plan DADO DE BAJA tampoco se asigna: ver el 409 de abajo.
     """
     dieta = _dieta_del_staff(db, id_dieta)
     _exigir_editable(db, sesion, dieta)
+
+    # UN PLAN DADO DE BAJA NO SE ASIGNA
+    # --------------------------------
+    # Gemelo del control de asignar_rutina, y por el mismo motivo: hasta el
+    # 2026-09-30 la baja de un plan prometía que "deja de figurar como activo" y
+    # nada impedía asignarlo igual, ni acá ni en las tarjetas de las dos apps.
+    #
+    # 409 y no 400: el pedido está bien formado, lo que choca es el estado del
+    # plan. El mensaje dice qué hacer, porque se reactiva desde la misma pantalla.
+    if not dieta.activo:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ese plan está dado de baja: reactivalo antes de asignarlo.",
+        )
 
     socio = db.get(Socio, datos.id_socio)
     if socio is None:

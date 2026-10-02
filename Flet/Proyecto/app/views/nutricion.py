@@ -47,6 +47,15 @@ class NutricionView:
     def _gestionable(self, p: dict) -> bool:
         return self.puede_gestionar and p.get("puede_editar", True)
 
+    def _asignable(self, p: dict) -> bool:
+        """
+        Gestionable Y activo. Gemelo de _asignable en views/rutinas.py: un plan
+        dado de baja deja de ofrecerse para asignar, el backend lo rechaza con
+        409, y esconder el botón evita que alguien se lleve el error. Editar sí
+        sigue permitido, para corregirlo antes de reactivarlo.
+        """
+        return self._gestionable(p) and p["activo"]
+
     def build(self) -> ft.Column:
         planes = app_state.get_planes_nutricion()
 
@@ -160,7 +169,7 @@ class NutricionView:
                     *([ft.TextButton("Asignar",
                                      style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
                                      on_click=lambda e, x=p: self._open_asignar(x))]
-                      if self._gestionable(p) else []),
+                      if self._asignable(p) else []),
                     ft.TextButton("Ver plan", style=ft.ButtonStyle(color=Colors.ACCENT),
                                   on_click=lambda e, x=p: self._open_detail(x)),
                 ]),
@@ -240,9 +249,11 @@ class NutricionView:
                                   on_click=lambda e: close_dialog(self.page, dlg))]
         if self._gestionable(p):
             acciones += [
-                ft.TextButton("Asignar", style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
-                              on_click=lambda e: (close_dialog(self.page, dlg),
-                                                  self._open_asignar(p))),
+                # "Asignar" sólo con el plan activo: ver _asignable().
+                *([ft.TextButton("Asignar", style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                                 on_click=lambda e: (close_dialog(self.page, dlg),
+                                                     self._open_asignar(p)))]
+                  if self._asignable(p) else []),
                 ft.TextButton("Editar", style=ft.ButtonStyle(color=Colors.ACCENT),
                               on_click=lambda e: (close_dialog(self.page, dlg),
                                                   self._open_form(p))),

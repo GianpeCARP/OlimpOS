@@ -72,6 +72,20 @@ class RutinasView:
     def _gestionable(self, r: dict) -> bool:
         return self.puede_gestionar and r.get("puede_editar", True)
 
+    def _asignable(self, r: dict) -> bool:
+        """
+        Gestionable Y activa.
+
+        Una rutina dada de baja "deja de ofrecerse para asignar" —lo promete el
+        diálogo de la baja, acá y en la PWA— y hasta el 2026-09-30 nada lo hacía
+        cumplir: el botón se dibujaba igual y el backend la aceptaba. Ahora el
+        backend contesta 409 y esto evita que alguien se lleve el error.
+
+        Editar sí sigue permitido con la rutina de baja: se la puede corregir
+        antes de reactivarla.
+        """
+        return self._gestionable(r) and r["activo"]
+
     # ── Tarjeta ───────────────────────────────────────────────────────────────
 
     def _rutina_card(self, r: dict) -> ft.Container:
@@ -81,10 +95,9 @@ class RutinasView:
 
         botones = [_boton_suave("Ver detalles", lambda e, x=r: self._open_detail(x), Colors.ACCENT)]
         if self._gestionable(r):
-            botones += [
-                _boton_suave("Editar", lambda e, x=r: self._open_form(x)),
-                _boton_suave("Asignar", lambda e, x=r: self._open_asignar(x)),
-            ]
+            botones += [_boton_suave("Editar", lambda e, x=r: self._open_form(x))]
+        if self._asignable(r):
+            botones += [_boton_suave("Asignar", lambda e, x=r: self._open_asignar(x))]
 
         return ft.Container(
             col={"xs": 12, "sm": 6, "md": 4},
@@ -175,9 +188,13 @@ class RutinasView:
                               on_click=lambda e: (close_dialog(self.page, dlg),
                                                   self._cambiar_estado(detalle))),
                 *acciones,
-                ft.TextButton("Asignar", style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
-                              on_click=lambda e: (close_dialog(self.page, dlg),
-                                                  self._open_asignar(r))),
+                # "Asignar" sólo si está activa: ver _asignable(). Con la rutina
+                # de baja el diálogo ofrece "Reactivar" y "Editar", que es lo que
+                # hay que hacer antes de asignarla.
+                *([ft.TextButton("Asignar", style=ft.ButtonStyle(color=Colors.TEXT_SECONDARY),
+                                 on_click=lambda e: (close_dialog(self.page, dlg),
+                                                     self._open_asignar(r)))]
+                  if self._asignable(detalle) else []),
                 ft.TextButton("Editar", style=ft.ButtonStyle(color=Colors.ACCENT),
                               on_click=lambda e: (close_dialog(self.page, dlg),
                                                   self._open_form(r))),

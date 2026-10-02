@@ -114,7 +114,10 @@ export function PlanCard({
         <div className="flex-1">
           <PrimaryButton label="Ver plan" onClick={onVerPlan} width="100%" />
         </div>
-        {puedeGestionar && (
+        {/* Y además que el plan esté ACTIVO: uno dado de baja deja de figurar
+            como activo, así que no se ofrece para asignar. El backend lo rechaza
+            con 409; esconder el botón es para que nadie se lleve el error. */}
+        {puedeGestionar && !yaInactivo && (
           <button
             type="button"
             onClick={onAsignar}

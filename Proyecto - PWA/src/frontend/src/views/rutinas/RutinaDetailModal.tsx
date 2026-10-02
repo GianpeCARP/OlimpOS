@@ -156,13 +156,19 @@ export function RutinaDetailModal({
           </button>
           {puedeGestionar && (
             <>
-              <button
-                type="button"
-                onClick={onAsignar}
-                className="shrink-0 rounded-md border border-border-idle px-4 py-2 font-body text-sm whitespace-nowrap text-text-secondary hover:bg-surface-hover hover:text-text-main"
-              >
-                Asignar
-              </button>
+              {/* "Asignar" sólo con la rutina ACTIVA: una dada de baja deja de
+                  ofrecerse para asignar y el backend contesta 409. "Editar" sí,
+                  porque una rutina de baja se puede corregir antes de
+                  reactivarla. */}
+              {rutina.activo && (
+                <button
+                  type="button"
+                  onClick={onAsignar}
+                  className="shrink-0 rounded-md border border-border-idle px-4 py-2 font-body text-sm whitespace-nowrap text-text-secondary hover:bg-surface-hover hover:text-text-main"
+                >
+                  Asignar
+                </button>
+              )}
               <PrimaryButton label="Editar" onClick={onEditar} />
             </>
           )}

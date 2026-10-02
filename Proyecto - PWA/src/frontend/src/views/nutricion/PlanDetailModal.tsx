@@ -179,13 +179,18 @@ export function PlanDetailModal({
           </button>
           {puedeGestionar && (
             <>
-              <button
-                type="button"
-                onClick={onAsignar}
-                className="shrink-0 rounded-md border border-border-idle px-4 py-2 font-body text-sm whitespace-nowrap text-text-secondary hover:bg-surface-hover hover:text-text-main"
-              >
-                Asignar
-              </button>
+              {/* "Asignar" sólo con el plan ACTIVO: uno dado de baja deja de
+                  ofrecerse y el backend contesta 409. "Editar" sí, porque un
+                  plan de baja se puede corregir antes de reactivarlo. */}
+              {plan.activo && (
+                <button
+                  type="button"
+                  onClick={onAsignar}
+                  className="shrink-0 rounded-md border border-border-idle px-4 py-2 font-body text-sm whitespace-nowrap text-text-secondary hover:bg-surface-hover hover:text-text-main"
+                >
+                  Asignar
+                </button>
+              )}
               <PrimaryButton label="Editar" onClick={onEditar} />
             </>
           )}

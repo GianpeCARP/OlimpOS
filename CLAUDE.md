@@ -267,6 +267,13 @@ D:\OlimpOs\
 - **Rutina y dieta propias del socio** (`id_entrenador` / `id_nutricionista` NULL):
   invisibles para el personal (404). Si hay una asignada por el personal, esa manda
   (409).
+- **Una rutina o un plan dados de baja NO se asignan, pero sí se editan.** La baja los saca
+  de circulación: el backend rechaza la asignación con **409** (*"reactivala antes de
+  asignarla"*) y las cuatro pantallas —tarjeta y detalle, en Rutinas y en Nutrición— esconden
+  el botón. El 409 es el que de verdad lo impide: esconder el botón evita el error, no lo
+  prohíbe, así que **no sacar ninguno de los dos**. Editar sigue permitido a propósito, para
+  corregir el plan antes de reactivarlo. Los socios que ya lo seguían lo terminan: la baja
+  corta el futuro y no toca lo acordado.
 - **Las rutinas no tienen nivel.** Se filtran por días por semana (1 a 7). La columna
   `Rutina.nivel` queda sin usar a propósito.
 - **Circuito y contador de repeticiones: sólo en celular**, del lado del cliente y

@@ -97,8 +97,12 @@ export function RutinaCard({
         >
           Ver detalles
         </button>
-        {/* Asignar una rutina a un socio es gestionarla: sólo el Entrenador. */}
-        {puedeGestionar && (
+        {/* Asignar una rutina a un socio es gestionarla, así que hace falta el
+            permiso. Y además que la rutina esté ACTIVA: una dada de baja "deja
+            de ofrecerse para asignar", que es justo lo que promete el diálogo de
+            la baja. El backend la rechaza con 409; esconder el botón es para que
+            nadie se lleve el error. */}
+        {puedeGestionar && !yaInactiva && (
           <div className="flex-1">
             <PrimaryButton label="Asignar" onClick={onAsignar} width="100%" />
           </div>

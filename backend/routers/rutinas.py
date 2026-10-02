@@ -389,9 +389,32 @@ def asignar_rutina(
     Una rutina propia (id_entrenador NULL) NO se puede asignar por acá: da 404,
     igual que una inexistente. Una rutina propia es de su autor y de nadie más;
     el personal no puede endosársela a otro socio.
+
+    Y una rutina DADA DE BAJA tampoco se asigna: ver el 409 de abajo.
     """
     rutina = _rutina_del_staff(db, id_rutina)
     _exigir_editable(db, sesion, rutina)
+
+    # UNA RUTINA DADA DE BAJA NO SE ASIGNA
+    # ------------------------------------
+    # Hasta el 2026-09-30 esto no se controlaba en ningún lado: ni acá, ni en la
+    # tarjeta, ni en el detalle de ninguna de las dos apps. O sea que la baja
+    # prometía "deja de ofrecerse para asignar" —lo dicen el docstring de
+    # dar_de_baja_rutina y el diálogo de confirmación de las dos pantallas— y lo
+    # único que hacía era pintar el chip "Inactiva".
+    #
+    # El control va ACÁ porque es el único lugar que de verdad lo impide. Las
+    # pantallas además esconden el botón, que es otra cosa: evita el error, no lo
+    # prohíbe.
+    #
+    # 409 y no 400: el pedido está bien formado, lo que choca es el estado de la
+    # rutina. Y el mensaje dice qué hacer, no sólo qué está mal — se puede
+    # reactivar desde la misma pantalla.
+    if not rutina.activo:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Esa rutina está dada de baja: reactivala antes de asignarla.",
+        )
 
     socio = db.get(Socio, datos.id_socio)
     if socio is None:
